@@ -78,6 +78,7 @@ interface CharacterFormState {
   memoryType: "manual" | "dynamic";
   dynamicMemoryEnabled: boolean;
   disableAvatarGradient: boolean;
+  avatarGradientSource: "base" | "round";
   voiceConfig: CharacterVoiceConfig | null;
   voiceAutoplay: boolean;
   mode: CharacterMode;
@@ -127,6 +128,7 @@ type CharacterFormAction =
   | { type: "SET_MEMORY_TYPE"; payload: "manual" | "dynamic" }
   | { type: "SET_DYNAMIC_MEMORY_ENABLED"; payload: boolean }
   | { type: "SET_DISABLE_AVATAR_GRADIENT"; payload: boolean }
+  | { type: "SET_AVATAR_GRADIENT_SOURCE"; payload: "base" | "round" }
   | { type: "SET_VOICE_CONFIG"; payload: CharacterVoiceConfig | null }
   | { type: "SET_VOICE_AUTOPLAY"; payload: boolean }
   | { type: "SET_MODE"; payload: CharacterMode }
@@ -170,6 +172,7 @@ const initialState: CharacterFormState = {
   memoryType: "manual",
   dynamicMemoryEnabled: false,
   disableAvatarGradient: false,
+  avatarGradientSource: "base",
   voiceConfig: null,
   voiceAutoplay: false,
   mode: "roleplay",
@@ -245,6 +248,8 @@ function characterFormReducer(
       return { ...state, dynamicMemoryEnabled: action.payload };
     case "SET_DISABLE_AVATAR_GRADIENT":
       return { ...state, disableAvatarGradient: action.payload };
+    case "SET_AVATAR_GRADIENT_SOURCE":
+      return { ...state, avatarGradientSource: action.payload };
     case "SET_VOICE_CONFIG":
       return { ...state, voiceConfig: action.payload };
     case "SET_VOICE_AUTOPLAY":
@@ -355,6 +360,10 @@ export function useCharacterForm(draftCharacter?: any) {
           dispatch({
             type: "SET_DISABLE_AVATAR_GRADIENT",
             payload: draftCharacter.disableAvatarGradient ?? false,
+          });
+          dispatch({
+            type: "SET_AVATAR_GRADIENT_SOURCE",
+            payload: draftCharacter.avatarGradientSource ?? "base",
           });
           dispatch({
             type: "SET_SELECTED_MODEL_ID",
@@ -731,6 +740,10 @@ export function useCharacterForm(draftCharacter?: any) {
         payload: characterData.disableAvatarGradient || false,
       });
       dispatch({
+        type: "SET_AVATAR_GRADIENT_SOURCE",
+        payload: characterData.avatarGradientSource ?? "base",
+      });
+      dispatch({
         type: "SET_SYSTEM_PROMPT_TEMPLATE_ID",
         payload: characterData.promptTemplateId || null,
       });
@@ -938,6 +951,7 @@ export function useCharacterForm(draftCharacter?: any) {
           characterId,
           state.avatarPath,
           state.avatarRoundPath,
+          state.avatarGradientSource,
         );
         if (!avatarFilename) {
           console.error("[CreateCharacter] Failed to save avatar image");
@@ -945,7 +959,7 @@ export function useCharacterForm(draftCharacter?: any) {
           console.log("[CreateCharacter] Avatar saved as:", avatarFilename);
           invalidateAvatarCache("character", characterId);
           if (!state.disableAvatarGradient) {
-            await recalculateGradient("character", characterId);
+            await recalculateGradient("character", characterId, state.avatarGradientSource);
           }
         }
       }
@@ -1012,6 +1026,7 @@ export function useCharacterForm(draftCharacter?: any) {
         activeLorebookIds: state.activeLorebookIds,
         memoryType: state.dynamicMemoryEnabled ? state.memoryType : "manual",
         disableAvatarGradient: state.disableAvatarGradient,
+        avatarGradientSource: state.avatarGradientSource,
         voiceConfig: state.voiceConfig || undefined,
         voiceAutoplay: state.voiceAutoplay,
       };

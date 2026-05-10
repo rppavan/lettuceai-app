@@ -729,6 +729,7 @@ const CharacterCard = memo(
             textSecondary: character.customTextSecondary,
           }
         : undefined,
+      character.avatarGradientSource ?? "base",
     );
     // Long-press support for desktop
     const longPressTimer = useRef<number | null>(null);
@@ -923,6 +924,7 @@ const HeroCard = memo(
             textSecondary: character.customTextSecondary,
           }
         : undefined,
+      character.avatarGradientSource ?? "base",
     );
     const {
       handlePointerDown,
@@ -1041,6 +1043,7 @@ const GalleryCard = memo(
             textSecondary: character.customTextSecondary,
           }
         : undefined,
+      character.avatarGradientSource ?? "base",
     );
     const {
       handlePointerDown,

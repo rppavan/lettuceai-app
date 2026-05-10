@@ -2812,6 +2812,9 @@ export const AvatarCropSchema = z.object({
 });
 export type AvatarCrop = z.infer<typeof AvatarCropSchema>;
 
+export const AvatarGradientSourceSchema = z.enum(["base", "round"]);
+export type AvatarGradientSource = z.infer<typeof AvatarGradientSourceSchema>;
+
 export const DesignReferenceImageIdsSchema = z.array(z.string()).default([]);
 export type DesignReferenceImageIds = z.infer<typeof DesignReferenceImageIdsSchema>;
 
@@ -3113,6 +3116,7 @@ export const CharacterSchema = z.object({
   groupChatPromptTemplateId: z.string().nullish().optional(),
   groupChatRoleplayPromptTemplateId: z.string().nullish().optional(),
   disableAvatarGradient: z.boolean().default(false).optional(),
+  avatarGradientSource: AvatarGradientSourceSchema.default("base").optional(),
   customGradientEnabled: z.boolean().default(false).optional(),
   customGradientColors: z.array(z.string()).optional(), // Array of hex colors, e.g. ["#ff6b6b", "#4ecdc4"]
   customTextColor: z.string().optional(), // Custom text color hex

@@ -275,6 +275,7 @@ const CharacterCard = memo(
             textSecondary: character.customTextSecondary,
           }
         : undefined,
+      character.avatarGradientSource ?? "base",
     );
 
     return (

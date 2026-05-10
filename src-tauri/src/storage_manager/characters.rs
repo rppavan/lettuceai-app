@@ -37,6 +37,7 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
         voice_autoplay,
         memory_type,
         disable_avatar_gradient,
+        avatar_gradient_source,
         custom_gradient_enabled,
         custom_gradient_colors,
         custom_text_color,
@@ -77,6 +78,7 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
         Option<i64>,
         Option<String>,
         i64,
+        Option<String>,
         i64,
         Option<String>,
         Option<String>,
@@ -87,7 +89,7 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
         i64,
     ) = conn
         .query_row(
-            "SELECT name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, fallback_model_id, mode, companion, prompt_template_id, active_lorebook_ids, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, default_chat_template_id, created_at, updated_at FROM characters WHERE id = ?",
+            "SELECT name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, fallback_model_id, mode, companion, prompt_template_id, active_lorebook_ids, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, avatar_gradient_source, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, default_chat_template_id, created_at, updated_at FROM characters WHERE id = ?",
             params![id],
             |r| Ok((
                 r.get(0)?,
@@ -121,14 +123,15 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
                 r.get::<_, Option<i64>>(28)?,
                 r.get::<_, Option<String>>(29)?,
                 r.get::<_, i64>(30)?,
-                r.get::<_, i64>(31)?,
-                r.get(32)?,
+                r.get(31)?,
+                r.get::<_, i64>(32)?,
                 r.get(33)?,
                 r.get(34)?,
                 r.get(35)?,
                 r.get(36)?,
-                r.get::<_, i64>(37)?,
-                r.get::<_, i64>(38)?
+                r.get(37)?,
+                r.get::<_, i64>(38)?,
+                r.get::<_, i64>(39)?
             )),
         )
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -396,6 +399,10 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
         "disableAvatarGradient".into(),
         JsonValue::Bool(disable_avatar_gradient != 0),
     );
+    root.insert(
+        "avatarGradientSource".into(),
+        JsonValue::String(avatar_gradient_source.unwrap_or_else(|| "base".to_string())),
+    );
     // Custom gradient fields
     root.insert(
         "customGradientEnabled".into(),
@@ -660,6 +667,10 @@ fn upsert_character_value(app: &tauri::AppHandle, c: &JsonValue) -> Result<JsonV
         .get("disableAvatarGradient")
         .and_then(|v| v.as_bool())
         .unwrap_or(false) as i64;
+    let avatar_gradient_source = match c.get("avatarGradientSource").and_then(|v| v.as_str()) {
+        Some("round") => "round".to_string(),
+        _ => "base".to_string(),
+    };
     // Custom gradient fields
     let custom_gradient_enabled = c
         .get("customGradientEnabled")
@@ -710,8 +721,8 @@ fn upsert_character_value(app: &tauri::AppHandle, c: &JsonValue) -> Result<JsonV
         .unwrap_or_else(|| "[]".to_string());
 
     tx.execute(
-        r#"INSERT INTO characters (id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, fallback_model_id, mode, companion, prompt_template_id, active_lorebook_ids, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        r#"INSERT INTO characters (id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, fallback_model_id, mode, companion, prompt_template_id, active_lorebook_ids, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, avatar_gradient_source, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name=excluded.name,
               avatar_path=excluded.avatar_path,
@@ -743,6 +754,7 @@ fn upsert_character_value(app: &tauri::AppHandle, c: &JsonValue) -> Result<JsonV
               voice_autoplay=excluded.voice_autoplay,
               memory_type=excluded.memory_type,
               disable_avatar_gradient=excluded.disable_avatar_gradient,
+              avatar_gradient_source=excluded.avatar_gradient_source,
               custom_gradient_enabled=excluded.custom_gradient_enabled,
               custom_gradient_colors=excluded.custom_gradient_colors,
               custom_text_color=excluded.custom_text_color,
@@ -781,6 +793,7 @@ fn upsert_character_value(app: &tauri::AppHandle, c: &JsonValue) -> Result<JsonV
             voice_autoplay,
             memory_type,
             disable_avatar_gradient,
+            avatar_gradient_source,
             custom_gradient_enabled,
             custom_gradient_colors,
             custom_text_color,

@@ -169,6 +169,7 @@ export function EditCharacterPage() {
     activeLorebookIds,
 
     disableAvatarGradient,
+    avatarGradientSource,
     customGradientEnabled,
     customGradientColors,
     customTextColor: _customTextColor,
@@ -227,6 +228,8 @@ export function EditCharacterPage() {
     characterId ?? "",
     avatarPath ?? undefined,
     false,
+    undefined,
+    avatarGradientSource,
   );
   const suggestedCustomGradientColors = React.useMemo(() => {
     if (customGradientColors.length > 0) return customGradientColors;
@@ -243,7 +246,7 @@ export function EditCharacterPage() {
 
     setRecalculatingGradient(true);
     try {
-      await recalculateGradient("character", characterId);
+      await recalculateGradient("character", characterId, avatarGradientSource);
       await refreshGradient(true);
       toast.success("Gradient recalculated", "Avatar colors were regenerated.");
     } catch (error) {
@@ -252,7 +255,7 @@ export function EditCharacterPage() {
     } finally {
       setRecalculatingGradient(false);
     }
-  }, [avatarPath, characterId, recalculatingGradient, refreshGradient]);
+  }, [avatarGradientSource, avatarPath, characterId, recalculatingGradient, refreshGradient]);
 
   React.useEffect(() => {
     console.log("[EditCharacter] avatar state", {
@@ -742,6 +745,48 @@ export function EditCharacterPage() {
                       </div>
                     </div>
                     <AnimatePresence initial={false}>
+                      {!disableAvatarGradient && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          transition={{ duration: 0.18, ease: "easeOut" }}
+                          className="rounded-lg border border-fg/10 bg-surface-el/10 p-2"
+                        >
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-xs font-medium text-fg/75">Gradient Source</span>
+                            <span className="text-[11px] text-fg/45">
+                              Choose which avatar file is sampled
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setFields({ avatarGradientSource: "base" })}
+                              className={cn(
+                                "rounded-lg border px-3 py-2 text-sm transition",
+                                avatarGradientSource === "base"
+                                  ? "border-accent/40 bg-accent/12 text-accent"
+                                  : "border-fg/10 bg-fg/5 text-fg/70 hover:bg-fg/10",
+                              )}
+                            >
+                              Base Image
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFields({ avatarGradientSource: "round" })}
+                              className={cn(
+                                "rounded-lg border px-3 py-2 text-sm transition",
+                                avatarGradientSource === "round"
+                                  ? "border-accent/40 bg-accent/12 text-accent"
+                                  : "border-fg/10 bg-fg/5 text-fg/70 hover:bg-fg/10",
+                              )}
+                            >
+                              Cropped
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
                       {customGradientEnabled && !disableAvatarGradient && (
                         <motion.div
                           initial={{ opacity: 0, y: -6 }}

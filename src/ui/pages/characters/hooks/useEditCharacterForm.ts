@@ -70,6 +70,7 @@ type EditCharacterState = {
   companion: CompanionConfig | null;
 
   disableAvatarGradient: boolean;
+  avatarGradientSource: "base" | "round";
   customGradientEnabled: boolean;
   customGradientColors: string[];
   customTextColor: string;
@@ -134,6 +135,7 @@ const initialState: EditCharacterState = {
   companion: null,
 
   disableAvatarGradient: false,
+  avatarGradientSource: "base",
   customGradientEnabled: false,
   customGradientColors: [],
   customTextColor: "",
@@ -202,6 +204,7 @@ export function useEditCharacterForm(characterId: string | undefined) {
     groupChatRoleplayPromptTemplateId: string | null;
     activeLorebookIds: string;
     disableAvatarGradient: boolean;
+    avatarGradientSource: "base" | "round";
     customGradientEnabled: boolean;
     customGradientColors: string;
     memoryType: string;
@@ -348,6 +351,7 @@ export function useEditCharacterForm(characterId: string | undefined) {
         companion,
 
         disableAvatarGradient: character.disableAvatarGradient || false,
+        avatarGradientSource: character.avatarGradientSource ?? "base",
         customGradientEnabled: character.customGradientEnabled || false,
         customGradientColors: character.customGradientColors || [],
         customTextColor: character.customTextColor || "",
@@ -388,6 +392,7 @@ export function useEditCharacterForm(characterId: string | undefined) {
           character.groupChatRoleplayPromptTemplateId || null,
         activeLorebookIds: JSON.stringify(character.activeLorebookIds || []),
         disableAvatarGradient: character.disableAvatarGradient || false,
+        avatarGradientSource: character.avatarGradientSource ?? "base",
         customGradientEnabled: character.customGradientEnabled || false,
         customGradientColors: JSON.stringify(character.customGradientColors || []),
         memoryType: character.memoryType === "dynamic" ? "dynamic" : "manual",
@@ -491,13 +496,14 @@ export function useEditCharacterForm(characterId: string | undefined) {
             characterId,
             state.avatarPath,
             state.avatarRoundPath,
+            state.avatarGradientSource,
           );
           if (!avatarFilename) {
             console.error("[EditCharacter] Failed to save avatar image");
           } else {
             invalidateAvatarCache("character", characterId);
             if (!state.disableAvatarGradient) {
-              await recalculateGradient("character", characterId);
+              await recalculateGradient("character", characterId, state.avatarGradientSource);
             }
           }
         } else {
@@ -572,6 +578,7 @@ export function useEditCharacterForm(characterId: string | undefined) {
         voiceAutoplay: state.voiceAutoplay,
 
         disableAvatarGradient: state.disableAvatarGradient,
+        avatarGradientSource: state.avatarGradientSource,
         customGradientEnabled: state.customGradientEnabled,
         customGradientColors:
           state.customGradientColors.length > 0 ? state.customGradientColors : undefined,
@@ -628,6 +635,7 @@ export function useEditCharacterForm(characterId: string | undefined) {
         groupChatRoleplayPromptTemplateId: state.groupChatRoleplayPromptTemplateId,
         activeLorebookIds: JSON.stringify(state.activeLorebookIds),
         disableAvatarGradient: state.disableAvatarGradient,
+        avatarGradientSource: state.avatarGradientSource,
         customGradientEnabled: state.customGradientEnabled,
         customGradientColors: JSON.stringify(state.customGradientColors),
         memoryType: state.dynamicMemoryEnabled ? state.memoryType : "manual",
@@ -840,6 +848,7 @@ export function useEditCharacterForm(characterId: string | undefined) {
       groupChatRoleplayPromptTemplateId: initial.groupChatRoleplayPromptTemplateId,
       activeLorebookIds: JSON.parse(initial.activeLorebookIds) as string[],
       disableAvatarGradient: initial.disableAvatarGradient,
+      avatarGradientSource: initial.avatarGradientSource,
       customGradientEnabled: initial.customGradientEnabled,
       customGradientColors: JSON.parse(initial.customGradientColors) as string[],
       memoryType: initial.memoryType === "dynamic" ? "dynamic" : "manual",
@@ -914,6 +923,7 @@ export function useEditCharacterForm(characterId: string | undefined) {
             initial.groupChatRoleplayPromptTemplateId ||
           JSON.stringify(state.activeLorebookIds) !== initial.activeLorebookIds ||
           state.disableAvatarGradient !== initial.disableAvatarGradient ||
+          state.avatarGradientSource !== initial.avatarGradientSource ||
           state.customGradientEnabled !== initial.customGradientEnabled ||
           JSON.stringify(state.customGradientColors) !== initial.customGradientColors ||
           state.memoryType !== initial.memoryType ||

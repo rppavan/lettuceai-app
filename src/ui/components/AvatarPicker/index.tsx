@@ -228,7 +228,11 @@ export function AvatarPicker({
         roundImageData: summarizeSrc(roundImageData),
       });
       setLocalAvatarPreviewPath(baseImageData);
-      onAvatarChange(baseImageData);
+      if (pendingImageSrc) {
+        onAvatarChange(pendingImageSrc);
+      } else {
+        onAvatarChange(baseImageData);
+      }
       setLocalAvatarRoundPreviewPath(roundImageData);
       onAvatarRoundChange?.(roundImageData);
       onAvatarCropChange?.(null);

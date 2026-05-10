@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import type { AvatarGradientSource } from "./schemas";
 import { isRenderableImageUrl } from "../utils/image";
 
 /**
@@ -88,6 +89,7 @@ export async function saveAvatar(
   entityId: string,
   imageData: string,
   roundImageData?: string | null,
+  gradientSource: AvatarGradientSource = "round",
 ): Promise<string> {
   if (!imageData || !entityId) {
     console.log("[saveAvatar] No image data or entity ID provided");
@@ -118,9 +120,10 @@ export async function saveAvatar(
         entityId,
         AVATAR_BASE_FILENAME,
         true,
+        gradientSource,
       );
       if (regeneratedGradient) {
-        const cacheKey = `${type}-${entityId}`;
+        const cacheKey = `${type}-${entityId}-${gradientSource}`;
         gradientCache.set(cacheKey, regeneratedGradient);
         console.log("[saveAvatar] Regenerated gradient and updated cache for entity:", prefixedId);
       }
@@ -250,6 +253,7 @@ export async function generateGradientFromAvatar(
   entityId: string,
   avatarFilename: string | undefined,
   force = false,
+  source: AvatarGradientSource = "round",
 ): Promise<AvatarGradient | undefined> {
   if (!entityId || !avatarFilename) {
     return undefined;
@@ -261,6 +265,7 @@ export async function generateGradientFromAvatar(
       entityId: prefixedId,
       filename: avatarFilename,
       force,
+      source,
     });
 
     console.log(`[generateGradientFromAvatar] Generated gradient for ${prefixedId}:`, gradient);
@@ -289,12 +294,13 @@ export async function getCachedGradient(
   entityId: string,
   avatarFilename: string | undefined,
   force = false,
+  source: AvatarGradientSource = "round",
 ): Promise<AvatarGradient | undefined> {
   if (!entityId) {
     return undefined;
   }
 
-  const cacheKey = `${type}-${entityId}`;
+  const cacheKey = `${type}-${entityId}-${source}`;
 
   if (!force && gradientCache.has(cacheKey)) {
     console.log(`[getCachedGradient] Using cached gradient for ${cacheKey}`);
@@ -306,6 +312,7 @@ export async function getCachedGradient(
     entityId,
     AVATAR_BASE_FILENAME,
     force,
+    source,
   );
 
   if (gradient) {
@@ -324,9 +331,10 @@ export async function getCachedGradient(
 export async function recalculateGradient(
   type: EntityType,
   entityId: string,
+  source: AvatarGradientSource = "round",
 ): Promise<AvatarGradient | undefined> {
   clearEntityGradientCache(type, entityId);
-  const gradient = await getCachedGradient(type, entityId, AVATAR_BASE_FILENAME, true);
+  const gradient = await getCachedGradient(type, entityId, AVATAR_BASE_FILENAME, true, source);
   emitAvatarUpdated(type, entityId);
   return gradient;
 }
@@ -344,6 +352,10 @@ export function clearGradientCache(): void {
  * Useful when updating a single avatar
  */
 export function clearEntityGradientCache(type: EntityType, entityId: string): void {
-  const cacheKey = `${type}-${entityId}`;
-  gradientCache.delete(cacheKey);
+  const prefix = `${type}-${entityId}-`;
+  for (const key of Array.from(gradientCache.keys())) {
+    if (key.startsWith(prefix)) {
+      gradientCache.delete(key);
+    }
+  }
 }

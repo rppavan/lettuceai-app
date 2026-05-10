@@ -84,6 +84,7 @@ export function CharactersPage() {
         id: c.id,
         avatarPath: c.avatarPath,
         disableGradient: c.disableAvatarGradient,
+        source: c.avatarGradientSource ?? "base",
       })),
     );
 

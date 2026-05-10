@@ -793,15 +793,17 @@ pub fn storage_save_avatar(
     let round_path = avatars_dir.join(round_filename);
     fs::write(&round_path, round_webp_bytes)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
-    let gradient_cache_path = avatars_dir.join("gradient.json");
-    if gradient_cache_path.exists() {
-        let _ = fs::remove_file(&gradient_cache_path);
-        log_info(
-            &app,
-            "avatar",
-            format!("Deleted gradient cache for {}", entity_id),
-        );
+    for cache_name in ["gradient.json", "gradient-base.json", "gradient-round.json"] {
+        let gradient_cache_path = avatars_dir.join(cache_name);
+        if gradient_cache_path.exists() {
+            let _ = fs::remove_file(&gradient_cache_path);
+        }
     }
+    log_info(
+        &app,
+        "avatar",
+        format!("Deleted gradient cache for {}", entity_id),
+    );
     Ok(base_filename.to_string())
 }
 
@@ -898,6 +900,21 @@ struct ClusterColor {
     count: usize,
 }
 
+const SIGBITS: usize = 5;
+const RSHIFT: usize = 8 - SIGBITS;
+const HISTOSIZE: usize = 1 << (3 * SIGBITS);
+
+#[derive(Clone, Debug)]
+struct VBox {
+    r1: usize,
+    r2: usize,
+    g1: usize,
+    g2: usize,
+    b1: usize,
+    b2: usize,
+    count: usize,
+}
+
 #[derive(Clone, Copy)]
 struct SwatchTarget {
     min_saturation: f64,
@@ -925,21 +942,37 @@ pub fn generate_avatar_gradient(
     entity_id: String,
     _filename: String,
     force: Option<bool>,
+    source: Option<String>,
 ) -> Result<AvatarGradient, String> {
     let entity_id = validate_simple_id(&entity_id, "entity ID")?;
     let force = force.unwrap_or(false);
+    let source = source.unwrap_or_else(|| "round".to_string());
     let avatars_dir = storage_root(&app)?.join("avatars").join(entity_id);
     let round_path = avatars_dir.join("avatar_round.webp");
     let base_path = avatars_dir.join("avatar_base.webp");
     let legacy_path = avatars_dir.join("avatar.webp");
-    let avatar_path = if round_path.exists() {
-        round_path
-    } else if base_path.exists() {
-        base_path
-    } else {
-        legacy_path
+    let avatar_path = match source.as_str() {
+        "base" => {
+            if base_path.exists() {
+                base_path
+            } else {
+                legacy_path
+            }
+        }
+        _ => {
+            if round_path.exists() {
+                round_path
+            } else if base_path.exists() {
+                base_path
+            } else {
+                legacy_path
+            }
+        }
     };
-    let gradient_cache_path = avatars_dir.join("gradient.json");
+    let gradient_cache_path = avatars_dir.join(match source.as_str() {
+        "base" => "gradient-base.json",
+        _ => "gradient-round.json",
+    });
     if !avatar_path.exists() {
         return Err(crate::utils::err_msg(
             module_path!(),
@@ -1001,10 +1034,7 @@ pub fn generate_avatar_gradient(
         for x in (0..width).step_by(sample_step as usize) {
             if let Some(pixel) = rgb_img.get_pixel_checked(x, y) {
                 let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
-                let (_, s, v) = rgb_to_hsv(r, g, b);
-                if v > 0.15 && v < 0.95 && s > 0.1 {
-                    samples.push((r, g, b));
-                }
+                samples.push((r, g, b));
             }
         }
     }
@@ -1043,66 +1073,33 @@ fn find_dominant_colors(samples: &[(u8, u8, u8)], k: usize) -> Result<Vec<Cluste
             "No samples provided",
         ));
     }
-    let mut centroids: Vec<(f64, f64, f64)> = Vec::new();
-    let step = samples.len() / k.max(1);
-    for i in 0..k {
-        let idx = (i * step).min(samples.len() - 1);
-        let sample = samples[idx];
-        centroids.push((sample.0 as f64, sample.1 as f64, sample.2 as f64));
-    }
-    for _ in 0..8 {
-        let mut clusters: Vec<Vec<(f64, f64, f64)>> = vec![Vec::new(); k];
-        for &(r, g, b) in samples {
-            let mut best = 0usize;
-            let mut bestd = f64::MAX;
-            for (i, &(cr, cg, cb)) in centroids.iter().enumerate() {
-                let d = (r as f64 - cr).powi(2) + (g as f64 - cg).powi(2) + (b as f64 - cb).powi(2);
-                if d < bestd {
-                    bestd = d;
-                    best = i;
-                }
-            }
-            clusters[best].push((r as f64, g as f64, b as f64));
-        }
-        for (i, cluster) in clusters.iter().enumerate() {
-            if !cluster.is_empty() {
-                let (mut sr, mut sg, mut sb) = (0.0, 0.0, 0.0);
-                for &(r, g, b) in cluster {
-                    sr += r;
-                    sg += g;
-                    sb += b;
-                }
-                let l = cluster.len() as f64;
-                centroids[i] = (sr / l, sg / l, sb / l);
-            }
-        }
-    }
-    let mut clusters: Vec<Vec<(f64, f64, f64)>> = vec![Vec::new(); k];
-    for &(r, g, b) in samples {
-        let mut best = 0usize;
-        let mut bestd = f64::MAX;
-        for (i, &(cr, cg, cb)) in centroids.iter().enumerate() {
-            let d = (r as f64 - cr).powi(2) + (g as f64 - cg).powi(2) + (b as f64 - cb).powi(2);
-            if d < bestd {
-                bestd = d;
-                best = i;
-            }
-        }
-        clusters[best].push((r as f64, g as f64, b as f64));
+    let hist = build_histogram(samples);
+    let mut boxes = vec![create_vbox(samples, &hist)?];
+
+    while boxes.len() < k {
+        let Some((index, _)) = boxes
+            .iter()
+            .enumerate()
+            .filter(|(_, vbox)| vbox.count > 0 && vbox_can_split(vbox))
+            .max_by(|(_, a), (_, b)| {
+                vbox_score(a)
+                    .partial_cmp(&vbox_score(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        else {
+            break;
+        };
+
+        let vbox = boxes.remove(index);
+        let (left, right) = split_vbox(vbox, &hist)?;
+        boxes.push(left);
+        boxes.push(right);
     }
 
-    let mut result: Vec<ClusterColor> = centroids
+    let mut result: Vec<ClusterColor> = boxes
         .into_iter()
-        .enumerate()
-        .map(|(i, (r, g, b))| ClusterColor {
-            r: r.round() as u8,
-            g: g.round() as u8,
-            b: b.round() as u8,
-            count: clusters.get(i).map(|c| c.len()).unwrap_or(0),
-        })
-        .filter(|cluster| cluster.count > 0)
+        .filter_map(|vbox| average_color(&vbox, &hist))
         .collect();
-
     result.sort_by(|a, b| b.count.cmp(&a.count));
     Ok(result)
 }
@@ -1122,6 +1119,215 @@ fn calculate_average_hue(colors: &[ClusterColor]) -> f64 {
     } else {
         sum_y.atan2(sum_x).to_degrees().rem_euclid(360.0)
     }
+}
+
+fn build_histogram(samples: &[(u8, u8, u8)]) -> Vec<usize> {
+    let mut hist = vec![0usize; HISTOSIZE];
+    for &(r, g, b) in samples {
+        let index = color_index(r >> RSHIFT, g >> RSHIFT, b >> RSHIFT);
+        hist[index] += 1;
+    }
+    hist
+}
+
+fn color_index(r: u8, g: u8, b: u8) -> usize {
+    ((r as usize) << (2 * SIGBITS)) + ((g as usize) << SIGBITS) + b as usize
+}
+
+fn create_vbox(samples: &[(u8, u8, u8)], hist: &[usize]) -> Result<VBox, String> {
+    let mut rmin = usize::MAX;
+    let mut rmax = 0usize;
+    let mut gmin = usize::MAX;
+    let mut gmax = 0usize;
+    let mut bmin = usize::MAX;
+    let mut bmax = 0usize;
+
+    for &(r, g, b) in samples {
+        let r = (r >> RSHIFT) as usize;
+        let g = (g >> RSHIFT) as usize;
+        let b = (b >> RSHIFT) as usize;
+        rmin = rmin.min(r);
+        rmax = rmax.max(r);
+        gmin = gmin.min(g);
+        gmax = gmax.max(g);
+        bmin = bmin.min(b);
+        bmax = bmax.max(b);
+    }
+
+    if rmin == usize::MAX {
+        return Err(crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            "Failed to create vbox",
+        ));
+    }
+
+    let mut vbox = VBox {
+        r1: rmin,
+        r2: rmax,
+        g1: gmin,
+        g2: gmax,
+        b1: bmin,
+        b2: bmax,
+        count: 0,
+    };
+    vbox.count = vbox_population(&vbox, hist);
+    Ok(vbox)
+}
+
+fn vbox_population(vbox: &VBox, hist: &[usize]) -> usize {
+    let mut sum = 0usize;
+    for r in vbox.r1..=vbox.r2 {
+        for g in vbox.g1..=vbox.g2 {
+            for b in vbox.b1..=vbox.b2 {
+                sum += hist[color_index(r as u8, g as u8, b as u8)];
+            }
+        }
+    }
+    sum
+}
+
+fn vbox_volume(vbox: &VBox) -> usize {
+    (vbox.r2 - vbox.r1 + 1) * (vbox.g2 - vbox.g1 + 1) * (vbox.b2 - vbox.b1 + 1)
+}
+
+fn vbox_score(vbox: &VBox) -> f64 {
+    vbox.count as f64 * vbox_volume(vbox) as f64
+}
+
+fn vbox_can_split(vbox: &VBox) -> bool {
+    vbox.r1 < vbox.r2 || vbox.g1 < vbox.g2 || vbox.b1 < vbox.b2
+}
+
+fn average_color(vbox: &VBox, hist: &[usize]) -> Option<ClusterColor> {
+    let mut total = 0usize;
+    let mut rsum = 0usize;
+    let mut gsum = 0usize;
+    let mut bsum = 0usize;
+
+    for r in vbox.r1..=vbox.r2 {
+        for g in vbox.g1..=vbox.g2 {
+            for b in vbox.b1..=vbox.b2 {
+                let count = hist[color_index(r as u8, g as u8, b as u8)];
+                if count == 0 {
+                    continue;
+                }
+                total += count;
+                rsum += count * ((r << RSHIFT) + (1 << (RSHIFT - 1)));
+                gsum += count * ((g << RSHIFT) + (1 << (RSHIFT - 1)));
+                bsum += count * ((b << RSHIFT) + (1 << (RSHIFT - 1)));
+            }
+        }
+    }
+
+    if total == 0 {
+        return None;
+    }
+
+    Some(ClusterColor {
+        r: (rsum / total).min(255) as u8,
+        g: (gsum / total).min(255) as u8,
+        b: (bsum / total).min(255) as u8,
+        count: total,
+    })
+}
+
+fn split_vbox(vbox: VBox, hist: &[usize]) -> Result<(VBox, VBox), String> {
+    let r_range = vbox.r2 - vbox.r1;
+    let g_range = vbox.g2 - vbox.g1;
+    let b_range = vbox.b2 - vbox.b1;
+
+    let axis = if r_range >= g_range && r_range >= b_range {
+        0usize
+    } else if g_range >= r_range && g_range >= b_range {
+        1usize
+    } else {
+        2usize
+    };
+
+    let mut partial_sum = Vec::new();
+    let mut total = 0usize;
+
+    let (start, end) = match axis {
+        0 => (vbox.r1, vbox.r2),
+        1 => (vbox.g1, vbox.g2),
+        _ => (vbox.b1, vbox.b2),
+    };
+
+    for i in start..=end {
+        let mut sum = 0usize;
+        match axis {
+            0 => {
+                for g in vbox.g1..=vbox.g2 {
+                    for b in vbox.b1..=vbox.b2 {
+                        sum += hist[color_index(i as u8, g as u8, b as u8)];
+                    }
+                }
+            }
+            1 => {
+                for r in vbox.r1..=vbox.r2 {
+                    for b in vbox.b1..=vbox.b2 {
+                        sum += hist[color_index(r as u8, i as u8, b as u8)];
+                    }
+                }
+            }
+            _ => {
+                for r in vbox.r1..=vbox.r2 {
+                    for g in vbox.g1..=vbox.g2 {
+                        sum += hist[color_index(r as u8, g as u8, i as u8)];
+                    }
+                }
+            }
+        }
+        total += sum;
+        partial_sum.push((i, total));
+    }
+
+    if total == 0 {
+        return Err(crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            "Failed to split empty vbox",
+        ));
+    }
+
+    let mid = total / 2;
+    let split_at = partial_sum
+        .iter()
+        .find(|(_, running)| *running >= mid)
+        .map(|(index, _)| *index)
+        .unwrap_or(start);
+
+    let mut left = vbox.clone();
+    let mut right = vbox;
+
+    match axis {
+        0 => {
+            left.r2 = split_at;
+            right.r1 = (split_at + 1).min(right.r2);
+        }
+        1 => {
+            left.g2 = split_at;
+            right.g1 = (split_at + 1).min(right.g2);
+        }
+        _ => {
+            left.b2 = split_at;
+            right.b1 = (split_at + 1).min(right.b2);
+        }
+    }
+
+    left.count = vbox_population(&left, hist);
+    right.count = vbox_population(&right, hist);
+
+    if left.count == 0 || right.count == 0 {
+        return Err(crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            "Failed to split vbox into populated boxes",
+        ));
+    }
+
+    Ok((left, right))
 }
 
 fn calculate_text_colors(colors: &[GradientColor]) -> (String, String) {

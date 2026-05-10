@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { AVATAR_ROUND_FILENAME, loadAvatar, type EntityType } from "../../core/storage/avatars";
+import {
+  AVATAR_ROUND_FILENAME,
+  AVATAR_UPDATED_EVENT,
+  loadAvatar,
+  type EntityType,
+} from "../../core/storage/avatars";
 import { isRenderableImageUrl } from "../../core/utils/image";
 
 const avatarCache = new Map<string, string | Promise<string>>();
@@ -37,6 +42,7 @@ export function useAvatar(
   avatarFilename: string | undefined,
   variant: AvatarVariant = "base",
 ): string | undefined {
+  const [refreshTick, setRefreshTick] = useState(0);
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(() => {
     if (entityId && avatarFilename) {
       const resolvedFilename =
@@ -139,7 +145,23 @@ export function useAvatar(
     return () => {
       cancelled = true;
     };
-  }, [type, entityId, avatarFilename, variant]);
+  }, [type, entityId, avatarFilename, variant, refreshTick]);
+
+  useEffect(() => {
+    const handleAvatarUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: EntityType; entityId?: string }>).detail;
+      if (!entityId || !detail || detail.type !== type || detail.entityId !== entityId) {
+        return;
+      }
+      invalidateAvatarCache(type, entityId);
+      setRefreshTick((value) => value + 1);
+    };
+
+    window.addEventListener(AVATAR_UPDATED_EVENT, handleAvatarUpdated as EventListener);
+    return () => {
+      window.removeEventListener(AVATAR_UPDATED_EVENT, handleAvatarUpdated as EventListener);
+    };
+  }, [entityId, type]);
 
   return avatarUrl;
 }

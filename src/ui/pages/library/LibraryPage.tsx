@@ -732,6 +732,8 @@ const LibraryCard = memo(
       item.id,
       avatarPath,
       getItemDisableGradient(item),
+      undefined,
+      item.itemType === "character" ? ((item as Character).avatarGradientSource ?? "base") : "round",
     );
 
     const badge =
