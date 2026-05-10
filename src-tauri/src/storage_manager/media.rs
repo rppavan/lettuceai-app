@@ -1399,6 +1399,7 @@ fn rgb_to_hsv(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
     let h = if h < 0.0 { h + 360.0 } else { h };
     (h, s, v)
 }
+#[allow(dead_code)]
 fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
     let c = v * s;
     let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());

@@ -990,7 +990,7 @@ function AppContent() {
 
         <main
           ref={mainRef}
-          className={`flex-1 ${showTopNav ? "pt-[var(--topnav-h,72px)]" : ""} ${
+          className={`flex-1 ${showTopNav ? "pt-(--topnav-h,72px)" : ""} ${
             isOnboardingRoute
               ? `overflow-y-auto ${isDesktop ? "" : "px-0 pt-5 pb-5"}`
               : isChatDetailRoute
@@ -1010,7 +1010,7 @@ function AppContent() {
                           : isDiscoveryRoute
                             ? "overflow-hidden px-0 pt-0 pb-0"
                             : isSettingRoute
-                              ? "overflow-y-auto px-4 pt-4 pb-6 lg:overflow-hidden lg:p-0 lg:mt-[var(--topnav-h,72px)]"
+                              ? "overflow-y-auto px-4 pt-4 pb-6 lg:overflow-hidden lg:p-0 lg:mt-(--topnav-h,72px)"
                               : `overflow-y-auto px-4 pt-4 ${showBottomNav ? "pb-[calc(96px+env(safe-area-inset-bottom))]" : "pb-6"}`
           }`}
         >

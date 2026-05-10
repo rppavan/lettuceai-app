@@ -17,7 +17,7 @@ use crate::utils::{log_info, log_warn};
 
 use super::exec::dispatch_tool;
 use super::llm::load_context;
-use super::state::{build_draft_view, AgentTurn, PlanStep, StepStatus, TargetKind, TurnBlock};
+use super::state::{build_draft_view, AgentTurn, PlanStep, StepStatus, TargetKind};
 use super::structured_fallback::{
     fallback_system_prompt, parse as parse_fallback, CreationHelperFallbackFormat,
 };
@@ -29,7 +29,7 @@ const MAX_TURN_ITERATIONS: u32 = 8;
 pub async fn run_agent_turn(
     app: &AppHandle,
     session: &mut CreationSession,
-    user_message: &str,
+    _user_message: &str,
     stream_request_id: &str,
     fallback_format: CreationHelperFallbackFormat,
 ) -> Result<AgentTurn, String> {

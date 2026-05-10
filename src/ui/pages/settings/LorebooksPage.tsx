@@ -35,7 +35,7 @@ export function LorebooksPage() {
     <div className="flex min-h-screen flex-col">
       <div className="px-4 pt-4">
         <div className="mx-auto w-full max-w-5xl">
-          <div className="grid grid-cols-2 gap-2 rounded-xl border border-fg/10 bg-fg/[0.03] p-1">
+          <div className="grid grid-cols-2 gap-2 rounded-xl border border-fg/10 bg-fg/3 p-1">
             {TABS.map((tab) => {
               const active = tab.id === activeTab;
               const Icon = tab.icon;
@@ -52,7 +52,7 @@ export function LorebooksPage() {
                   {active && (
                     <motion.span
                       layoutId="lorebook-tab-pill"
-                      className="absolute inset-0 rounded-lg bg-fg/[0.08]"
+                      className="absolute inset-0 rounded-lg bg-fg/8"
                       transition={{ type: "spring", stiffness: 380, damping: 32 }}
                     />
                   )}

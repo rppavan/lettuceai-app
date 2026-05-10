@@ -113,6 +113,7 @@ pub fn load_context(app: &AppHandle) -> Result<LlmContext, String> {
     })
 }
 
+#[allow(dead_code)]
 pub async fn call_text(
     app: &AppHandle,
     ctx: &LlmContext,

@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use uuid::Uuid;
 
 use super::state::StepResult;
-use super::verbs::{Tool, ToolCategory};
+use super::verbs::Tool;
 use crate::creation_helper::service::execute_tool;
 use crate::creation_helper::types::{CreationSession, CreationToolResult};
 

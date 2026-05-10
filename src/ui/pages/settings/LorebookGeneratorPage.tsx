@@ -446,7 +446,7 @@ export function LorebookGeneratorPage() {
             </div>
           </div>
 
-          <div className="flex items-start gap-3 rounded-xl border border-fg/10 bg-fg/[0.03] px-4 py-3.5">
+          <div className="flex items-start gap-3 rounded-xl border border-fg/10 bg-fg/3 px-4 py-3.5">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-fg/30" />
             <div className="text-[11px] leading-relaxed text-fg/45">
               <p>

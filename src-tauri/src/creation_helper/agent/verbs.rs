@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ToolCategory {
     Write,
@@ -71,6 +72,7 @@ impl Tool {
         }
     }
 
+    #[allow(dead_code)]
     pub fn category(self) -> ToolCategory {
         use Tool::*;
         match self {

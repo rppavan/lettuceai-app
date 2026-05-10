@@ -115,6 +115,7 @@ pub enum CoherenceChange {
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub enum JobStage {
     Created,
     Planning,

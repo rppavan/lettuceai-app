@@ -81,14 +81,14 @@ function NavButton({
       aria-label={item.label}
       className={cn(
         "group relative flex w-full items-center gap-2.5 rounded-md text-left",
-        nested ? "px-2.5 py-[6px] pl-9" : "px-2.5 py-[9px]",
+        nested ? "px-2.5 py-1.5 pl-9" : "px-2.5 py-2.25",
         "transition-colors duration-150",
         "focus:outline-none focus-visible:ring-1 focus-visible:ring-fg/20",
         active
           ? "text-fg"
           : item.danger
             ? "text-danger/75 hover:bg-danger/10 hover:text-danger"
-            : "text-fg/60 hover:bg-fg/[0.04] hover:text-fg",
+            : "text-fg/60 hover:bg-fg/4 hover:text-fg",
       )}
     >
       {active && (
@@ -98,8 +98,8 @@ function NavButton({
           className={cn(
             "absolute inset-0 rounded-md",
             nested
-              ? "bg-fg/[0.06]"
-              : "bg-fg/[0.08] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]",
+              ? "bg-fg/6"
+              : "bg-fg/8 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]",
           )}
           transition={{ type: "spring", stiffness: 420, damping: 34, mass: 0.6 }}
         />
@@ -108,7 +108,7 @@ function NavButton({
         <motion.span
           aria-hidden
           layoutId="settings-nav-accent"
-          className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[2px] rounded-full bg-accent"
+          className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-full bg-accent"
           transition={{ type: "spring", stiffness: 420, damping: 34, mass: 0.6 }}
         />
       )}
@@ -116,8 +116,8 @@ function NavButton({
         className={cn(
           "relative flex shrink-0 items-center justify-center transition-colors",
           nested
-            ? "h-[18px] w-[18px] [&_svg]:h-[15px] [&_svg]:w-[15px]"
-            : "h-6 w-6 [&_svg]:h-[18px] [&_svg]:w-[18px]",
+            ? "h-4.5 w-4.5 [&_svg]:h-3.75 `[&_svg]:w-3.75"
+            : "h-6 w-6 [&_svg]:h-4.5 [&_svg]:w-4.5",
           active
             ? nested
               ? "text-fg/85"
@@ -145,7 +145,7 @@ function NavButton({
           className={cn(
             "relative shrink-0 tabular-nums rounded-full px-1.5 py-px",
             "text-[10px] font-semibold leading-tight transition-opacity duration-150",
-            active ? "bg-fg/[0.10] text-fg/80" : "bg-fg/[0.04] text-fg/40",
+            active ? "bg-fg/10 text-fg/80" : "bg-fg/4 text-fg/40",
             collapsed && "opacity-0",
           )}
         >
@@ -471,20 +471,19 @@ export function SettingsLayout() {
       {/* Desktop sidebar */}
       <aside
         className={cn(
-          "hidden lg:flex lg:w-[var(--settings-sidebar-w)] lg:shrink-0 lg:flex-col",
+          "hidden lg:flex lg:w-(--settings-sidebar-w) lg:shrink-0 lg:flex-col",
           "lg:border-r lg:border-fg/10",
-          "lg:bg-gradient-to-b lg:from-fg/[0.015] lg:to-transparent",
+          "lg:bg-linear-to-b lg:from-fg/1.5 lg:to-transparent",
           "lg:overflow-y-auto lg:overflow-x-hidden",
           "transition-[width] duration-200 ease-out",
         )}
       >
-        {/* Inner content holds its expanded width; outer aside clips it. */}
-        <div className="flex w-[var(--settings-sidebar-inner-w)] shrink-0 flex-col">
+        <div className="flex w-(--settings-sidebar-inner-w) shrink-0 flex-col">
           <div
             className={cn(
               "sticky top-0 z-10 flex items-start gap-2 px-3 pt-5 pb-3",
               "bg-surface",
-              "border-b border-fg/[0.06]",
+              "border-b border-fg/6",
             )}
           >
             <button
@@ -494,15 +493,15 @@ export function SettingsLayout() {
               aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
               className={cn(
                 "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
-                "text-fg/50 hover:bg-fg/[0.06] hover:text-fg",
+                "text-fg/50 hover:bg-fg/6 hover:text-fg",
                 "transition-colors duration-150",
                 "focus:outline-none focus-visible:ring-1 focus-visible:ring-fg/20",
               )}
             >
               {collapsed ? (
-                <PanelLeftOpen className="h-[17px] w-[17px]" />
+                <PanelLeftOpen className="h-4.25 w-4.25" />
               ) : (
-                <PanelLeftClose className="h-[17px] w-[17px]" />
+                <PanelLeftClose className="h-4.25 w-4.25" />
               )}
             </button>
             <div
@@ -562,7 +561,7 @@ export function SettingsLayout() {
                           }}
                           style={{ overflow: "hidden" }}
                         >
-                          <div className="ml-2.5 mb-1 mt-0.5 flex flex-col gap-0.5 border-l border-fg/[0.08] pl-1">
+                          <div className="ml-2.5 mb-1 mt-0.5 flex flex-col gap-0.5 border-l border-fg/8 pl-1">
                             {item.children!.map((child) => (
                               <NavButton
                                 key={child.key}

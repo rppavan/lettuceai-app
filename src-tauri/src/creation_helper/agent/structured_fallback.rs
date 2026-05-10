@@ -265,7 +265,7 @@ fn parse_xml(raw: &str) -> Result<ParsedFallback, String> {
     let mut out = ParsedFallback::default();
     let mut idx = 0usize;
 
-    let mut commit_call = |out: &mut ParsedFallback,
+    let commit_call = |out: &mut ParsedFallback,
                            idx: &mut usize,
                            name: Option<String>,
                            args: Map<String, Value>| {
