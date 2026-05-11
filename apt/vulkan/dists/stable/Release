@@ -1,0 +1,21 @@
+Origin: LettuceAI
+Label: LettuceAI vulkan
+Suite: stable
+Codename: stable
+Version: 1.0
+Architectures: amd64
+Components: main
+Description: LettuceAI Debian repository (vulkan variant)
+Date: Mon, 11 May 2026 07:54:22 +0000
+MD5Sum:
+ 5144fb86325015792693bf3475f58189              465 main/binary-amd64/Packages
+ a3434e7dfe07c0178278d1442e4d52ef              365 main/binary-amd64/Packages.gz
+ 3f4b764f67db8ab2c5a8311817d7e43a              432 main/binary-amd64/Packages.xz
+SHA1:
+ 39603ca7a78964ea787637b9c55c4c691706cfe7              465 main/binary-amd64/Packages
+ 07dd22b4e6967927e0a33ff80a397a037bb18409              365 main/binary-amd64/Packages.gz
+ 8b3456f64d7bbc264e11f95847e228e3d531aa9a              432 main/binary-amd64/Packages.xz
+SHA256:
+ 0e96c065dc5fc442570eec6adc4b080e5aaf3c5af0f33fb0b94af0df724affe3              465 main/binary-amd64/Packages
+ 9f852087d60e0717a6e0e98e1fe060d7f69a6a13d0a3df3fff55c55e72399560              365 main/binary-amd64/Packages.gz
+ 1eb8e95665396923029745703b694ba4a34b2b9b63a11ce988399aba6bfa9c8f              432 main/binary-amd64/Packages.xz
