@@ -1,0 +1,15 @@
+Package: lettuceai
+Version: 1.4.1
+Architecture: amd64
+Maintainer: MegalithOfficial
+Installed-Size: 72131
+Depends: libwebkit2gtk-4.1-0, libgtk-3-0
+Filename: pool/main/lettuceai/lettuceai-linux-x86_64-cpu.deb
+Size: 27619000
+MD5sum: 435977d56dd9a0f2f4b83a27e1de31c6
+SHA1: 99e75d306394a046f5bfd63869c1e3d557425897
+SHA256: 1dd7cb118f955d746de1534d7d41ef7523c20a1360d6b399140e64141a6ce9b6
+Priority: optional
+Description: LettuceAI mobile AI roleplaying app.
+ (none)
+

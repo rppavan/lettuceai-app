@@ -1,0 +1,21 @@
+Origin: LettuceAI
+Label: LettuceAI cpu
+Suite: stable
+Codename: stable
+Version: 1.0
+Architectures: amd64
+Components: main
+Description: LettuceAI Debian repository (cpu variant)
+Date: Mon, 11 May 2026 07:52:40 +0000
+MD5Sum:
+ e693d020f350d81b879967f94c02c03e              461 main/binary-amd64/Packages
+ 915d9977b77b11d383b4ff86b9a92150              366 main/binary-amd64/Packages.gz
+ 5a5c4283481fb20c82a4987f840a9bd8              428 main/binary-amd64/Packages.xz
+SHA1:
+ 944fc0af2e56ee583dc4a3b3d4d64fb669e0aa64              461 main/binary-amd64/Packages
+ d3256cbc7bc342abcf9f78184aa38024f71c8cbd              366 main/binary-amd64/Packages.gz
+ fdb18bcbba8f762176cfa04b04594c44c1e28f4f              428 main/binary-amd64/Packages.xz
+SHA256:
+ 0922252ea9736d18dcb31def51d38e65e45f41e5eb4cb913c93c9cfedbd600d0              461 main/binary-amd64/Packages
+ 50b294c80eb499a89bfeeff8204957dce59d8d125b380e31136d2d44cf80be59              366 main/binary-amd64/Packages.gz
+ 62ceabfc55c4875f7007574b617f5108dd7047db5241ad95f5548fd2b6a4a7f6              428 main/binary-amd64/Packages.xz

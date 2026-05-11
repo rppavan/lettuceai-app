@@ -1,0 +1,2571 @@
+import React from "react";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
+import {
+  Loader2,
+  RefreshCw,
+  Plus,
+  X,
+  Sparkles,
+  BookOpen,
+  Cpu,
+  Image,
+  Download,
+  Layers,
+  Edit2,
+  ChevronDown,
+  Crop,
+  Upload,
+  User,
+  Settings,
+  Volume2,
+  EyeOff,
+  Check,
+  Info,
+  AlertTriangle,
+  MessageSquare,
+  ChevronRight,
+  FolderOpen,
+  Heart,
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useEditCharacterForm } from "./hooks/useEditCharacterForm";
+import { AvatarPicker } from "../../components/AvatarPicker";
+import { DesignReferenceEditor } from "../../components/DesignReferenceEditor";
+import { CompanionSoulEditor } from "./components/CompanionSoulEditor";
+import { SoulGenerationReviewOverlay } from "./components/SoulGenerationReviewOverlay";
+import { normalizeCompanionConfig } from "./utils/companionDefaults";
+import { BottomMenu, MenuButton, MenuButtonGroup, MenuSection } from "../../components/BottomMenu";
+import { ModelSelectionBottomMenu } from "../../components/ModelSelectionBottomMenu";
+import { BackgroundPositionModal } from "../../components/BackgroundPositionModal";
+import { CharacterExportMenu } from "../../components/CharacterExportMenu";
+import { Switch } from "../../components/Switch";
+import { ActiveLorebooksSelector } from "./components/ActiveLorebooksSelector";
+import { InteractionModeSelector } from "./components/InteractionModeSelector";
+import { cn, radius, colors, interactive, spacing, typography } from "../../design-tokens";
+import { getProviderIcon } from "../../../core/utils/providerIcons";
+import { useI18n } from "../../../core/i18n/context";
+import type { CharacterFileFormat } from "../../../core/storage/characterTransfer";
+import { convertFilePathToDataUrl } from "../../../core/storage/images";
+import {
+  buildBackgroundLibrarySelectionKey,
+  type BackgroundLibrarySelectionPayload,
+} from "../../components/AvatarPicker/librarySelection";
+import {
+  listAudioProviders,
+  listUserVoices,
+  getProviderVoices,
+  refreshProviderVoices,
+  type AudioProvider,
+  type CachedVoice,
+  type UserVoice,
+} from "../../../core/storage/audioProviders";
+import {
+  APP_COMPANION_TEMPLATE_ID,
+  APP_GROUP_CHAT_ROLEPLAY_TEMPLATE_ID,
+  APP_GROUP_CHAT_TEMPLATE_ID,
+} from "../../../core/prompts/constants";
+import { generateCompanionSoulDraft } from "../../../core/companion/soul";
+import { recalculateGradient } from "../../../core/storage/avatars";
+import { useImageData } from "../../hooks/useImageData";
+import { useAvatarGradient } from "../../hooks/useAvatarGradient";
+import { toast } from "../../components/toast";
+import { processBackgroundImage } from "../../../core/utils/image";
+
+const wordCount = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+};
+
+const summarizeAvatarValue = (value?: string | null) => {
+  if (!value) return "(empty)";
+  if (value.startsWith("data:")) return `data-url(${value.slice(0, 24)}..., len=${value.length})`;
+  return value.length > 96 ? `${value.slice(0, 96)}...` : value;
+};
+
+const GradientColorField = React.memo(function GradientColorField({
+  label,
+  value,
+  placeholder,
+  fallback,
+  onCommit,
+  onRemove,
+}: {
+  label: string;
+  value?: string;
+  placeholder: string;
+  fallback: string;
+  onCommit: (value: string) => void;
+  onRemove?: () => void;
+}) {
+  const [draft, setDraft] = React.useState(value || "");
+
+  React.useEffect(() => {
+    setDraft(value || "");
+  }, [value]);
+
+  const commit = React.useCallback(
+    (nextValue: string) => {
+      if (nextValue !== (value || "")) {
+        onCommit(nextValue);
+      }
+    },
+    [onCommit, value],
+  );
+
+  return (
+    <div className="flex items-center gap-3">
+      <label className="w-12 text-xs text-fg/50">{label}</label>
+      <div className="relative shrink-0">
+        <input
+          type="color"
+          value={draft || fallback}
+          onInput={(e) => {
+            setDraft(e.currentTarget.value);
+          }}
+          onChange={(e) => {
+            const nextValue = e.currentTarget.value;
+            setDraft(nextValue);
+            commit(nextValue);
+          }}
+          className="h-10 w-10 cursor-pointer rounded-lg border-2 border-fg/20 p-0.5"
+          style={{
+            backgroundColor: draft || fallback,
+          }}
+        />
+      </div>
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => commit(draft)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.currentTarget.blur();
+          }
+        }}
+        placeholder={placeholder}
+        className="flex-1 rounded-lg border border-fg/10 bg-surface-el/50 px-3 py-2 text-sm font-mono text-fg placeholder:text-fg/30 focus:border-secondary/50 focus:outline-none"
+      />
+      {onRemove ? (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="shrink-0 text-xs text-danger hover:text-danger"
+        >
+          ✕
+        </button>
+      ) : null}
+    </div>
+  );
+});
+
+type EditCharacterTab = "character" | "soul" | "settings";
+
+const buildOpeningContext = (
+  scenes: Array<{ title?: string | null; content: string; direction?: string | null }>,
+) =>
+  scenes
+    .filter((scene) => scene.content.trim())
+    .slice(0, 3)
+    .map((scene, index) => {
+      const title = scene.title?.trim() || `Scene ${index + 1}`;
+      const direction = scene.direction?.trim();
+      return direction
+        ? `${title}\n${scene.content.trim()}\nDirection: ${direction}`
+        : `${title}\n${scene.content.trim()}`;
+    })
+    .join("\n\n");
+
+export function EditCharacterPage() {
+  const { t } = useI18n();
+  const { characterId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { state, actions, computed } = useEditCharacterForm(characterId);
+  const [expandedSceneId, setExpandedSceneId] = React.useState<string | null>(null);
+  const [newSceneEditorOpen, setNewSceneEditorOpen] = React.useState(false);
+
+  // Background image positioning state
+  const [pendingBackgroundSrc, setPendingBackgroundSrc] = React.useState<string | null>(null);
+  const [showBackgroundChoiceMenu, setShowBackgroundChoiceMenu] = React.useState(false);
+  const [showBackgroundPositionModal, setShowBackgroundPositionModal] = React.useState(false);
+
+  // Tab state
+  const [activeTab, setActiveTab] = React.useState<EditCharacterTab>("character");
+  const [generatingSoul, setGeneratingSoul] = React.useState(false);
+  const [soulError, setSoulError] = React.useState<string | null>(null);
+  const [soulDraft, setSoulDraft] = React.useState<Partial<import("../../../core/storage/schemas").CompanionConfig> | null>(null);
+  const [soulDirection, setSoulDirection] = React.useState("");
+  const [showModelMenu, setShowModelMenu] = React.useState(false);
+  const [showFallbackModelMenu, setShowFallbackModelMenu] = React.useState(false);
+  const [showVoiceMenu, setShowVoiceMenu] = React.useState(false);
+  const [voiceSearchQuery, setVoiceSearchQuery] = React.useState("");
+  const [exportMenuOpen, setExportMenuOpen] = React.useState(false);
+  const [recalculatingGradient, setRecalculatingGradient] = React.useState(false);
+  const [sceneBackgroundLibraryTarget, setSceneBackgroundLibraryTarget] = React.useState<
+    "new" | "edit" | null
+  >(null);
+  const tabsId = React.useId();
+  const tabPanelId = `${tabsId}-panel`;
+  const characterTabId = `${tabsId}-tab-character`;
+  const soulTabId = `${tabsId}-tab-soul`;
+  const settingsTabId = `${tabsId}-tab-settings`;
+  const returnPath = `${location.pathname}${location.search}`;
+  const sceneBackgroundLibraryReturnPath = `${returnPath}:scene-background`;
+
+  const {
+    loading,
+    saving,
+    exporting,
+    error,
+    name,
+    definition,
+    description,
+    nickname,
+    creator,
+    creatorNotes,
+    creatorNotesMultilingualText,
+    tagsText,
+    avatarPath,
+    avatarCrop,
+    avatarRoundPath,
+    designDescription,
+    designReferenceImageIds,
+    backgroundImagePath,
+    scenes,
+    chatTemplates,
+    defaultSceneId,
+    newSceneContent,
+    newSceneDirection,
+    newSceneBackgroundImagePath,
+    selectedModelId,
+    selectedFallbackModelId,
+    groupChatPromptTemplateId,
+    groupChatRoleplayPromptTemplateId,
+    activeLorebookIds,
+
+    disableAvatarGradient,
+    avatarGradientSource,
+    customGradientEnabled,
+    customGradientColors,
+    customTextColor: _customTextColor,
+    customTextSecondary: _customTextSecondary,
+    memoryType,
+    dynamicMemoryEnabled,
+    models,
+    loadingModels,
+    promptTemplates,
+    loadingTemplates,
+    systemPromptTemplateId,
+    companionPromptTemplateId,
+    mode,
+    voiceConfig,
+    voiceAutoplay,
+    companion,
+
+    editingSceneId,
+    editingSceneContent,
+    editingSceneDirection,
+    editingSceneBackgroundImagePath,
+  } = state;
+
+  const {
+    setFields,
+    handleSave,
+    handleExport,
+    addScene,
+    deleteScene,
+    startEditingScene,
+    saveEditedScene,
+    cancelEditingScene,
+    resetToInitial,
+  } = actions;
+
+  const { avatarInitial, canSave } = computed;
+  const directPromptTemplates = promptTemplates.filter(
+    (template) => template.promptType === "undefined" || template.promptType === "directChat",
+  );
+  const groupChatTemplates = promptTemplates.filter(
+    (template) =>
+      template.promptType === "groupChatConversational" &&
+      template.id !== APP_GROUP_CHAT_TEMPLATE_ID,
+  );
+  const groupChatRoleplayTemplates = promptTemplates.filter(
+    (template) =>
+      template.promptType === "groupChatRoleplay" &&
+      template.id !== APP_GROUP_CHAT_ROLEPLAY_TEMPLATE_ID,
+  );
+  const companionPromptTemplates = promptTemplates.filter(
+    (template) =>
+      template.promptType === "companionChat" && template.id !== APP_COMPANION_TEMPLATE_ID,
+  );
+  const { colors: autoGradientColors, refreshGradient } = useAvatarGradient(
+    "character",
+    characterId ?? "",
+    avatarPath ?? undefined,
+    false,
+    undefined,
+    avatarGradientSource,
+  );
+  const suggestedCustomGradientColors = React.useMemo(() => {
+    if (customGradientColors.length > 0) return customGradientColors;
+
+    const detected = autoGradientColors
+      .map((color) => color.hex)
+      .filter((hex): hex is string => typeof hex === "string" && hex.length > 0)
+      .slice(0, 3);
+
+    return detected.length >= 2 ? detected : ["#4f46e5", "#7c3aed"];
+  }, [autoGradientColors, customGradientColors]);
+  const handleRecalculateGradient = React.useCallback(async () => {
+    if (!characterId || !avatarPath || recalculatingGradient) return;
+
+    setRecalculatingGradient(true);
+    try {
+      await recalculateGradient("character", characterId, avatarGradientSource);
+      await refreshGradient(true);
+      toast.success("Gradient recalculated", "Avatar colors were regenerated.");
+    } catch (error) {
+      console.error("Failed to recalculate avatar gradient:", error);
+      toast.error("Failed to recalculate gradient", "Try again in a moment.");
+    } finally {
+      setRecalculatingGradient(false);
+    }
+  }, [avatarGradientSource, avatarPath, characterId, recalculatingGradient, refreshGradient]);
+
+  React.useEffect(() => {
+    console.log("[EditCharacter] avatar state", {
+      avatarPath: summarizeAvatarValue(avatarPath),
+      avatarRoundPath: summarizeAvatarValue(avatarRoundPath),
+    });
+  }, [avatarPath, avatarRoundPath]);
+  const tabItems = React.useMemo(
+    () =>
+      [
+        { id: "character" as const, icon: User, label: "Character", disabled: false, hint: undefined as string | undefined },
+        mode === "companion"
+          ? {
+              id: "soul" as const,
+              icon: Heart,
+              label: "Soul",
+              disabled: false,
+              hint: undefined as string | undefined,
+            }
+          : null,
+        { id: "settings" as const, icon: Settings, label: "Settings", disabled: false, hint: undefined as string | undefined },
+      ].filter(
+        (item): item is {
+          id: EditCharacterTab;
+          icon: typeof User;
+          label: string;
+          disabled: boolean;
+          hint: string | undefined;
+        } => Boolean(item),
+      ),
+    [mode],
+  );
+  const activeTabId =
+    activeTab === "character" ? characterTabId : activeTab === "soul" ? soulTabId : settingsTabId;
+
+  const closeNewSceneEditor = React.useCallback(() => {
+    setFields({
+      newSceneContent: "",
+      newSceneDirection: "",
+      newSceneBackgroundImagePath: "",
+    });
+    setNewSceneEditorOpen(false);
+  }, [setFields]);
+
+  const saveNewScene = React.useCallback(() => {
+    if (!newSceneContent.trim()) return;
+    addScene();
+    setNewSceneEditorOpen(false);
+  }, [addScene, newSceneContent]);
+
+  const sceneBackgroundInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const handleSceneBackgroundUpload = React.useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      const input = event.target;
+      if (!file) return;
+
+      try {
+        const dataUrl = await processBackgroundImage(file);
+        setFields(
+          editingSceneId !== null
+            ? { editingSceneBackgroundImagePath: dataUrl }
+            : { newSceneBackgroundImagePath: dataUrl },
+        );
+      } catch (error) {
+        console.warn("EditCharacter: failed to process scene background image", error);
+      } finally {
+        input.value = "";
+      }
+    },
+    [editingSceneId, setFields],
+  );
+
+  const handleExportFormat = React.useCallback(
+    async (format: CharacterFileFormat) => {
+      await handleExport(format);
+      setExportMenuOpen(false);
+    },
+    [handleExport],
+  );
+
+  const soulGenerationDisabledReason = React.useMemo<string | null>(() => {
+    if (!name.trim()) return "Add a name first.";
+    if (!definition.trim()) return "Add a definition first.";
+    return null;
+  }, [name, definition]);
+
+  const soulModelLabel = React.useMemo(() => {
+    if (!selectedModelId) return null;
+    return models.find((m) => m.id === selectedModelId)?.displayName ?? null;
+  }, [selectedModelId, models]);
+
+  const handleGenerateSoul = React.useCallback(async () => {
+    if (soulGenerationDisabledReason || generatingSoul) {
+      if (soulGenerationDisabledReason) setSoulError(soulGenerationDisabledReason);
+      return;
+    }
+    setGeneratingSoul(true);
+    setSoulError(null);
+    try {
+      const draft = await generateCompanionSoulDraft({
+        characterName: name.trim(),
+        characterDefinition: definition,
+        characterDescription: description,
+        openingContext: buildOpeningContext(scenes),
+        currentSoul: companion,
+        userNotes: soulDirection.trim() || null,
+        modelId: selectedModelId,
+      });
+      setSoulDraft(draft);
+    } catch (err) {
+      console.error("Failed to generate companion soul:", err);
+      setSoulError(err instanceof Error ? err.message : "Failed to generate companion soul");
+    } finally {
+      setGeneratingSoul(false);
+    }
+  }, [
+    companion,
+    definition,
+    description,
+    generatingSoul,
+    name,
+    scenes,
+    selectedModelId,
+    soulDirection,
+    soulGenerationDisabledReason,
+  ]);
+
+  const handleApplySoulDraft = React.useCallback(
+    (next: import("../../../core/storage/schemas").CompanionConfig) => {
+      setFields({ companion: next });
+      setSoulDraft(null);
+    },
+    [setFields],
+  );
+
+  const [audioProviders, setAudioProviders] = React.useState<AudioProvider[]>([]);
+  const [userVoices, setUserVoices] = React.useState<UserVoice[]>([]);
+  const [providerVoices, setProviderVoices] = React.useState<Record<string, CachedVoice[]>>({});
+  const [loadingVoices, setLoadingVoices] = React.useState(false);
+  const [voiceError, setVoiceError] = React.useState<string | null>(null);
+  const [hasLoadedVoices, setHasLoadedVoices] = React.useState(false);
+
+  const buildUserVoiceValue = (id: string) => `user:${id}`;
+  const buildProviderVoiceValue = (providerId: string, voiceId: string) =>
+    `provider:${providerId}:${voiceId}`;
+
+  const voiceSelectionValue = (() => {
+    if (!voiceConfig) return "";
+    if (voiceConfig.source === "user" && voiceConfig.userVoiceId) {
+      return buildUserVoiceValue(voiceConfig.userVoiceId);
+    }
+    if (voiceConfig.source === "provider" && voiceConfig.providerId && voiceConfig.voiceId) {
+      return buildProviderVoiceValue(voiceConfig.providerId, voiceConfig.voiceId);
+    }
+    return "";
+  })();
+
+  React.useEffect(() => {
+    const globalWindow = window as any;
+    globalWindow.__saveCharacter = handleSave;
+    globalWindow.__saveCharacterCanSave = canSave;
+    globalWindow.__saveCharacterSaving = saving;
+    return () => {
+      delete globalWindow.__saveCharacter;
+      delete globalWindow.__saveCharacterCanSave;
+      delete globalWindow.__saveCharacterSaving;
+    };
+  }, [handleSave, canSave, saving]);
+
+  React.useEffect(() => {
+    const handleDiscard = () => resetToInitial();
+    window.addEventListener("unsaved:discard", handleDiscard);
+    return () => window.removeEventListener("unsaved:discard", handleDiscard);
+  }, [resetToInitial]);
+
+  React.useEffect(() => {
+    if (loading) return;
+
+    const storageKey = buildBackgroundLibrarySelectionKey(returnPath);
+    const rawSelection = sessionStorage.getItem(storageKey);
+    if (!rawSelection) return;
+
+    sessionStorage.removeItem(storageKey);
+
+    let parsed: BackgroundLibrarySelectionPayload | null = null;
+    try {
+      parsed = JSON.parse(rawSelection) as BackgroundLibrarySelectionPayload;
+    } catch (error) {
+      console.error("Failed to parse background library selection:", error);
+      return;
+    }
+
+    if (!parsed?.filePath) return;
+
+    let cancelled = false;
+    void (async () => {
+      const dataUrl = await convertFilePathToDataUrl(parsed.filePath);
+      if (!dataUrl || cancelled) return;
+      setFields({ backgroundImagePath: dataUrl });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, returnPath, setFields]);
+
+  React.useEffect(() => {
+    if (loading) return;
+
+    const storageKey = buildBackgroundLibrarySelectionKey(sceneBackgroundLibraryReturnPath);
+    const rawSelection = sessionStorage.getItem(storageKey);
+    if (!rawSelection) return;
+
+    sessionStorage.removeItem(storageKey);
+
+    let parsed: BackgroundLibrarySelectionPayload | null = null;
+    try {
+      parsed = JSON.parse(rawSelection) as BackgroundLibrarySelectionPayload;
+    } catch (error) {
+      console.error("Failed to parse scene background library selection:", error);
+      return;
+    }
+
+    if (!parsed?.filePath) return;
+
+    let cancelled = false;
+    void (async () => {
+      const dataUrl = await convertFilePathToDataUrl(parsed.filePath);
+      if (!dataUrl || cancelled) return;
+      setFields(
+        sceneBackgroundLibraryTarget === "edit"
+          ? { editingSceneBackgroundImagePath: dataUrl }
+          : { newSceneBackgroundImagePath: dataUrl },
+      );
+      setSceneBackgroundLibraryTarget(null);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, sceneBackgroundLibraryReturnPath, sceneBackgroundLibraryTarget, setFields]);
+
+  const handleChooseBackgroundFromLibrary = React.useCallback(() => {
+    navigate("/library/images/pick", {
+      state: {
+        returnPath,
+        selectionKind: "background",
+      },
+    });
+  }, [navigate, returnPath]);
+
+  const handleChooseSceneBackgroundFromLibrary = React.useCallback(
+    (target: "new" | "edit") => {
+      setSceneBackgroundLibraryTarget(target);
+      navigate("/library/images/pick", {
+        state: {
+          returnPath,
+          selectionStorageKey: sceneBackgroundLibraryReturnPath,
+          selectionKind: "background",
+        },
+      });
+    },
+    [navigate, sceneBackgroundLibraryReturnPath],
+  );
+
+  const loadVoices = React.useCallback(async () => {
+    setLoadingVoices(true);
+    setVoiceError(null);
+    try {
+      const [providers, voices] = await Promise.all([listAudioProviders(), listUserVoices()]);
+      setAudioProviders(providers);
+      setUserVoices(voices);
+
+      const voicesByProvider: Record<string, CachedVoice[]> = {};
+      await Promise.all(
+        providers.map(async (provider) => {
+          try {
+            if (provider.providerType === "elevenlabs" && provider.apiKey) {
+              voicesByProvider[provider.id] = await refreshProviderVoices(provider.id);
+            } else {
+              voicesByProvider[provider.id] = await getProviderVoices(provider.id);
+            }
+          } catch (err) {
+            console.warn("Failed to refresh provider voices:", err);
+            try {
+              voicesByProvider[provider.id] = await getProviderVoices(provider.id);
+            } catch (fallbackErr) {
+              console.warn("Failed to load cached voices:", fallbackErr);
+              voicesByProvider[provider.id] = [];
+            }
+          }
+        }),
+      );
+      setProviderVoices(voicesByProvider);
+      setHasLoadedVoices(true);
+    } catch (err) {
+      console.error("Failed to load voices:", err);
+      setVoiceError("Failed to load voices");
+    } finally {
+      setLoadingVoices(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (activeTab !== "settings" || hasLoadedVoices) return;
+    void loadVoices();
+  }, [activeTab, hasLoadedVoices, loadVoices]);
+
+  React.useEffect(() => {
+    if (mode !== "companion" && activeTab === "soul") {
+      setActiveTab("settings");
+    }
+  }, [activeTab, mode]);
+
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-fg/10 border-t-white/60" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col pb-16 text-fg/80">
+      <main
+        id={tabPanelId}
+        role="tabpanel"
+        aria-labelledby={activeTabId}
+        tabIndex={0}
+        className="flex-1 overflow-y-auto px-4"
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+          className="space-y-5 pb-6 pt-4"
+        >
+          {/* Character Tab Content */}
+          {activeTab === "character" && (
+            <>
+              {/* Error Message */}
+              <AnimatePresence>
+                {error && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.15 }}
+                    className="rounded-xl border border-danger/30 bg-danger/10 px-4 py-3"
+                  >
+                    <p className="text-sm text-danger">{error}</p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
+          )}
+
+          {/* Settings Tab Content */}
+          {activeTab === "settings" && (
+            <>
+              <InteractionModeSelector
+                mode={mode}
+                onChange={(nextMode) => setFields({ mode: nextMode })}
+                disabled={saving}
+              />
+
+              {/* Background Image Section */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="rounded-lg border border-secondary/30 bg-secondary/10 p-1.5">
+                    <Image className="h-4 w-4 text-secondary" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-fg">Chat Background</h3>
+                  <span className="text-xs text-fg/40">(Optional)</span>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-fg/10 bg-surface-el/20">
+                  {backgroundImagePath ? (
+                    <div className="relative">
+                      <img
+                        src={backgroundImagePath}
+                        alt="Background preview"
+                        className="h-32 w-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-surface-el/30 flex items-center justify-center">
+                        <span className="text-xs text-fg/80 bg-surface-el/50 px-2 py-1 rounded">
+                          Background Preview
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFields({ backgroundImagePath: "" })}
+                        className="absolute top-2 right-2 rounded-full border border-fg/20 bg-surface-el/50 p-1 text-fg/70 transition hover:bg-surface-el/70 active:scale-95"
+                        aria-label="Remove background image"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex h-32 flex-col items-center justify-center gap-2">
+                      <div className="rounded-lg border border-fg/10 bg-fg/5 p-2">
+                        <Image size={20} className="text-fg/40" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm text-fg/70">Add Background Image</p>
+                        <p className="text-xs text-fg/40">Upload one or pick from library</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-fg/10 bg-surface-el/20 px-3 py-3 text-sm text-fg/75 transition hover:bg-surface-el/30">
+                    <Upload size={14} />
+                    Upload image
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          const dataUrl = reader.result as string;
+                          setPendingBackgroundSrc(dataUrl);
+                          setShowBackgroundChoiceMenu(true);
+                        };
+                        reader.readAsDataURL(file);
+                        e.target.value = "";
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleChooseBackgroundFromLibrary}
+                    className="flex items-center justify-center gap-2 rounded-xl border border-fg/10 bg-surface-el/20 px-3 py-3 text-sm text-fg/75 transition hover:bg-surface-el/30"
+                  >
+                    <FolderOpen size={14} />
+                    Choose from library
+                  </button>
+                </div>
+                <p className="text-xs text-fg/50">
+                  Optional background image for chat conversations with this character
+                </p>
+              </div>
+
+              {avatarPath && (
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                  {/* Avatar Gradient Toggle */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3 transition hover:bg-surface-el/30">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="h-4 w-4 text-accent" />
+                          <p className="text-sm font-medium text-fg">Avatar Gradient</p>
+                        </div>
+                        <p className="mt-0.5 text-xs text-fg/50">
+                          Generate colorful gradients from avatar colors
+                        </p>
+                      </div>
+                      <div className="ml-3 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleRecalculateGradient}
+                          disabled={recalculatingGradient}
+                          className={cn(
+                            "inline-flex h-8 w-8 items-center justify-center rounded-lg border border-fg/10 bg-fg/5 text-fg/65 transition",
+                            recalculatingGradient
+                              ? "cursor-wait opacity-70"
+                              : "hover:bg-fg/10 hover:text-fg active:scale-95",
+                          )}
+                          aria-label="Recalculate avatar gradient"
+                          title="Recalculate avatar gradient"
+                        >
+                          {recalculatingGradient ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                        <Switch
+                          checked={!disableAvatarGradient}
+                          onChange={(next) => setFields({ disableAvatarGradient: !next })}
+                        />
+                      </div>
+                    </div>
+                    <AnimatePresence initial={false}>
+                      {!disableAvatarGradient && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          transition={{ duration: 0.18, ease: "easeOut" }}
+                          className="rounded-lg border border-fg/10 bg-surface-el/10 p-2"
+                        >
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-xs font-medium text-fg/75">Gradient Source</span>
+                            <span className="text-[11px] text-fg/45">
+                              Choose which avatar file is sampled
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setFields({ avatarGradientSource: "base" })}
+                              className={cn(
+                                "rounded-lg border px-3 py-2 text-sm transition",
+                                avatarGradientSource === "base"
+                                  ? "border-accent/40 bg-accent/12 text-accent"
+                                  : "border-fg/10 bg-fg/5 text-fg/70 hover:bg-fg/10",
+                              )}
+                            >
+                              Base Image
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFields({ avatarGradientSource: "round" })}
+                              className={cn(
+                                "rounded-lg border px-3 py-2 text-sm transition",
+                                avatarGradientSource === "round"
+                                  ? "border-accent/40 bg-accent/12 text-accent"
+                                  : "border-fg/10 bg-fg/5 text-fg/70 hover:bg-fg/10",
+                              )}
+                            >
+                              Cropped
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                      {customGradientEnabled && !disableAvatarGradient && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          transition={{ duration: 0.18, ease: "easeOut" }}
+                          className="rounded-lg border border-warning/20 bg-warning/8 px-2.5 py-2"
+                        >
+                          <div className="flex min-h-4 items-center gap-2 text-xs text-warning/85">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                            <span className="block leading-none">
+                              Custom Gradient overrides the automatic avatar gradient.
+                            </span>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Custom Gradient Override */}
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="h-4 w-4 text-secondary" />
+                            <p className="text-sm font-medium text-fg">Custom Gradient</p>
+                          </div>
+                          <p className="mt-0.5 text-xs text-fg/50">
+                            Override auto-detected colors with your own
+                          </p>
+                        </div>
+                        <div className="ml-3">
+                          <Switch
+                            checked={customGradientEnabled}
+                            onChange={(next) => {
+                              if (next) {
+                                setFields({
+                                  customGradientEnabled: true,
+                                  customGradientColors: suggestedCustomGradientColors,
+                                });
+                              } else {
+                                setFields({ customGradientEnabled: false });
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {customGradientEnabled && (
+                        <div className="mt-4 space-y-3 border-t border-fg/10 pt-4">
+                          <div
+                            className="h-16 w-full rounded-lg"
+                            style={{
+                              background:
+                                suggestedCustomGradientColors.length >= 3
+                                  ? `linear-gradient(135deg, ${suggestedCustomGradientColors[0]}, ${suggestedCustomGradientColors[2]}, ${suggestedCustomGradientColors[1]})`
+                                  : suggestedCustomGradientColors.length >= 2
+                                    ? `linear-gradient(135deg, ${suggestedCustomGradientColors[0]}, ${suggestedCustomGradientColors[1]})`
+                                    : suggestedCustomGradientColors[0],
+                            }}
+                          />
+
+                          <GradientColorField
+                            label="Start"
+                            value={suggestedCustomGradientColors[0] || ""}
+                            placeholder="#4f46e5"
+                            fallback="#4f46e5"
+                            onCommit={(nextValue) => {
+                              const newColors = [...suggestedCustomGradientColors];
+                              newColors[0] = nextValue;
+                              setFields({ customGradientColors: newColors });
+                            }}
+                          />
+
+                          {suggestedCustomGradientColors.length >= 3 ? (
+                            <GradientColorField
+                              label="Mid"
+                              value={suggestedCustomGradientColors[2] || ""}
+                              placeholder="#a855f7"
+                              fallback="#a855f7"
+                              onCommit={(nextValue) => {
+                                const newColors = [...suggestedCustomGradientColors];
+                                newColors[2] = nextValue;
+                                setFields({ customGradientColors: newColors });
+                              }}
+                              onRemove={() => {
+                                const newColors = [
+                                  suggestedCustomGradientColors[0],
+                                  suggestedCustomGradientColors[1],
+                                ];
+                                setFields({ customGradientColors: newColors });
+                              }}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newColors = [
+                                  suggestedCustomGradientColors[0],
+                                  suggestedCustomGradientColors[1],
+                                  "#a855f7",
+                                ];
+                                setFields({ customGradientColors: newColors });
+                              }}
+                              className="py-1 text-xs text-secondary hover:text-secondary"
+                            >
+                              + Add middle color
+                            </button>
+                          )}
+
+                          <GradientColorField
+                            label="End"
+                            value={suggestedCustomGradientColors[1] || ""}
+                            placeholder="#7c3aed"
+                            fallback="#7c3aed"
+                            onCommit={(nextValue) => {
+                              const newColors = [...suggestedCustomGradientColors];
+                              newColors[1] = nextValue;
+                              setFields({ customGradientColors: newColors });
+                            }}
+                          />
+
+                          <p className="mt-2 text-[10px] text-fg/40">
+                            Text colors are auto-calculated based on gradient brightness
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === "soul" && mode === "companion" && (
+            <div className="mx-auto w-full max-w-5xl space-y-4">
+              <div className={spacing.tight}>
+                <div className="flex items-center gap-2">
+                  <div className={cn("border border-rose-400/30 bg-rose-500/10 p-1.5", radius.md)}>
+                    <Heart className="h-4 w-4 text-rose-300" />
+                  </div>
+                  <h2 className={cn(typography.h1.size, typography.h1.weight, "text-fg")}>
+                    Companion Soul
+                  </h2>
+                </div>
+                <p className={cn(typography.body.size, "text-fg/50")}>
+                  Persistent identity, emotional baseline, and how this companion regulates
+                  feelings.
+                </p>
+              </div>
+
+              {soulError && (
+                <div
+                  className={cn(
+                    "flex items-start gap-2 border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger",
+                    radius.lg,
+                  )}
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span className="flex-1">{soulError}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSoulError(null);
+                      void handleGenerateSoul();
+                    }}
+                    className={cn(
+                      "border border-danger/30 bg-danger/15 px-2 py-1 text-xs font-medium text-danger hover:bg-danger/25",
+                      radius.md,
+                      interactive.transition.fast,
+                    )}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              <CompanionSoulEditor
+                companion={companion}
+                onChange={(next) => setFields({ companion: next })}
+                disabled={saving || generatingSoul}
+                onGenerate={handleGenerateSoul}
+                generating={generatingSoul}
+                generationDisabledReason={soulGenerationDisabledReason}
+                modelLabel={soulModelLabel}
+                direction={soulDirection}
+                onDirectionChange={setSoulDirection}
+              />
+
+              <SoulGenerationReviewOverlay
+                isOpen={soulDraft !== null}
+                baseline={normalizeCompanionConfig(companion)}
+                draft={soulDraft}
+                direction={soulDirection}
+                onDirectionChange={setSoulDirection}
+                onApply={handleApplySoulDraft}
+                onCancel={() => setSoulDraft(null)}
+                onRegenerate={handleGenerateSoul}
+                regenerating={generatingSoul}
+              />
+            </div>
+          )}
+
+          {/* Character Tab: Personality & Scenes */}
+          {activeTab === "character" && (
+            <>
+              <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)] xl:items-start">
+                <div className="space-y-6 xl:sticky xl:top-4">
+                  <div className="flex flex-col items-center py-3 xl:py-0">
+                    <div className="relative">
+                      <AvatarPicker
+                        currentAvatarPath={avatarPath}
+                        onAvatarChange={(path) => {
+                          console.log("[EditCharacter] onAvatarChange", {
+                            path: summarizeAvatarValue(path),
+                          });
+                          setFields({ avatarPath: path });
+                        }}
+                        promptSubjectName={name}
+                        promptSubjectDescription={definition}
+                        avatarCrop={avatarCrop}
+                        onAvatarCropChange={(crop) => setFields({ avatarCrop: crop })}
+                        avatarRoundPath={avatarRoundPath}
+                        onAvatarRoundChange={(roundPath) => {
+                          console.log("[EditCharacter] onAvatarRoundChange", {
+                            roundPath: summarizeAvatarValue(roundPath),
+                          });
+                          setFields({ avatarRoundPath: roundPath });
+                        }}
+                        placeholder={avatarInitial}
+                      />
+
+                      {avatarPath && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFields({ avatarPath: "", avatarCrop: null, avatarRoundPath: null })
+                          }
+                          className="absolute -top-1 -left-1 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-fg/10 bg-surface-el text-fg/60 transition hover:bg-danger/80 hover:border-danger/50 hover:text-fg active:scale-95"
+                          aria-label={t("common.buttons.remove")}
+                        >
+                          <X size={14} strokeWidth={2.5} />
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-3 text-center text-xs text-fg/40">
+                      Tap to add or generate avatar
+                    </p>
+                  </div>
+
+                  <div className={spacing.field}>
+                    <label
+                      className={cn(
+                        typography.label.size,
+                        typography.label.weight,
+                        typography.label.tracking,
+                        "uppercase text-fg/70",
+                      )}
+                    >
+                      Character Name
+                    </label>
+                    <input
+                      value={name}
+                      onChange={(e) => setFields({ name: e.target.value })}
+                      placeholder="Enter character name..."
+                      className={cn(
+                        "w-full border bg-surface-el/20 px-4 py-3.5 text-fg placeholder-fg/40 backdrop-blur-xl",
+                        radius.md,
+                        typography.body.size,
+                        interactive.transition.default,
+                        "focus:border-fg/30 focus:bg-surface-el/30 focus:outline-none",
+                        name.trim() ? "border-accent/30 bg-accent/5" : "border-fg/10",
+                      )}
+                    />
+                  </div>
+
+                  <div className={spacing.field}>
+                    <label
+                      className={cn(
+                        typography.label.size,
+                        typography.label.weight,
+                        typography.label.tracking,
+                        "uppercase text-fg/70",
+                      )}
+                    >
+                      Nickname
+                    </label>
+                    <input
+                      value={nickname}
+                      onChange={(e) => setFields({ nickname: e.target.value })}
+                      placeholder="Optional nickname..."
+                      className={cn(
+                        "w-full border bg-surface-el/20 px-4 py-3.5 text-fg placeholder-fg/40 backdrop-blur-xl",
+                        radius.md,
+                        typography.body.size,
+                        interactive.transition.default,
+                        "focus:border-fg/30 focus:bg-surface-el/30 focus:outline-none",
+                        nickname.trim() ? "border-accent/30 bg-accent/5" : "border-fg/10",
+                      )}
+                    />
+                  </div>
+
+                  <div className={spacing.field}>
+                    <label
+                      className={cn(
+                        typography.label.size,
+                        typography.label.weight,
+                        typography.label.tracking,
+                        "uppercase text-fg/70",
+                      )}
+                    >
+                      Creator
+                    </label>
+                    <input
+                      value={creator}
+                      onChange={(e) => setFields({ creator: e.target.value })}
+                      placeholder="Optional creator name..."
+                      className={cn(
+                        "w-full border bg-surface-el/20 px-4 py-3.5 text-fg placeholder-fg/40 backdrop-blur-xl",
+                        radius.md,
+                        typography.body.size,
+                        interactive.transition.default,
+                        "focus:border-fg/30 focus:bg-surface-el/30 focus:outline-none",
+                        creator.trim() ? "border-accent/30 bg-accent/5" : "border-fg/10",
+                      )}
+                    />
+                  </div>
+
+                  <div className={spacing.field}>
+                    <label
+                      className={cn(
+                        typography.label.size,
+                        typography.label.weight,
+                        typography.label.tracking,
+                        "uppercase text-fg/70",
+                      )}
+                    >
+                      Tags
+                    </label>
+                    <textarea
+                      value={tagsText}
+                      onChange={(e) => setFields({ tagsText: e.target.value })}
+                      rows={2}
+                      placeholder="tag1, tag2"
+                      className={cn(
+                        "w-full resize-none border bg-surface-el/20 px-4 py-3.5 text-fg placeholder-fg/40 backdrop-blur-xl",
+                        radius.md,
+                        typography.body.size,
+                        interactive.transition.default,
+                        "focus:border-fg/30 focus:bg-surface-el/30 focus:outline-none",
+                        tagsText.trim() ? "border-accent/30 bg-accent/5" : "border-fg/10",
+                      )}
+                    />
+                  </div>
+
+                  <div className={spacing.field}>
+                    <label
+                      className={cn(
+                        typography.label.size,
+                        typography.label.weight,
+                        typography.label.tracking,
+                        "uppercase text-fg/70",
+                      )}
+                    >
+                      Creator Notes
+                    </label>
+                    <textarea
+                      value={creatorNotes}
+                      onChange={(e) => setFields({ creatorNotes: e.target.value })}
+                      rows={4}
+                      placeholder="Optional creator notes..."
+                      className={cn(
+                        "w-full resize-none border bg-surface-el/20 px-4 py-3.5 text-fg placeholder-fg/40 backdrop-blur-xl",
+                        radius.md,
+                        typography.body.size,
+                        interactive.transition.default,
+                        "focus:border-fg/30 focus:bg-surface-el/30 focus:outline-none",
+                        creatorNotes.trim() ? "border-accent/30 bg-accent/5" : "border-fg/10",
+                      )}
+                    />
+                  </div>
+
+                  <div className={spacing.field}>
+                    <label
+                      className={cn(
+                        typography.label.size,
+                        typography.label.weight,
+                        typography.label.tracking,
+                        "uppercase text-fg/70",
+                      )}
+                    >
+                      Creator Notes Multilingual (JSON)
+                    </label>
+                    <textarea
+                      value={creatorNotesMultilingualText}
+                      onChange={(e) => setFields({ creatorNotesMultilingualText: e.target.value })}
+                      rows={5}
+                      placeholder='{"en":"note","ja":"メモ"}'
+                      className={cn(
+                        "w-full resize-none border bg-surface-el/20 px-4 py-3.5 font-mono text-xs text-fg placeholder-fg/40 backdrop-blur-xl",
+                        radius.md,
+                        interactive.transition.default,
+                        "focus:border-fg/30 focus:bg-surface-el/30 focus:outline-none",
+                        creatorNotesMultilingualText.trim()
+                          ? "border-accent/30 bg-accent/5"
+                          : "border-fg/10",
+                      )}
+                    />
+                  </div>
+
+                  <div className="border-t border-fg/10 pt-5">
+                    <div className="space-y-3">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/settings/characters/${characterId}/templates`)}
+                        className="group flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-left transition hover:border-fg/25 hover:bg-surface-el/30 active:bg-surface-el/40"
+                      >
+                        <div className="rounded-lg border border-secondary/30 bg-secondary/10 p-1.5">
+                          <MessageSquare className="h-4 w-4 text-secondary" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-medium text-fg">Chat Templates</div>
+                            {(chatTemplates?.length ?? 0) > 0 && (
+                              <span className="rounded-full border border-fg/10 bg-fg/5 px-2 py-0.5 text-xs text-fg/70">
+                                {chatTemplates?.length ?? 0}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-fg/50">
+                            {(chatTemplates?.length ?? 0) > 0
+                              ? `${chatTemplates?.length} template${(chatTemplates?.length ?? 0) !== 1 ? "s" : ""} — multi-message conversation starters`
+                              : "Create conversation starters with multiple messages"}
+                          </p>
+                        </div>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-fg/30 group-hover:text-fg/50" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          navigate(`/settings/accessibility/chat?characterId=${characterId}`)
+                        }
+                        className={cn(
+                          "group flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left",
+                          "border-fg/10 bg-surface-el/20",
+                          interactive.transition.fast,
+                          "hover:bg-surface-el/30",
+                        )}
+                      >
+                        <div className="rounded-lg border border-info/30 bg-info/10 p-1.5">
+                          <MessageSquare className="h-4 w-4 text-info" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-fg">Chat Appearance</div>
+                          <p className="mt-0.5 text-xs text-fg/50">
+                            Customize bubbles, fonts, and layout
+                          </p>
+                        </div>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-fg/30 group-hover:text-fg/50" />
+                      </button>
+
+                      <motion.button
+                        onClick={() => setExportMenuOpen(true)}
+                        disabled={exporting}
+                        whileTap={{ scale: exporting ? 1 : 0.98 }}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-info/40 bg-info/20 px-4 py-3.5 text-sm font-semibold text-info transition hover:bg-info/30 disabled:opacity-50"
+                      >
+                        {exporting ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Exporting...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-4 w-4" />
+                            Export Character
+                          </>
+                        )}
+                      </motion.button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <section className={spacing.field}>
+                    <div className="flex items-center gap-2">
+                      <div className="rounded-lg border border-fg/10 bg-fg/5 p-1.5">
+                        <Info className="h-4 w-4 text-fg/60" />
+                      </div>
+                      <h3 className="text-sm font-semibold text-fg">Description</h3>
+                    </div>
+                    <textarea
+                      value={description}
+                      onChange={(e) => setFields({ description: e.target.value })}
+                      rows={5}
+                      placeholder="Short summary shown in lists and cards..."
+                      className={cn(
+                        "w-full resize-none border bg-surface-el/20 px-4 py-3.5 text-sm leading-relaxed text-fg placeholder-fg/40 backdrop-blur-xl",
+                        radius.md,
+                        interactive.transition.default,
+                        "focus:border-fg/30 focus:bg-surface-el/30 focus:outline-none",
+                        description.trim() ? "border-fg/20" : "border-fg/10",
+                      )}
+                    />
+                    <p className="text-xs text-fg/50">
+                      Optional short description for display purposes.
+                    </p>
+                  </section>
+
+                  <section className={spacing.field}>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="rounded-lg border border-accent/30 bg-accent/10 p-1.5">
+                          <Sparkles className="h-4 w-4 text-accent" />
+                        </div>
+                        <h3 className="text-sm font-semibold text-fg">Definition</h3>
+                      </div>
+                      <textarea
+                        value={definition}
+                        onChange={(e) => setFields({ definition: e.target.value })}
+                        rows={18}
+                        placeholder="Describe who this character is, their personality, background, speaking style, and how they should interact..."
+                        className="w-full resize-none rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-sm leading-relaxed text-fg placeholder-fg/40 transition focus:border-fg/25 focus:outline-none"
+                      />
+                      <div className="flex justify-between text-[11px] text-fg/50">
+                        <span>Be detailed to create a unique personality</span>
+                        <span>{wordCount(definition)} words</span>
+                      </div>
+                      <div className="rounded-xl border border-warning/30 bg-warning/10 px-3.5 py-3">
+                        <div className="text-[11px] font-medium text-warning">
+                          Available Placeholders
+                        </div>
+                        <div className="mt-2 space-y-1 text-xs text-fg/60">
+                          <div>
+                            <code className="text-accent">{"{{char}}"}</code> - Character name
+                          </div>
+                          <div>
+                            <code className="text-accent">{"{{user}}"}</code> - Persona name
+                            (preferred, empty if none)
+                          </div>
+                          <div>
+                            <code className="text-accent">{"{{persona}}"}</code> - Persona name
+                            (alias)
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className={spacing.field}>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="rounded-lg border border-fg/10 bg-fg/5 p-1.5">
+                          <Image className="h-4 w-4 text-fg/60" />
+                        </div>
+                        <h3 className="text-sm font-semibold text-fg">Design references</h3>
+                      </div>
+                      <DesignReferenceEditor
+                        designDescription={designDescription}
+                        onDesignDescriptionChange={(value) =>
+                          setFields({ designDescription: value })
+                        }
+                        referenceImages={designReferenceImageIds}
+                        onReferenceImagesChange={(value) =>
+                          setFields({ designReferenceImageIds: value })
+                        }
+                        subjectName={name}
+                        subjectDescription={definition || description}
+                        avatarImage={avatarPath}
+                        showHeader={false}
+                        description="Attach a few stable image references and one concise visual note so scene generation keeps the same face, proportions, outfit cues, and style."
+                      />
+                    </div>
+                  </section>
+                </div>
+              </div>
+
+              {/* Starting Scenes Section */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="rounded-lg border border-info/30 bg-info/10 p-1.5">
+                    <BookOpen className="h-4 w-4 text-info" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-fg">
+                    {mode === "companion" ? "Opening Context" : "Starting Scenes"}
+                  </h3>
+                  {scenes.length > 0 && (
+                    <span className="ml-auto rounded-full border border-fg/10 bg-fg/5 px-2 py-0.5 text-xs text-fg/70">
+                      {scenes.length}
+                    </span>
+                  )}
+                </div>
+
+                {/* Existing Scenes */}
+                <AnimatePresence mode="popLayout">
+                  {scenes.length > 0 && (
+                    <motion.div layout className="space-y-2">
+                      {scenes.map((scene, index) => {
+                        const isDefault = defaultSceneId === scene.id;
+                        const isExpanded = expandedSceneId === scene.id;
+
+                        return (
+                          <motion.div
+                            key={scene.id}
+                            layout
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.9, x: -20 }}
+                            transition={{ duration: 0.15 }}
+                            className={`overflow-hidden rounded-xl border ${
+                              isDefault ? "border-accent/40 bg-accent/10" : "border-fg/15 bg-fg/8"
+                            }`}
+                          >
+                            {/* Scene Header - clickable to expand/collapse */}
+                            <button
+                              onClick={() => setExpandedSceneId(isExpanded ? null : scene.id)}
+                              className={`flex w-full items-center gap-2 border-b px-3.5 py-2.5 text-left ${
+                                isDefault ? "border-accent/30 bg-accent/15" : "border-fg/15 bg-fg/8"
+                              }`}
+                            >
+                              {/* Scene number badge */}
+                              <div
+                                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border text-xs font-medium ${
+                                  isDefault
+                                    ? "border-accent/40 bg-accent/20 text-accent/80"
+                                    : "border-fg/10 bg-fg/5 text-fg/60"
+                                }`}
+                              >
+                                {index + 1}
+                              </div>
+
+                              {/* Default badge */}
+                              {isDefault && (
+                                <div className="flex items-center gap-1 rounded-full border border-accent/40 bg-accent/20 px-2 py-0.5">
+                                  <div className="h-1.5 w-1.5 rounded-full bg-accent" />
+                                  <span className="text-[10px] font-medium text-accent/80">
+                                    Default
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Direction indicator */}
+                              {scene.direction && (
+                                <div
+                                  className="flex items-center gap-1 rounded-full border border-fg/10 bg-fg/5 px-1.5 py-0.5"
+                                  title="Has scene direction"
+                                >
+                                  <EyeOff className="h-3 w-3 text-fg/40" />
+                                </div>
+                              )}
+
+                              {/* Preview text when collapsed */}
+                              {!isExpanded && (
+                                <span className="flex-1 truncate text-sm text-fg/50">
+                                  {scene.content.slice(0, 50)}
+                                  {scene.content.length > 50 ? "..." : ""}
+                                </span>
+                              )}
+
+                              {/* Expand indicator */}
+                              <ChevronDown
+                                className={cn(
+                                  "h-4 w-4 text-fg/40 transition-transform ml-auto",
+                                  isExpanded && "rotate-180",
+                                )}
+                              />
+                            </button>
+
+                            {/* Scene Content - collapsible */}
+                            <AnimatePresence>
+                              {isExpanded && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: "auto", opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="p-3.5">
+                                    <div className="space-y-3">
+                                      <p className="text-sm leading-relaxed text-fg/90">
+                                        {scene.content}
+                                      </p>
+
+                                      {/* Scene Direction (if set) */}
+                                      {scene.direction && (
+                                        <div className="pt-2 border-t border-fg/5">
+                                          <p className="text-[10px] font-medium text-fg/40 mb-1">
+                                            Scene Direction
+                                          </p>
+                                          <p className="text-xs leading-relaxed text-fg/50 italic">
+                                            {scene.direction}
+                                          </p>
+                                        </div>
+                                      )}
+
+                                      {scene.backgroundImagePath && (
+                                        <SceneBackgroundCard
+                                          path={scene.backgroundImagePath}
+                                          label="Scene background"
+                                          compact
+                                        />
+                                      )}
+
+                                      {/* Actions when expanded */}
+                                      <div className="flex items-center gap-2 pt-2 border-t border-fg/5">
+                                        {!isDefault && (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setFields({ defaultSceneId: scene.id });
+                                            }}
+                                            className="rounded-lg border border-fg/10 bg-fg/5 px-2.5 py-1.5 text-xs font-medium text-fg/60 transition active:scale-95 active:bg-fg/10"
+                                          >
+                                            Set as Default
+                                          </button>
+                                        )}
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setNewSceneEditorOpen(false);
+                                            startEditingScene(scene);
+                                          }}
+                                          className="rounded-lg border border-fg/10 bg-fg/5 p-1.5 text-fg/60 transition active:scale-95 active:bg-fg/10"
+                                          aria-label={`Edit scene ${index + 1}`}
+                                        >
+                                          <Edit2 className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            deleteScene(scene.id);
+                                          }}
+                                          className="rounded-lg border border-fg/10 bg-fg/5 p-1.5 text-fg/50 transition active:bg-danger/10 active:text-danger"
+                                          aria-label={`Delete scene ${index + 1}`}
+                                        >
+                                          <X className="h-3.5 w-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </motion.div>
+                        );
+                      })}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Add New Scene */}
+                <motion.div layout className="space-y-2">
+                  <div className="rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3">
+                    <div className="text-sm font-medium text-fg">
+                      {mode === "companion" ? "New opening context" : "New starting scene"}
+                    </div>
+                    <p className="mt-1 text-xs text-fg/50">
+                      {mode === "companion"
+                        ? "Optional first-chat context. Companion continuity comes from memory after that."
+                        : "Create a scenario and optional direction for the opening moment."}
+                    </p>
+                    <div className="mt-3 flex items-center gap-2">
+                      <motion.button
+                        onClick={() => setNewSceneEditorOpen(true)}
+                        whileTap={{ scale: 0.97 }}
+                        className="flex items-center gap-2 rounded-xl border border-accent/50 bg-accent/20 px-3.5 py-2 text-sm font-medium text-accent transition active:bg-accent/30"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Create Scene
+                      </motion.button>
+                      {newSceneContent.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => setNewSceneEditorOpen(true)}
+                          className="text-xs text-fg/50 transition hover:text-fg/70"
+                        >
+                          Continue draft
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+
+                <p className="text-xs text-fg/50">
+                  {mode === "companion"
+                    ? "Companion mode can start without context; these are optional."
+                    : "Create multiple starting scenarios. One will be selected when starting a new chat."}
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* Settings Tab: Model & Memory */}
+          {activeTab === "settings" && (
+            <>
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                {/* Model Selection Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-lg border border-secondary/30 bg-secondary/10 p-1.5">
+                      <Cpu className="h-4 w-4 text-secondary" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-fg">Default Model</h3>
+                    <span className="ml-auto text-xs text-fg/40">(Optional)</span>
+                  </div>
+
+                  {loadingModels ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <Loader2 className="h-4 w-4 animate-spin text-fg/50" />
+                      <span className="text-sm text-fg/50">Loading models...</span>
+                    </div>
+                  ) : models.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowModelMenu(true)}
+                      className="flex w-full items-center justify-between rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-left transition hover:bg-surface-el/30 focus:border-fg/25 focus:outline-none"
+                    >
+                      <div className="flex items-center gap-2">
+                        {selectedModelId ? (
+                          getProviderIcon(
+                            models.find((m) => m.id === selectedModelId)?.providerId || "",
+                          )
+                        ) : (
+                          <Cpu className="h-5 w-5 text-fg/40" />
+                        )}
+                        <span className={`text-sm ${selectedModelId ? "text-fg" : "text-fg/50"}`}>
+                          {selectedModelId
+                            ? models.find((m) => m.id === selectedModelId)?.displayName ||
+                              "Selected Model"
+                            : "Use global default model"}
+                        </span>
+                      </div>
+                      <ChevronDown className="h-4 w-4 text-fg/40" />
+                    </button>
+                  ) : (
+                    <div className="rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <p className="text-sm text-fg/50">No models available</p>
+                    </div>
+                  )}
+                  <p className="text-xs text-fg/50">
+                    Override the default AI model for this character
+                  </p>
+                </div>
+
+                {/* Fallback Model Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-lg border border-info/30 bg-info/10 p-1.5">
+                      <Cpu className="h-4 w-4 text-info" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-fg">Fallback Model</h3>
+                    <span className="ml-auto text-xs text-fg/40">(Optional)</span>
+                  </div>
+
+                  {loadingModels ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <Loader2 className="h-4 w-4 animate-spin text-fg/50" />
+                      <span className="text-sm text-fg/50">Loading models...</span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowFallbackModelMenu(true)}
+                      className="flex w-full items-center justify-between rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-left transition hover:bg-surface-el/30 focus:border-fg/25 focus:outline-none"
+                    >
+                      <div className="flex items-center gap-2">
+                        {selectedFallbackModelId ? (
+                          getProviderIcon(
+                            models.find((m) => m.id === selectedFallbackModelId)?.providerId || "",
+                          )
+                        ) : (
+                          <Cpu className="h-5 w-5 text-fg/40" />
+                        )}
+                        <span
+                          className={`text-sm ${selectedFallbackModelId ? "text-fg" : "text-fg/50"}`}
+                        >
+                          {selectedFallbackModelId
+                            ? models.find((m) => m.id === selectedFallbackModelId)?.displayName ||
+                              "Selected Fallback Model"
+                            : "Off (no fallback)"}
+                        </span>
+                      </div>
+                      <ChevronDown className="h-4 w-4 text-fg/40" />
+                    </button>
+                  )}
+                  <p className="text-xs text-fg/50">
+                    Retry with this model only when the primary model fails
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <div className="space-y-4">
+                  {/* Voice Selection */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="rounded-lg border border-accent/30 bg-accent/10 p-1.5">
+                        <Volume2 className="h-4 w-4 text-accent/80" />
+                      </div>
+                      <h3 className="text-sm font-semibold text-fg">Voice</h3>
+                      <span className="ml-auto text-xs text-fg/40">(Optional)</span>
+                    </div>
+
+                    {loadingVoices ? (
+                      <div className="flex items-center gap-2 rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                        <Loader2 className="h-4 w-4 animate-spin text-fg/50" />
+                        <span className="text-sm text-fg/50">Loading voices...</span>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowVoiceMenu(true)}
+                        className="flex w-full items-center justify-between rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-left transition hover:bg-surface-el/30 focus:border-fg/25 focus:outline-none"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Volume2 className="h-5 w-5 text-fg/40" />
+                          <span
+                            className={`text-sm ${voiceSelectionValue ? "text-fg" : "text-fg/50"}`}
+                          >
+                            {voiceSelectionValue
+                              ? (() => {
+                                  if (voiceConfig?.source === "user") {
+                                    const v = userVoices.find(
+                                      (uv) => uv.id === voiceConfig.userVoiceId,
+                                    );
+                                    return v?.name || "Custom Voice";
+                                  }
+                                  if (voiceConfig?.source === "provider") {
+                                    const pv = providerVoices[voiceConfig.providerId || ""]?.find(
+                                      (pv) => pv.voiceId === voiceConfig.voiceId,
+                                    );
+                                    return pv?.name || "Provider Voice";
+                                  }
+                                  return "Selected Voice";
+                                })()
+                              : "No voice assigned"}
+                          </span>
+                        </div>
+                        <ChevronDown className="h-4 w-4 text-fg/40" />
+                      </button>
+                    )}
+
+                    {voiceError && <p className="text-xs font-medium text-danger">{voiceError}</p>}
+                    {!loadingVoices && audioProviders.length === 0 && userVoices.length === 0 && (
+                      <p className="text-xs text-fg/40">Add voices in Settings → Voices</p>
+                    )}
+                    <p className="text-xs text-fg/50">
+                      Assign a voice for future text-to-speech playback
+                    </p>
+                    <div
+                      className={cn(
+                        "flex items-center justify-between rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3",
+                        !voiceConfig && "opacity-50",
+                      )}
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-fg">Autoplay voice</p>
+                        <p className="mt-1 text-xs text-fg/50">
+                          {voiceConfig
+                            ? "Play this character's replies automatically"
+                            : "Select a voice first"}
+                        </p>
+                      </div>
+                      <Switch
+                        id="character-voice-autoplay"
+                        checked={voiceAutoplay}
+                        onChange={(next) => setFields({ voiceAutoplay: next })}
+                        disabled={!voiceConfig}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Memory Mode */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="rounded-lg border border-warning/30 bg-warning/10 p-1.5">
+                        <Layers className="h-4 w-4 text-warning" />
+                      </div>
+                      <h3 className="text-sm font-semibold text-fg">Memory Mode</h3>
+                      {!dynamicMemoryEnabled && (
+                        <span className="ml-auto text-xs text-fg/40">
+                          Enable Dynamic Memory to switch
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFields({ memoryType: "manual" })}
+                        className={`rounded-xl border px-3.5 py-3 text-left transition ${
+                          memoryType === "manual"
+                            ? "border-accent/40 bg-accent/15 shadow-[0_0_0_1px_rgba(16,185,129,0.25)]"
+                            : "border-fg/15 bg-surface-el/20 hover:border-fg/20 hover:bg-surface-el/30"
+                        }`}
+                      >
+                        <p
+                          className={`text-sm font-semibold ${memoryType === "manual" ? "text-fg" : "text-fg/70"}`}
+                        >
+                          Manual Memory
+                        </p>
+                        <p className="mt-1 text-xs text-fg/50">
+                          Manage notes yourself (current system).
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!dynamicMemoryEnabled}
+                        onClick={() => dynamicMemoryEnabled && setFields({ memoryType: "dynamic" })}
+                        className={`rounded-xl border px-3.5 py-3 text-left transition ${
+                          memoryType === "dynamic" && dynamicMemoryEnabled
+                            ? "border-info/50 bg-info/20 shadow-[0_0_0_1px_rgba(96,165,250,0.3)]"
+                            : "border-fg/15 bg-surface-el/15"
+                        } ${!dynamicMemoryEnabled ? "cursor-not-allowed opacity-50" : "hover:border-fg/20 hover:bg-surface-el/25"}`}
+                      >
+                        <p
+                          className={`text-sm font-semibold ${memoryType === "dynamic" && dynamicMemoryEnabled ? "text-fg" : "text-fg/70"}`}
+                        >
+                          Dynamic Memory
+                        </p>
+                        <p className="mt-1 text-xs text-fg/50">
+                          Automatic summaries when enabled globally.
+                        </p>
+                      </button>
+                    </div>
+                    <p className="text-xs text-fg/50">
+                      Dynamic Memory must be turned on in Advanced settings; otherwise manual
+                      memory is used.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Prompt Template Section */}
+                  <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-lg border border-info/30 bg-info/10 p-1.5">
+                      <BookOpen className="h-4 w-4 text-info" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-fg">
+                      {mode === "companion" ? "Companion Prompt" : "System Prompt"}
+                    </h3>
+                    <span className="ml-auto text-xs text-fg/40">(Optional)</span>
+                  </div>
+
+                  {loadingTemplates ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <Loader2 className="h-4 w-4 animate-spin text-fg/50" />
+                      <span className="text-sm text-fg/50">Loading templates...</span>
+                    </div>
+                  ) : promptTemplates.length > 0 ? (
+                    <select
+                      value={
+                        mode === "companion"
+                          ? companionPromptTemplateId || ""
+                          : systemPromptTemplateId || ""
+                      }
+                      onChange={(e) =>
+                        setFields(
+                          mode === "companion"
+                            ? { companionPromptTemplateId: e.target.value || null }
+                            : { systemPromptTemplateId: e.target.value || null },
+                        )
+                      }
+                      className="w-full appearance-none rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-sm text-fg transition focus:border-fg/25 focus:outline-none"
+                    >
+                      <option value="">
+                        {mode === "companion"
+                          ? "Use default companion prompt"
+                          : "Use default system prompt"}
+                      </option>
+                      {(mode === "companion" ? companionPromptTemplates : directPromptTemplates).map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <p className="text-sm text-fg/50">Using app default</p>
+                      <p className="mt-1 text-xs text-fg/40">
+                        {mode === "companion"
+                          ? "No custom companion templates yet. Create one in Settings → Prompts."
+                          : "No custom direct-chat templates yet. Create one in Settings → Prompts."}
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-xs text-fg/50">
+                    {mode === "companion"
+                      ? "Stored separately as companion prompt ID; the roleplay system prompt is unchanged."
+                      : "Override the default system prompt for this character."}
+                  </p>
+                </div>
+
+                <ActiveLorebooksSelector
+                  selectedIds={activeLorebookIds}
+                  onChange={(ids) => setFields({ activeLorebookIds: ids })}
+                  disabled={saving}
+                />
+
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-lg border border-info/30 bg-info/10 p-1.5">
+                      <BookOpen className="h-4 w-4 text-info" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-fg">Group Chat Prompt</h3>
+                    <span className="ml-auto text-xs text-fg/40">(Conversation)</span>
+                  </div>
+
+                  {loadingTemplates ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <Loader2 className="h-4 w-4 animate-spin text-fg/50" />
+                      <span className="text-sm text-fg/50">Loading templates...</span>
+                    </div>
+                  ) : groupChatTemplates.length > 0 ? (
+                    <select
+                      value={groupChatPromptTemplateId || ""}
+                      onChange={(e) =>
+                        setFields({ groupChatPromptTemplateId: e.target.value || null })
+                      }
+                      className="w-full appearance-none rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-sm text-fg transition focus:border-fg/25 focus:outline-none"
+                    >
+                      <option value="">Use default group conversation prompt</option>
+                      {groupChatTemplates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <p className="text-sm text-fg/50">Using app default</p>
+                      <p className="mt-1 text-xs text-fg/40">
+                        No custom conversation group chat templates yet. Create one in Settings →
+                        Prompts.
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-xs text-fg/50">
+                    Override this character&apos;s conversation prompt in group chats
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-lg border border-info/30 bg-info/10 p-1.5">
+                      <BookOpen className="h-4 w-4 text-info" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-fg">Group Chat Prompt</h3>
+                    <span className="ml-auto text-xs text-fg/40">(Roleplay)</span>
+                  </div>
+
+                  {loadingTemplates ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <Loader2 className="h-4 w-4 animate-spin text-fg/50" />
+                      <span className="text-sm text-fg/50">Loading templates...</span>
+                    </div>
+                  ) : groupChatRoleplayTemplates.length > 0 ? (
+                    <select
+                      value={groupChatRoleplayPromptTemplateId || ""}
+                      onChange={(e) =>
+                        setFields({
+                          groupChatRoleplayPromptTemplateId: e.target.value || null,
+                        })
+                      }
+                      className="w-full appearance-none rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-sm text-fg transition focus:border-fg/25 focus:outline-none"
+                    >
+                      <option value="">Use default group roleplay prompt</option>
+                      {groupChatRoleplayTemplates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                      <p className="text-sm text-fg/50">Using app default</p>
+                      <p className="mt-1 text-xs text-fg/40">
+                        No custom roleplay group chat templates yet. Create one in Settings →
+                        Prompts.
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-xs text-fg/50">
+                    Override this character&apos;s roleplay prompt in group chats
+                  </p>
+                </div>
+              </div>
+              </div>
+            </>
+          )}
+        </motion.div>
+      </main>
+
+      <CharacterExportMenu
+        isOpen={exportMenuOpen}
+        onClose={() => setExportMenuOpen(false)}
+        onSelect={handleExportFormat}
+        exporting={exporting}
+      />
+
+      {/* Bottom Tab Bar */}
+      <div
+        className={cn(
+          "fixed bottom-0 left-0 right-0 border-t px-3 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-3",
+          colors.glass.strong,
+        )}
+      >
+        <div
+          role="tablist"
+          aria-label="Character editor tabs"
+          className={cn(
+            radius.lg,
+            "grid gap-2 p-1",
+            tabItems.length === 3 ? "grid-cols-3" : "grid-cols-2",
+            colors.surface.elevated,
+          )}
+        >
+          {tabItems.map(({ id, icon: Icon, label, disabled: tabDisabled, hint }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => !tabDisabled && setActiveTab(id)}
+              disabled={tabDisabled}
+              title={hint}
+              role="tab"
+              id={id === "character" ? characterTabId : id === "soul" ? soulTabId : settingsTabId}
+              aria-selected={activeTab === id}
+              aria-controls={tabPanelId}
+              aria-disabled={tabDisabled}
+              className={cn(
+                radius.md,
+                "px-3 py-2.5 text-sm font-semibold transition flex items-center justify-center gap-2",
+                interactive.active.scale,
+                tabDisabled
+                  ? "cursor-not-allowed text-fg/30"
+                  : activeTab === id
+                    ? "bg-fg/10 text-fg"
+                    : cn(colors.text.tertiary, "hover:text-fg"),
+              )}
+            >
+              <Icon size={16} className="block" />
+              <span className="pt-1">{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Edit/New Scene Fullscreen Panel */}
+      <AnimatePresence>
+        {(editingSceneId !== null || newSceneEditorOpen) && (
+          <motion.div
+            className="fixed inset-0 z-50 flex h-full flex-col bg-surface"
+            style={{ paddingTop: "env(safe-area-inset-top)" }}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            transition={{ duration: 0.2 }}
+          >
+            <div className="flex items-center justify-between border-b border-fg/10 px-4 py-3">
+              <div className="text-base font-semibold text-fg">
+                {editingSceneId !== null ? "Edit Scene" : "New Scene"}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={editingSceneId !== null ? cancelEditingScene : closeNewSceneEditor}
+                  className="rounded-full border border-fg/10 px-3 py-1.5 text-xs font-medium text-fg/70 transition hover:bg-fg/10 hover:text-fg"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={editingSceneId !== null ? saveEditedScene : saveNewScene}
+                  disabled={
+                    editingSceneId !== null ? !editingSceneContent.trim() : !newSceneContent.trim()
+                  }
+                  className={cn(
+                    "rounded-full px-3 py-1.5 text-xs font-semibold text-fg transition",
+                    "bg-linear-to-r from-accent to-accent/80",
+                    "hover:from-accent/80 hover:to-accent/60",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  {editingSceneId !== null ? "Save" : "Add"}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 pb-6 pt-4">
+              <input
+                ref={sceneBackgroundInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => {
+                  void handleSceneBackgroundUpload(event);
+                }}
+              />
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <div className="text-sm font-medium text-fg/80">Scene</div>
+                  <textarea
+                    value={editingSceneId !== null ? editingSceneContent : newSceneContent}
+                    onChange={(e) =>
+                      setFields(
+                        editingSceneId !== null
+                          ? { editingSceneContent: e.target.value }
+                          : { newSceneContent: e.target.value },
+                      )
+                    }
+                    rows={14}
+                    className="min-h-[40vh] w-full resize-none rounded-2xl border border-fg/10 bg-surface-el/40 px-4 py-4 text-sm leading-relaxed text-fg placeholder-fg/40 transition focus:border-fg/20 focus:outline-none"
+                    placeholder="Enter scene content..."
+                  />
+                  <div className="flex items-center justify-between text-[11px] text-fg/40">
+                    <span>
+                      {wordCount(editingSceneId !== null ? editingSceneContent : newSceneContent)}{" "}
+                      words
+                    </span>
+                    <span>
+                      Use <code className="text-accent/80">{"{{char}}"}</code>,{" "}
+                      <code className="text-accent/80">{"{{user}}"}</code>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5 text-sm font-medium text-fg/80">
+                    <EyeOff className="h-4 w-4 text-fg/50" />
+                    Scene Direction
+                  </div>
+                  <textarea
+                    value={editingSceneId !== null ? editingSceneDirection : newSceneDirection}
+                    onChange={(e) =>
+                      setFields(
+                        editingSceneId !== null
+                          ? { editingSceneDirection: e.target.value }
+                          : { newSceneDirection: e.target.value },
+                      )
+                    }
+                    rows={6}
+                    className="min-h-[18vh] w-full resize-none rounded-2xl border border-fg/10 bg-surface-el/35 px-4 py-3 text-sm leading-relaxed text-fg placeholder-fg/30 transition focus:border-fg/20 focus:outline-none"
+                    placeholder="e.g., 'The hostage will be rescued' or 'Build tension gradually'"
+                  />
+                  <p className="text-[11px] text-fg/40">
+                    Hidden guidance for the AI on how this scene should unfold.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-1.5 text-sm font-medium text-fg/80">
+                        <Image className="h-4 w-4 text-fg/50" />
+                        Scene Background
+                      </div>
+                      <p className="mt-1 text-[11px] text-fg/40">
+                        Becomes the active chat background for this scene unless the session overrides it.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleChooseSceneBackgroundFromLibrary(
+                            editingSceneId !== null ? "edit" : "new",
+                          )
+                        }
+                        className="flex items-center gap-2 rounded-full border border-fg/10 px-3 py-1.5 text-xs font-medium text-fg/60 transition hover:bg-fg/10 hover:text-fg"
+                      >
+                        <FolderOpen className="h-3.5 w-3.5" />
+                        Library
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          (editingSceneId !== null
+                            ? editingSceneBackgroundImagePath
+                            : newSceneBackgroundImagePath)
+                            ? setFields(
+                                editingSceneId !== null
+                                  ? { editingSceneBackgroundImagePath: "" }
+                                  : { newSceneBackgroundImagePath: "" },
+                              )
+                            : sceneBackgroundInputRef.current?.click()
+                        }
+                        className="rounded-full border border-fg/10 px-3 py-1.5 text-xs font-medium text-fg/70 transition hover:bg-fg/10 hover:text-fg"
+                      >
+                        {(editingSceneId !== null
+                          ? editingSceneBackgroundImagePath
+                          : newSceneBackgroundImagePath)
+                          ? "Remove"
+                          : "Upload"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {(editingSceneId !== null
+                    ? editingSceneBackgroundImagePath
+                    : newSceneBackgroundImagePath) ? (
+                    <div>
+                      <SceneBackgroundCard
+                        path={
+                          editingSceneId !== null
+                            ? editingSceneBackgroundImagePath
+                            : newSceneBackgroundImagePath
+                        }
+                        label="Scene background preview"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Background Upload Choice Menu */}
+      <BottomMenu
+        isOpen={showBackgroundChoiceMenu}
+        onClose={() => {
+          setShowBackgroundChoiceMenu(false);
+          setPendingBackgroundSrc(null);
+        }}
+        title=""
+      >
+        <div className="space-y-4 px-1 pb-2">
+          <div className="text-center">
+            <h3 className="text-lg font-semibold text-fg">Background Image</h3>
+            <p className="text-sm text-fg/50">Choose how to add your image</p>
+          </div>
+
+          <MenuSection>
+            <MenuButtonGroup className="space-y-2">
+              <MenuButton
+                icon={Upload}
+                title="Quick Upload"
+                description="Use full image without cropping"
+                color="from-emerald-500 to-emerald-600"
+                onClick={() => {
+                  if (pendingBackgroundSrc) {
+                    setFields({ backgroundImagePath: pendingBackgroundSrc });
+                  }
+                  setShowBackgroundChoiceMenu(false);
+                  setPendingBackgroundSrc(null);
+                }}
+              />
+              <MenuButton
+                icon={Crop}
+                title="Position & Crop"
+                description="Adjust to fit portrait view"
+                color="from-blue-500 to-blue-600"
+                onClick={() => {
+                  setShowBackgroundChoiceMenu(false);
+                  setShowBackgroundPositionModal(true);
+                }}
+              />
+            </MenuButtonGroup>
+          </MenuSection>
+        </div>
+      </BottomMenu>
+
+      {/* Background Position Modal */}
+      {pendingBackgroundSrc && (
+        <BackgroundPositionModal
+          isOpen={showBackgroundPositionModal}
+          onClose={() => {
+            setShowBackgroundPositionModal(false);
+            setPendingBackgroundSrc(null);
+          }}
+          imageSrc={pendingBackgroundSrc}
+          onConfirm={(croppedDataUrl) => {
+            setFields({ backgroundImagePath: croppedDataUrl });
+            setPendingBackgroundSrc(null);
+          }}
+        />
+      )}
+
+      <ModelSelectionBottomMenu
+        isOpen={showModelMenu}
+        onClose={() => setShowModelMenu(false)}
+        title="Select Model"
+        models={models}
+        selectedModelIds={selectedModelId ? [selectedModelId] : []}
+        searchPlaceholder="Search models..."
+        onSelectModel={(modelId) => {
+          setFields({
+            selectedModelId: modelId,
+            selectedFallbackModelId:
+              selectedFallbackModelId === modelId ? null : selectedFallbackModelId,
+          });
+          setShowModelMenu(false);
+        }}
+        clearOption={{
+          label: "Use global default model",
+          icon: Cpu,
+          selected: !selectedModelId,
+          onClick: () => {
+            setFields({ selectedModelId: null });
+            setShowModelMenu(false);
+          },
+        }}
+      />
+
+      <ModelSelectionBottomMenu
+        isOpen={showFallbackModelMenu}
+        onClose={() => setShowFallbackModelMenu(false)}
+        title="Select Fallback Model"
+        models={models.filter((m) => m.id !== selectedModelId)}
+        selectedModelIds={selectedFallbackModelId ? [selectedFallbackModelId] : []}
+        searchPlaceholder="Search models..."
+        onSelectModel={(modelId) => {
+          setFields({ selectedFallbackModelId: modelId });
+          setShowFallbackModelMenu(false);
+        }}
+        clearOption={{
+          label: "Off (no fallback)",
+          icon: Cpu,
+          selected: !selectedFallbackModelId,
+          onClick: () => {
+            setFields({ selectedFallbackModelId: null });
+            setShowFallbackModelMenu(false);
+          },
+        }}
+      />
+
+      {/* Voice Selection BottomMenu */}
+      <BottomMenu
+        isOpen={showVoiceMenu}
+        onClose={() => {
+          setShowVoiceMenu(false);
+          setVoiceSearchQuery("");
+        }}
+        title="Select Voice"
+      >
+        <div className="space-y-4">
+          <div className="relative">
+            <input
+              type="text"
+              value={voiceSearchQuery}
+              onChange={(e) => setVoiceSearchQuery(e.target.value)}
+              placeholder="Search voices..."
+              className="w-full rounded-xl border border-fg/10 bg-surface-el/30 px-4 py-2.5 pl-10 text-sm text-fg placeholder-fg/40 focus:border-fg/20 focus:outline-none"
+            />
+            <svg
+              className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg/40"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+          </div>
+          <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+            <button
+              onClick={() => {
+                setFields({ voiceConfig: null });
+                setShowVoiceMenu(false);
+                setVoiceSearchQuery("");
+              }}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition",
+                !voiceSelectionValue
+                  ? "border-accent/40 bg-accent/10"
+                  : "border-fg/10 bg-fg/5 hover:bg-fg/10",
+              )}
+            >
+              <Volume2 className="h-5 w-5 text-fg/40" />
+              <span className="text-sm text-fg">No voice assigned</span>
+              {!voiceSelectionValue && <Check className="h-4 w-4 ml-auto text-accent" />}
+            </button>
+
+            {/* User Voices */}
+            {userVoices.length > 0 && (
+              <MenuSection label="My Voices">
+                {userVoices
+                  .filter((v) => {
+                    if (!voiceSearchQuery) return true;
+                    return v.name.toLowerCase().includes(voiceSearchQuery.toLowerCase());
+                  })
+                  .map((voice) => {
+                    const value = buildUserVoiceValue(voice.id);
+                    const isSelected = voiceSelectionValue === value;
+                    const providerLabel =
+                      audioProviders.find((p) => p.id === voice.providerId)?.label ?? "Provider";
+                    return (
+                      <button
+                        key={voice.id}
+                        onClick={() => {
+                          setFields({
+                            voiceConfig: {
+                              source: "user",
+                              userVoiceId: voice.id,
+                              providerId: voice.providerId,
+                              modelId: voice.modelId,
+                              voiceName: voice.name,
+                            },
+                          });
+                          setShowVoiceMenu(false);
+                          setVoiceSearchQuery("");
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition",
+                          isSelected
+                            ? "border-accent/40 bg-accent/10"
+                            : "border-fg/10 bg-fg/5 hover:bg-fg/10",
+                        )}
+                      >
+                        <User className="h-5 w-5 text-fg/40" />
+                        <div className="flex-1 min-w-0">
+                          <span className="block truncate text-sm text-fg">{voice.name}</span>
+                          <span className="block truncate text-xs text-fg/40">{providerLabel}</span>
+                        </div>
+                        {isSelected && <Check className="h-4 w-4 shrink-0 text-accent" />}
+                      </button>
+                    );
+                  })}
+              </MenuSection>
+            )}
+
+            {/* Provider Voices */}
+            {audioProviders.map((provider) => {
+              const voices = (providerVoices[provider.id] ?? []).filter((v) => {
+                if (!voiceSearchQuery) return true;
+                return v.name.toLowerCase().includes(voiceSearchQuery.toLowerCase());
+              });
+              if (voices.length === 0) return null;
+              return (
+                <MenuSection key={provider.id} label={`${provider.label} Voices`}>
+                  {voices.map((voice) => {
+                    const value = buildProviderVoiceValue(provider.id, voice.voiceId);
+                    const isSelected = voiceSelectionValue === value;
+                    return (
+                      <button
+                        key={`${provider.id}:${voice.voiceId}`}
+                        onClick={() => {
+                          setFields({
+                            voiceConfig: {
+                              source: "provider",
+                              providerId: provider.id,
+                              voiceId: voice.voiceId,
+                              modelId:
+                                provider.providerType === "kokoro"
+                                  ? provider.kokoroVariant
+                                  : undefined,
+                              voiceName: voice.name,
+                            },
+                          });
+                          setShowVoiceMenu(false);
+                          setVoiceSearchQuery("");
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition",
+                          isSelected
+                            ? "border-accent/40 bg-accent/10"
+                            : "border-fg/10 bg-fg/5 hover:bg-fg/10",
+                        )}
+                      >
+                        <Volume2 className="h-5 w-5 text-fg/40" />
+                        <span className="flex-1 truncate text-sm text-fg">{voice.name}</span>
+                        {isSelected && <Check className="h-4 w-4 shrink-0 text-accent" />}
+                      </button>
+                    );
+                  })}
+                </MenuSection>
+              );
+            })}
+          </div>
+        </div>
+      </BottomMenu>
+    </div>
+  );
+}
+
+function SceneBackgroundCard({
+  path,
+  label,
+  compact = false,
+}: {
+  path: string;
+  label: string;
+  compact?: boolean;
+}) {
+  const imageData = useImageData(path) ?? path;
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-fg/10 bg-fg/4">
+      <img
+        src={imageData}
+        alt={label}
+        className={cn("w-full object-cover", compact ? "h-24" : "h-32")}
+      />
+      <div className="border-t border-fg/10 px-4 py-3 text-sm text-fg/60">{label}</div>
+    </div>
+  );
+}
