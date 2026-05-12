@@ -6,7 +6,7 @@
       "name": "lettuceai",
       "dependencies": {
         "@tailwindcss/vite": "^4.2.2",
-        "@tanstack/react-virtual": "^3.13.23",
+        "@tanstack/react-virtual": "3.13.23",
         "@tauri-apps/api": "^2.10.1",
         "@tauri-apps/plugin-barcode-scanner": "^2.4.4",
         "@tauri-apps/plugin-dialog": "^2.7.0",
