@@ -284,6 +284,7 @@ const SIMPLE_CONDITION_OPTIONS: Array<{
   { value: "hasKeyMemories", label: "Has key memories", kind: "boolean" },
   { value: "hasLorebookContent", label: "Has lorebook content", kind: "boolean" },
   { value: "doesAuthorNoteExists", label: "Author note exists", kind: "boolean" },
+  { value: "hasActiveScheduledNote", label: "Has active scheduled note", kind: "boolean" },
   { value: "hasSubjectDescription", label: "Has subject description", kind: "boolean" },
   { value: "hasCurrentDescription", label: "Has current description", kind: "boolean" },
   {
@@ -533,6 +534,8 @@ function describeSimpleCondition(condition: SimplePromptEntryCondition): string 
       return condition.value ? "lorebook content exists" : "lorebook content missing";
     case "doesAuthorNoteExists":
       return condition.value ? "author note exists" : "author note missing";
+    case "hasActiveScheduledNote":
+      return condition.value ? "active scheduled note exists" : "active scheduled note missing";
     case "hasSubjectDescription":
       return condition.value ? "subject description exists" : "subject description missing";
     case "hasCurrentDescription":
@@ -699,6 +702,8 @@ function getScalarConditionBucket(
     case "hasMemorySummary":
     case "hasKeyMemories":
     case "hasLorebookContent":
+    case "doesAuthorNoteExists":
+    case "hasActiveScheduledNote":
     case "hasSubjectDescription":
     case "hasCurrentDescription":
     case "hasCharacterReferenceImages":

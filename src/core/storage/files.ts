@@ -260,6 +260,19 @@ export const storageBridge = {
       JSON.parse(s),
     ),
   characterDelete: (id: string) => invoke("character_delete", { id }) as Promise<void>,
+  companionScheduledNotesList: (characterId: string) =>
+    invoke<string>("companion_scheduled_notes_list", { characterId }).then((s) => JSON.parse(s)),
+  companionScheduledNotesUpsert: (note: unknown) =>
+    invoke<string>("companion_scheduled_notes_upsert", {
+      noteJson: JSON.stringify(note),
+    }).then((s) => JSON.parse(s)),
+  companionScheduledNotesDelete: (id: string) =>
+    invoke("companion_scheduled_notes_delete", { id }) as Promise<void>,
+  companionScheduledNotesPreviewActive: (characterId: string, asOfMs: number) =>
+    invoke<string>("companion_scheduled_notes_preview_active", {
+      characterId,
+      asOfMs,
+    }).then((s) => JSON.parse(s)),
   imageLibraryList: () => invoke<unknown[]>("storage_list_image_library"),
   imageLibraryDownloadToDownloads: (filePath: string, filename?: string | null) =>
     invoke<string>("storage_download_image_to_downloads", {

@@ -4,6 +4,7 @@ import { getDefaultCharacterRules } from "./defaults";
 import { convertToImageRef } from "./images";
 import {
   CharacterSchema,
+  CompanionScheduledNoteSchema,
   CompanionTurnEffectSchema,
   LorebookSchema,
   LorebookEntrySchema,
@@ -18,6 +19,7 @@ import {
   GroupSchema,
   GroupSessionSchema,
   type Character,
+  type CompanionScheduledNote,
   type CompanionTurnEffect,
   type Session,
   type Settings,
@@ -793,7 +795,7 @@ export async function addOrUpdateProviderCredential(
     }
     settings.providerCredentials.push(cloneSerializable(entity));
   });
-  // Ensure a default provider is set if missing
+
   const current = await readSettings();
   if (!current.defaultProviderCredentialId) {
     await setDefaultProvider(entity.id);
@@ -976,9 +978,31 @@ export async function deleteCharacter(id: string): Promise<void> {
   await storageBridge.characterDelete(id);
 }
 
-// ============================================================================
-// Lorebook
-// ============================================================================
+export async function listCompanionScheduledNotes(
+  characterId: string,
+): Promise<CompanionScheduledNote[]> {
+  const data = await storageBridge.companionScheduledNotesList(characterId);
+  return z.array(CompanionScheduledNoteSchema).parse(data);
+}
+
+export async function saveCompanionScheduledNote(
+  note: CompanionScheduledNote,
+): Promise<CompanionScheduledNote> {
+  const stored = await storageBridge.companionScheduledNotesUpsert(note);
+  return CompanionScheduledNoteSchema.parse(stored);
+}
+
+export async function deleteCompanionScheduledNote(id: string): Promise<void> {
+  await storageBridge.companionScheduledNotesDelete(id);
+}
+
+export async function previewActiveCompanionScheduledNotes(
+  characterId: string,
+  asOfMs: number,
+): Promise<CompanionScheduledNote[]> {
+  const data = await storageBridge.companionScheduledNotesPreviewActive(characterId, asOfMs);
+  return z.array(CompanionScheduledNoteSchema).parse(data);
+}
 
 export async function listLorebooks(): Promise<Lorebook[]> {
   const data = await storageBridge.lorebooksList();

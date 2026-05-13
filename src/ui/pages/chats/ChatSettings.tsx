@@ -57,6 +57,8 @@ import { PersonaSelector } from "../group-chats/components/settings";
 import { storageBridge } from "../../../core/storage/files";
 import { ChatTemplateSelector } from "./components/ChatTemplateSelector";
 import { AuthorNoteBottomMenu } from "./components/AuthorNoteBottomMenu";
+import { CompanionScheduledNotesEditor } from "../characters/components/CompanionScheduledNotesEditor";
+import { CalendarClock } from "lucide-react";
 import { useI18n } from "../../../core/i18n/context";
 import { isRenderableImageUrl } from "../../../core/utils/image";
 
@@ -302,6 +304,7 @@ export function ChatSettingsContent({
     useState<AdvancedModelSettings | null>(null);
   const [showSessionAdvancedMenu, setShowSessionAdvancedMenu] = useState(false);
   const [showParameterSupport, setShowParameterSupport] = useState(false);
+  const [showScheduledNotes, setShowScheduledNotes] = useState(false);
   const [sessionAdvancedDraft, setSessionAdvancedDraft] = useState<AdvancedModelSettings>(
     createDefaultAdvancedModelSettings(),
   );
@@ -1029,6 +1032,38 @@ export function ChatSettingsContent({
                   disabled={!currentSession}
                 />
               </div>
+
+              {characterId ? (
+                <button
+                  type="button"
+                  onClick={() => setShowScheduledNotes(true)}
+                  className={cn(
+                    "group flex w-full items-center justify-between gap-3 border px-4 py-3 text-left",
+                    radius.lg,
+                    interactive.transition.default,
+                    interactive.active.scale,
+                    "border-white/10 bg-[#0c0d13]/85 hover:border-white/20 hover:bg-[#0c0d13]",
+                  )}
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div
+                      className={cn(
+                        "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center border border-fg/15 bg-fg/10 text-fg/75",
+                        radius.full,
+                      )}
+                    >
+                      <CalendarClock className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-white">Scheduled Notes</p>
+                      <p className="mt-1 text-xs text-white/50">
+                        Dated background context the companion picks up when the date arrives. Birthdays, anniversaries, seasonal beats.
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-fg/40 transition-colors group-hover:text-fg/80" />
+                </button>
+              ) : null}
             </section>
           )}
 
@@ -1354,6 +1389,18 @@ export function ChatSettingsContent({
         defaultTemplateId={currentCharacter.defaultChatTemplateId}
         onSelect={handleTemplateSelected}
       />
+
+      {characterId ? (
+        <BottomMenu
+          isOpen={showScheduledNotes}
+          onClose={() => setShowScheduledNotes(false)}
+          title="Scheduled Notes"
+        >
+          <MenuSection>
+            <CompanionScheduledNotesEditor characterId={characterId} />
+          </MenuSection>
+        </BottomMenu>
+      ) : null}
     </div>
   );
 }

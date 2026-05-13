@@ -33,6 +33,7 @@ import { useEditCharacterForm } from "./hooks/useEditCharacterForm";
 import { AvatarPicker } from "../../components/AvatarPicker";
 import { DesignReferenceEditor } from "../../components/DesignReferenceEditor";
 import { CompanionSoulEditor } from "./components/CompanionSoulEditor";
+import { CompanionScheduledNotesEditor } from "./components/CompanionScheduledNotesEditor";
 import { SoulGenerationReviewOverlay } from "./components/SoulGenerationReviewOverlay";
 import { normalizeCompanionConfig } from "./utils/companionDefaults";
 import { BottomMenu, MenuButton, MenuButtonGroup, MenuSection } from "../../components/BottomMenu";
@@ -1069,6 +1070,10 @@ export function EditCharacterPage() {
                 onRegenerate={handleGenerateSoul}
                 regenerating={generatingSoul}
               />
+
+              {characterId ? (
+                <CompanionScheduledNotesEditor characterId={characterId} />
+              ) : null}
             </div>
           )}
 

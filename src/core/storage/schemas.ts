@@ -133,6 +133,7 @@ export type PromptEntryCondition =
   | { type: "hasKeyMemories"; value: boolean }
   | { type: "hasLorebookContent"; value: boolean }
   | { type: "doesAuthorNoteExists"; value: boolean }
+  | { type: "hasActiveScheduledNote"; value: boolean }
   | { type: "hasSubjectDescription"; value: boolean }
   | { type: "hasCurrentDescription"; value: boolean }
   | { type: "hasCharacterReferenceImages"; value: boolean }
@@ -173,6 +174,7 @@ export const PromptEntryConditionSchema: z.ZodType<PromptEntryCondition> = z.laz
     z.object({ type: z.literal("hasKeyMemories"), value: z.boolean() }),
     z.object({ type: z.literal("hasLorebookContent"), value: z.boolean() }),
     z.object({ type: z.literal("doesAuthorNoteExists"), value: z.boolean() }),
+    z.object({ type: z.literal("hasActiveScheduledNote"), value: z.boolean() }),
     z.object({ type: z.literal("hasSubjectDescription"), value: z.boolean() }),
     z.object({ type: z.literal("hasCurrentDescription"), value: z.boolean() }),
     z.object({ type: z.literal("hasCharacterReferenceImages"), value: z.boolean() }),
@@ -2984,6 +2986,30 @@ export const CompanionPromptingConfigSchema = z.object({
   styleNotes: z.string().default(""),
 });
 export type CompanionPromptingConfig = z.infer<typeof CompanionPromptingConfigSchema>;
+
+export const CompanionScheduledNoteRecurrenceSchema = z.enum([
+  "none",
+  "daily",
+  "weekly",
+  "monthly",
+  "yearly",
+]);
+export type CompanionScheduledNoteRecurrence = z.infer<typeof CompanionScheduledNoteRecurrenceSchema>;
+
+export const CompanionScheduledNoteSchema = z.object({
+  id: z.string().uuid(),
+  characterId: z.string().uuid(),
+  label: z.string().default(""),
+  content: z.string(),
+  availableAt: z.number().int().nonnegative(),
+  expiresAt: z.number().int().nonnegative().nullable().optional(),
+  recurrence: CompanionScheduledNoteRecurrenceSchema.default("none"),
+  recurrenceWindowMs: z.number().int().nonnegative().nullable().optional(),
+  enabled: z.boolean().default(true),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+export type CompanionScheduledNote = z.infer<typeof CompanionScheduledNoteSchema>;
 
 export const CompanionConfigSchema = z.object({
   soul: CompanionSoulSchema.default({
