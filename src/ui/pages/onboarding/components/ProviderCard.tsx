@@ -38,11 +38,11 @@ export function ProviderCard({
           </div>
           <div className="flex-1 min-w-0">
             <h3
-              className={`text-sm font-medium leading-tight truncate ${isActive ? "text-emerald-100" : "text-white"}`}
+              className={`text-[15px] font-medium leading-tight truncate ${isActive ? "text-emerald-100" : "text-white"}`}
             >
               {provider.name}
             </h3>
-            <p className="text-xs text-gray-500 leading-snug truncate">
+            <p className="text-[13px] text-white/65 leading-snug truncate">
               {getProviderDescriptionShort(provider.id)}
             </p>
           </div>
@@ -87,8 +87,8 @@ export function ProviderCard({
           </div>
         </div>
         <div className="space-y-0.5">
-          <h3 className="text-sm font-semibold text-white leading-tight">{provider.name}</h3>
-          <p className="text-[11px] text-gray-400 leading-snug line-clamp-2">
+          <h3 className="text-[15px] font-semibold text-white leading-tight">{provider.name}</h3>
+          <p className="text-[12px] text-white/65 leading-snug line-clamp-2">
             {getProviderDescription(provider.id)}
           </p>
         </div>

@@ -65,8 +65,8 @@ export function ModelStep({
 
   if (isLoading) {
     return (
-      <div className="flex flex-1 items-center justify-center text-gray-300">
-        <div className="flex items-center gap-3 text-sm">
+      <div className="flex flex-1 items-center justify-center text-white/80">
+        <div className="flex items-center gap-3 text-[15px]">
           <Loader size={20} className="animate-spin" />
           {t("onboarding.loading")}
         </div>
@@ -76,19 +76,19 @@ export function ModelStep({
 
   if (providers.length === 0) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-6 text-center text-gray-300">
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 text-center text-white/80">
         <div className="flex h-16 w-16 items-center justify-center rounded-3xl border border-white/10 bg-white/10 text-gray-200">
           <Settings size={26} />
         </div>
         <div className="space-y-2">
-          <h2 className="text-xl font-semibold text-white">
+          <h2 className="text-[21px] font-semibold text-white">
             {t("onboarding.model.noProvidersTitle")}
           </h2>
-          <p className="max-w-md text-sm text-gray-400">{t("onboarding.model.noProvidersDesc")}</p>
+          <p className="max-w-md text-[15px] text-white/70">{t("onboarding.model.noProvidersDesc")}</p>
         </div>
         <button
           onClick={onGoBack}
-          className="rounded-full border border-white/15 bg-white/10 px-6 py-3 text-sm font-semibold text-white transition hover:border-white/30 hover:bg-white/20"
+          className="rounded-full border border-white/15 bg-white/10 px-6 py-3 text-[15px] font-semibold text-white transition hover:border-white/30 hover:bg-white/20"
         >
           {t("onboarding.model.goToProviderSetup")}
         </button>
@@ -103,8 +103,8 @@ export function ModelStep({
         {/* Left Panel - Provider List */}
         <div className="flex-1 flex flex-col border-r border-white/10">
           <div className="p-6 pb-3">
-            <h2 className="text-sm font-medium text-white/70">Your Providers</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Select which provider to use</p>
+            <h2 className="text-[15px] font-medium text-white/70">Your Providers</h2>
+            <p className="text-[13px] text-white/55 mt-0.5">Select which provider to use</p>
           </div>
           <div className="flex-1 overflow-y-auto px-6">
             <div className="space-y-2">
@@ -132,11 +132,11 @@ export function ModelStep({
                       </div>
                       <div className="flex-1 min-w-0">
                         <h3
-                          className={`text-sm font-medium ${isActive ? "text-emerald-100" : "text-white"}`}
+                          className={`text-[15px] font-medium ${isActive ? "text-emerald-100" : "text-white"}`}
                         >
                           {provider.label}
                         </h3>
-                        <p className="text-xs text-gray-500 truncate">
+                        <p className="text-[13px] text-white/55 truncate">
                           {getProviderDisplayName(provider.providerId)}
                         </p>
                       </div>
@@ -160,17 +160,17 @@ export function ModelStep({
         {/* Right Panel - Config */}
         <div className="w-100 shrink-0 p-8 overflow-y-auto">
           <div className="space-y-1 mb-6">
-            <h1 className="text-xl font-bold text-white">
+            <h1 className="text-[21px] font-bold text-white">
               {selectedCredential ? "Model Details" : "Set your default model"}
             </h1>
-            <p className="text-sm text-gray-400 leading-relaxed">
+            <p className="text-[15px] text-white/70 leading-relaxed">
               {selectedCredential
                 ? "Define the API identifier and the label you'll see inside the app."
                 : "Select a provider from the list to configure your model."}
             </p>
             <button
               onClick={onShowRecommendations}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-indigo-400/30 bg-indigo-400/10 px-3 py-1.5 text-xs font-medium text-indigo-300 transition hover:border-indigo-400/50 hover:bg-indigo-400/20 active:scale-95"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-indigo-400/30 bg-indigo-400/10 px-3 py-1.5 text-[13px] font-medium text-indigo-300 transition hover:border-indigo-400/50 hover:bg-indigo-400/20 active:scale-95"
             >
               <HelpCircle size={14} />
               Which model should I use?
@@ -192,7 +192,7 @@ export function ModelStep({
             />
           ) : (
             <div className="rounded-xl border border-dashed border-white/20 bg-white/5 p-6 text-center">
-              <p className="text-sm text-gray-500">Select a provider to configure</p>
+              <p className="text-[15px] text-white/55">Select a provider to configure</p>
             </div>
           )}
         </div>
@@ -205,14 +205,14 @@ export function ModelStep({
     <div className="flex flex-col items-center pb-8">
       {/* Title */}
       <div className="text-center space-y-2 mb-6">
-        <h1 className="text-2xl font-bold text-white">Set your default model</h1>
-        <p className="text-sm text-gray-400 max-w-sm leading-relaxed">
+        <h1 className="text-[25px] font-bold text-white">Set your default model</h1>
+        <p className="text-[15px] text-white/70 max-w-sm leading-relaxed">
           Choose which provider and model name LettuceAI should use by default. You'll be able to
           add more later.
         </p>
         <button
           onClick={onShowRecommendations}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-400/30 bg-indigo-400/10 px-3 py-1.5 text-xs font-medium text-indigo-300 transition hover:border-indigo-400/50 hover:bg-indigo-400/20 active:scale-95"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-400/30 bg-indigo-400/10 px-3 py-1.5 text-[13px] font-medium text-indigo-300 transition hover:border-indigo-400/50 hover:bg-indigo-400/20 active:scale-95"
         >
           <HelpCircle size={14} />
           Which model should I use?
@@ -238,8 +238,8 @@ export function ModelStep({
                   {getProviderIcon(provider.providerId)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-semibold text-white">{provider.label}</h3>
-                  <p className="text-xs text-gray-400 truncate">
+                  <h3 className="text-[15px] font-semibold text-white">{provider.label}</h3>
+                  <p className="text-[13px] text-white/70 truncate">
                     {getProviderDisplayName(provider.providerId)}
                   </p>
                 </div>
@@ -264,8 +264,8 @@ export function ModelStep({
         className={`w-full max-w-sm transition-all duration-300 ${showForm ? "opacity-100" : "opacity-0 pointer-events-none"}`}
       >
         <div className="text-center space-y-2 mb-6">
-          <h2 className="text-lg font-semibold text-white">Model Details</h2>
-          <p className="text-xs text-gray-400 leading-relaxed">
+          <h2 className="text-[19px] font-semibold text-white">Model Details</h2>
+          <p className="text-[13px] text-white/70 leading-relaxed">
             Define the API identifier and the label you'll see inside the app.
           </p>
         </div>

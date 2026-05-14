@@ -4384,6 +4384,11 @@ export const enMessages = {
       getStarted: "Get Started",
       skipForNow: "Skip for now",
       restoreFromBackup: "Restore from Backup",
+      syncFromDevice: "Sync from another device",
+      headline: {
+        lead: "Your private AI",
+        accent: "companion.",
+      },
       setupTime: "Setup takes less than 2 minutes",
       skipWarning: {
         title: "Skip setup?",

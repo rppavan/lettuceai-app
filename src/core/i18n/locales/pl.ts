@@ -4044,6 +4044,11 @@ export const plMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "Rozpocznij",
       "skipForNow": "Pomiń na razie",
       "restoreFromBackup": "Przywróć z kopii zapasowej",
+      "syncFromDevice": "Synchronizuj z innego urządzenia",
+      "headline": {
+        "lead": "Twój prywatny AI",
+        "accent": "towarzysz.",
+      },
       "setupTime": "Konfiguracja zajmuje mniej niż 2 minuty",
       "skipWarning": {
         "title": "Pominąć konfigurację?",

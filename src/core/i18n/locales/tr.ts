@@ -4314,6 +4314,11 @@ export const trMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "Başla",
       "skipForNow": "Şimdilik atla",
       "restoreFromBackup": "Yedekten geri yükle",
+      "syncFromDevice": "Başka cihazdan senkronize et",
+      "headline": {
+        "lead": "Senin özel yapay zekâ",
+        "accent": "yoldaşın.",
+      },
       "setupTime": "Kurulum 2 dakikadan kısa sürer",
       "skipWarning": {
         "title": "Kurulum atlansın mı?",

@@ -26,15 +26,15 @@ export function MemorySetupPrompt({ isOpen, onClose, onConfirm, onSkip }: Memory
               <Brain className="h-8 w-8 text-emerald-400" />
             </div>
           </div>
-          <h3 className="text-lg font-semibold text-white">{t("onboarding.memory.oneLastStep")}</h3>
-          <p className="mt-2 text-sm text-white/60 leading-relaxed max-w-xs mx-auto">
+          <h3 className="text-[19px] font-semibold text-white">{t("onboarding.memory.oneLastStep")}</h3>
+          <p className="mt-2 text-[15px] text-white/60 leading-relaxed max-w-xs mx-auto">
             {t("onboarding.memory.setupModelMessage")}
           </p>
         </div>
 
         {/* Info Box */}
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-          <ul className="space-y-2 text-xs text-emerald-200/80">
+          <ul className="space-y-2 text-[13px] text-emerald-200/80">
             <li className="flex items-start gap-2">
               <span className="mt-0.5">•</span>
               <span>{t("onboarding.memory.setupBullets.offline")}</span>
@@ -68,7 +68,7 @@ export function MemorySetupPrompt({ isOpen, onClose, onConfirm, onSkip }: Memory
               onClose();
               onSkip();
             }}
-            className="w-full h-12 rounded-xl border border-white/10 bg-white/5 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="w-full h-12 rounded-xl border border-white/10 bg-white/5 text-[15px] font-medium text-white/70 hover:text-white hover:bg-white/10 transition-colors"
           >
             {t("onboarding.welcome.skipForNow")}
           </button>

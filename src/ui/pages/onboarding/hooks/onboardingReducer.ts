@@ -2,6 +2,7 @@ import type { ProviderCredential } from "../../../../core/storage/schemas";
 import type { ProviderCapabilitiesCamel } from "../../../../core/providers/capabilities";
 
 export enum OnboardingStep {
+  Welcome = 0,
   Provider = 1,
   Model = 2,
   Memory = 3,
@@ -88,7 +89,7 @@ export type OnboardingAction =
   | { type: "RESET" };
 
 export const initialOnboardingState: OnboardingState = {
-  step: OnboardingStep.Provider,
+  step: OnboardingStep.Welcome,
 
   capabilities: [],
   capabilitiesLoading: true,

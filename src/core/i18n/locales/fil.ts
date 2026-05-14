@@ -4314,6 +4314,11 @@ export const filMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "Magsimula",
       "skipForNow": "Laktawan muna",
       "restoreFromBackup": "I-restore mula sa Backup",
+      "syncFromDevice": "I-sync mula sa ibang device",
+      "headline": {
+        "lead": "Ang iyong pribadong AI na",
+        "accent": "kasama.",
+      },
       "setupTime": "Ang setup ay tumatagal ng wala pang 2 minuto",
       "skipWarning": {
         "title": "Laktawan ang setup?",

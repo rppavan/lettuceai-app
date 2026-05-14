@@ -58,7 +58,7 @@ export function ProviderConfigForm({
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <label className="text-xs font-medium text-white/70">{t("common.labels.name")}</label>
+        <label className="text-[13px] font-medium text-white/70">{t("common.labels.name")}</label>
         <input
           type="text"
           value={label}
@@ -66,12 +66,12 @@ export function ProviderConfigForm({
           placeholder={`My ${selectedProviderName || "Provider"}`}
           className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white placeholder-white/40 transition-colors focus:border-white/30 focus:outline-none"
         />
-        <p className="text-[11px] text-gray-500">How this provider will appear in your menus</p>
+        <p className="text-[12px] text-white/55">How this provider will appear in your menus</p>
       </div>
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-medium text-white/70">
+          <label className="text-[13px] font-medium text-white/70">
             API Key{isLocalProvider ? " (Optional)" : ""}
           </label>
           {!isLocalProvider && !isCustomProvider && (
@@ -81,7 +81,7 @@ export function ProviderConfigForm({
                   `/wheretofind${selectedProviderId ? `?provider=${selectedProviderId}` : ""}`,
                 )
               }
-              className="text-[11px] text-gray-400 hover:text-white transition-colors"
+              className="text-[12px] text-white/70 hover:text-white transition-colors"
             >
               Where to find it
             </button>
@@ -94,12 +94,12 @@ export function ProviderConfigForm({
           placeholder={isLocalProvider ? "Usually not required" : "sk-..."}
           className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white placeholder-white/40 transition-colors focus:border-white/30 focus:outline-none"
         />
-        <p className="text-[11px] text-gray-500">Keys are encrypted locally</p>
+        <p className="text-[12px] text-white/55">Keys are encrypted locally</p>
       </div>
 
       {showBaseUrl && (
         <div className="space-y-2">
-          <label className="text-xs font-medium text-white/70">Base URL</label>
+          <label className="text-[13px] font-medium text-white/70">Base URL</label>
           <input
             type="text"
             value={baseUrl}
@@ -115,7 +115,7 @@ export function ProviderConfigForm({
             }
             className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white placeholder-white/40 transition-colors focus:border-white/30 focus:outline-none"
           />
-          <p className="text-[11px] text-gray-500">
+          <p className="text-[12px] text-white/55">
             {isLocalProvider
               ? "Your local server address with port"
               : isHostProvider
@@ -129,46 +129,46 @@ export function ProviderConfigForm({
         <>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <label className="text-xs font-medium text-white/70">Chat Endpoint</label>
+              <label className="text-[13px] font-medium text-white/70">Chat Endpoint</label>
               <input
                 type="text"
                 value={config?.chatEndpoint ?? "/v1/chat/completions"}
                 onChange={(e) => onConfigChange({ ...config, chatEndpoint: e.target.value })}
-                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white placeholder-white/40 focus:border-white/30 focus:outline-none"
+                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[15px] text-white placeholder-white/40 focus:border-white/30 focus:outline-none"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-medium text-white/70">System Role</label>
+              <label className="text-[13px] font-medium text-white/70">System Role</label>
               <input
                 type="text"
                 value={config?.systemRole ?? "system"}
                 onChange={(e) => onConfigChange({ ...config, systemRole: e.target.value })}
-                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white placeholder-white/40 focus:border-white/30 focus:outline-none"
+                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[15px] text-white placeholder-white/40 focus:border-white/30 focus:outline-none"
               />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <label className="text-xs font-medium text-white/70">User Role</label>
+              <label className="text-[13px] font-medium text-white/70">User Role</label>
               <input
                 type="text"
                 value={config?.userRole ?? "user"}
                 onChange={(e) => onConfigChange({ ...config, userRole: e.target.value })}
-                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white placeholder-white/40 focus:border-white/30 focus:outline-none"
+                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[15px] text-white placeholder-white/40 focus:border-white/30 focus:outline-none"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-medium text-white/70">Assistant Role</label>
+              <label className="text-[13px] font-medium text-white/70">Assistant Role</label>
               <input
                 type="text"
                 value={config?.assistantRole ?? "assistant"}
                 onChange={(e) => onConfigChange({ ...config, assistantRole: e.target.value })}
-                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white placeholder-white/40 focus:border-white/30 focus:outline-none"
+                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[15px] text-white placeholder-white/40 focus:border-white/30 focus:outline-none"
               />
             </div>
           </div>
           <div className="flex items-center justify-between pt-1">
-            <span className="text-xs font-medium text-white/70">Supports Streaming</span>
+            <span className="text-[13px] font-medium text-white/70">Supports Streaming</span>
             <Switch
               id="supportsStream-onboarding"
               checked={config?.supportsStream ?? true}
@@ -177,11 +177,11 @@ export function ProviderConfigForm({
           </div>
           {selectedProviderId === "custom" && (
             <div className="space-y-2">
-              <label className="text-xs font-medium text-white/70">Tool Choice Mode</label>
+              <label className="text-[13px] font-medium text-white/70">Tool Choice Mode</label>
               <select
                 value={config?.toolChoiceMode ?? "auto"}
                 onChange={(e) => onConfigChange({ ...config, toolChoiceMode: e.target.value })}
-                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
+                className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[15px] text-white focus:border-white/30 focus:outline-none"
               >
                 <option value="auto" className="bg-black">
                   Auto
@@ -199,13 +199,13 @@ export function ProviderConfigForm({
                   Passthrough (Tool Config)
                 </option>
               </select>
-              <p className="text-[11px] text-gray-500">
+              <p className="text-[12px] text-white/55">
                 Controls how `tool_choice` is sent to the custom endpoint.
               </p>
             </div>
           )}
           <div className="flex items-center justify-between pt-1">
-            <span className="text-xs font-medium text-white/70">Merge Same-role Messages</span>
+            <span className="text-[13px] font-medium text-white/70">Merge Same-role Messages</span>
             <Switch
               id="mergeSameRoleMessages-onboarding"
               checked={config?.mergeSameRoleMessages ?? true}
@@ -217,7 +217,7 @@ export function ProviderConfigForm({
 
       {testResult && (
         <div
-          className={`rounded-xl border px-4 py-3 text-sm ${
+          className={`rounded-xl border px-4 py-3 text-[15px] ${
             testResult.success
               ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200"
               : "border-amber-400/40 bg-amber-400/10 text-amber-200"
@@ -231,7 +231,7 @@ export function ProviderConfigForm({
         <button
           onClick={onTestConnection}
           disabled={!canTest || isTesting}
-          className="w-full min-h-11 rounded-xl border border-white/20 bg-white/10 px-4 py-3 font-medium text-white transition-all duration-200 hover:border-white/30 hover:bg-white/15 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/5 disabled:text-gray-500"
+          className="w-full min-h-11 rounded-xl border border-white/20 bg-white/10 px-4 py-3 font-medium text-white transition-all duration-200 hover:border-white/30 hover:bg-white/15 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/5 disabled:text-white/55"
         >
           {isTesting ? (
             <div className="flex items-center justify-center gap-2">
@@ -347,7 +347,7 @@ export function ModelConfigForm({
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <label className="text-xs font-medium text-white/70">Display Name</label>
+        <label className="text-[13px] font-medium text-white/70">Display Name</label>
         <input
           type="text"
           value={displayName}
@@ -355,12 +355,12 @@ export function ModelConfigForm({
           placeholder="Creative mentor"
           className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white placeholder-white/40 transition-colors focus:border-white/30 focus:outline-none"
         />
-        <p className="text-[11px] text-gray-500">How this model appears in menus</p>
+        <p className="text-[12px] text-white/55">How this model appears in menus</p>
       </div>
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <label className="text-[11px] font-bold tracking-wider text-white/50 uppercase">
+          <label className="text-[12px] font-bold tracking-wider text-white/50 uppercase">
             {modelIdLabel}
           </label>
           <div className="flex items-center gap-3">
@@ -368,7 +368,7 @@ export function ModelConfigForm({
               <button
                 type="button"
                 onClick={() => setIsManualInput(!isManualInput)}
-                className="text-[10px] uppercase font-bold tracking-wider text-white/40 hover:text-white/80 transition"
+                className="text-[11px] uppercase font-bold tracking-wider text-white/40 hover:text-white/80 transition"
               >
                 {isManualInput ? "Show List" : "Manual Input"}
               </button>
@@ -415,7 +415,7 @@ export function ModelConfigForm({
               renderModelTitle={(model: any) => model.displayName || model.id}
               renderModelDescription={(model: any) => model.description || model.id}
               renderEmptyState={(query) => (
-                <div className="py-12 text-center text-sm text-white/40">
+                <div className="py-12 text-center text-[15px] text-white/40">
                   No models found matching "{query}"
                 </div>
               )}
@@ -434,14 +434,14 @@ export function ModelConfigForm({
               placeholder={modelIdPlaceholder}
               className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white placeholder-white/40 transition-colors focus:border-white/30 focus:outline-none"
             />
-            <p className="text-[11px] text-gray-500">Exact identifier used for API calls</p>
+            <p className="text-[12px] text-white/55">Exact identifier used for API calls</p>
           </>
         )}
       </div>
 
       {error && (
         <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3">
-          <p className="text-sm text-red-200">{error}</p>
+          <p className="text-[15px] text-red-200">{error}</p>
         </div>
       )}
 
@@ -463,14 +463,14 @@ export function ModelConfigForm({
 
         <button
           onClick={onSkip}
-          className="w-full min-h-11 rounded-xl border border-white/10 bg-white/5 px-6 py-3 text-sm font-medium text-gray-400 transition-all duration-200 hover:border-white/20 hover:bg-white/10 hover:text-white active:scale-[0.98]"
+          className="w-full min-h-11 rounded-xl border border-white/10 bg-white/5 px-6 py-3 text-[15px] font-medium text-white/70 transition-all duration-200 hover:border-white/20 hover:bg-white/10 hover:text-white active:scale-[0.98]"
         >
           Skip for now
         </button>
       </div>
 
       {!canSave && (
-        <p className="text-xs text-center text-gray-500">
+        <p className="text-[13px] text-center text-white/55">
           Fill out both fields above to enable the finish button.
         </p>
       )}

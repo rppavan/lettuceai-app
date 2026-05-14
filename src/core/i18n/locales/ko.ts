@@ -4317,6 +4317,11 @@ export const koMessages: DeepPartialMessageTree<LocaleMessages> = {
       getStarted: "시작하기",
       skipForNow: "지금은 건너뛰기",
       restoreFromBackup: "백업에서 복원",
+      syncFromDevice: "다른 기기에서 동기화",
+      headline: {
+        lead: "당신만의 프라이빗 AI",
+        accent: "동반자.",
+      },
       setupTime: "설정은 2분 미만 소요됩니다",
       skipWarning: {
         title: "설정을 건너뛰시겠습니까?",

@@ -8,11 +8,6 @@ use crate::dynamic_memory_run_manager::DynamicMemoryRunManager;
 use crate::storage_manager::lorebook::Lorebook;
 use crate::utils::{log_info, log_info_global};
 
-// ============================================================================
-// Internal Functions (for use by group_chat_manager)
-// ============================================================================
-
-/// Internal function to get a group session without Tauri State
 pub fn group_session_get_internal(conn: &Connection, id: &str) -> Result<String, String> {
     match read_group_session(conn, id)? {
         Some(session) => serde_json::to_string(&session)
@@ -33,7 +28,6 @@ pub fn group_session_get_internal_typed(
         .ok_or_else(|| crate::utils::err_msg(module_path!(), line!(), "Session not found"))
 }
 
-/// Internal function to get participation stats without Tauri State
 pub fn group_participation_stats_internal(
     conn: &Connection,
     session_id: &str,
@@ -50,7 +44,6 @@ pub fn group_participation_stats_internal_typed(
     read_group_participation(conn, session_id)
 }
 
-/// Internal function to list messages without Tauri State
 pub fn group_messages_list_internal(
     conn: &Connection,
     session_id: &str,
@@ -72,10 +65,6 @@ pub fn group_messages_list_internal_typed(
 ) -> Result<Vec<GroupMessage>, String> {
     read_group_messages(conn, session_id, limit, before_created_at, before_id)
 }
-
-// ============================================================================
-// Types
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -153,15 +142,8 @@ fn default_memory_status() -> String {
     "idle".to_string()
 }
 
-// Group sessions share the rich `MemoryEmbedding` definition from
-// `chat_manager::types`. Re-exported here so the rest of this module and the
-// `GroupSession` struct keep working without qualified paths.
 pub use crate::chat_manager::types::MemoryEmbedding;
 
-/// Read the current memory embeddings for a group session, preferring the
-/// normalised `memory_embeddings` table when it has rows. Falls back to the
-/// legacy JSON column for sessions that haven't been saved under the new
-/// schema yet.
 fn read_group_embeddings_with_fallback(
     conn: &Connection,
     session_id: &str,
@@ -191,9 +173,6 @@ fn read_group_embeddings_with_fallback(
     Ok(serde_json::from_str(&json).unwrap_or_default())
 }
 
-/// Persist memory embeddings for a group session through the new table and
-/// clear the legacy JSON column. Caller is responsible for any other column
-/// updates (e.g. `updated_at`, `memories`).
 fn write_group_embeddings_through_table(
     conn: &mut Connection,
     session_id: &str,
@@ -283,10 +262,6 @@ pub struct GroupSessionPreview {
     pub chat_type: String,
 }
 
-// ============================================================================
-// Internal DB Functions
-// ============================================================================
-
 fn read_group_session(conn: &Connection, id: &str) -> Result<Option<GroupSession>, String> {
     let mut stmt = conn
         .prepare(
@@ -325,10 +300,6 @@ fn read_group_session(conn: &Connection, id: &str) -> Result<Option<GroupSession
             .unwrap_or_else(|| "[]".to_string());
         let memories: Vec<String> = serde_json::from_str(&memories_json).unwrap_or_default();
 
-        // Memory embeddings are sourced from the normalised `memory_embeddings`
-        // table when it holds rows for this session. Fall back to the legacy
-        // JSON column for sessions that haven't been saved under the new schema
-        // yet; the next save will migrate them.
         let memory_embeddings: Vec<MemoryEmbedding> = {
             let new_table_count = crate::storage_manager::memory_embeddings::count_for_session(
                 conn,
@@ -831,10 +802,6 @@ fn load_lorebooks_for_ids(
     Ok(lorebooks)
 }
 
-// ============================================================================
-// Tauri Commands
-// ============================================================================
-
 #[tauri::command]
 pub fn group_sessions_list(pool: State<'_, SwappablePool>) -> Result<String, String> {
     let conn = pool.get_connection()?;
@@ -901,7 +868,6 @@ pub fn group_sessions_list(pool: State<'_, SwappablePool>) -> Result<String, Str
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
 }
 
-/// List all group sessions including archived ones (for history view)
 #[tauri::command]
 pub fn group_sessions_list_all(pool: State<'_, SwappablePool>) -> Result<String, String> {
     let conn = pool.get_connection()?;
@@ -986,7 +952,6 @@ pub fn group_session_archive(
     Ok(())
 }
 
-/// Update the title/name of a group session
 #[tauri::command]
 pub fn group_session_update_title(
     id: String,
@@ -1005,7 +970,6 @@ pub fn group_session_update_title(
     Ok(())
 }
 
-/// Duplicate a group session (create a new session with the same characters and persona)
 #[tauri::command]
 pub fn group_session_duplicate(
     source_id: String,
@@ -1027,14 +991,12 @@ pub fn group_session_duplicate(
     let muted_character_ids_json = serde_json::to_string(&source.muted_character_ids)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Use source persona_id, or fallback to default persona if source had none
     let final_persona_id = if source.persona_id.is_none() {
         super::personas::default_persona_id(app.clone())
     } else {
         source.persona_id
     };
 
-    // Get chat_type and starting_scene from original session
     let chat_type: String = conn
         .query_row(
             "SELECT chat_type FROM group_sessions WHERE id = ?1",
@@ -1072,10 +1034,8 @@ pub fn group_session_duplicate(
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Create participation records for each character
     ensure_participation_records(&conn, &new_id, &source.character_ids)?;
 
-    // Return the new session
     let new_session = read_group_session(&conn, &new_id)?
         .ok_or_else(|| "Failed to read newly created session".to_string())?;
 
@@ -1093,7 +1053,6 @@ pub fn group_session_duplicate_with_messages(
 ) -> Result<String, String> {
     let mut conn = pool.get_connection()?;
 
-    // Read the source session
     let source = read_group_session(&conn, &source_id)?
         .ok_or_else(|| "Source session not found".to_string())?;
 
@@ -1105,14 +1064,12 @@ pub fn group_session_duplicate_with_messages(
     let muted_character_ids_json = serde_json::to_string(&source.muted_character_ids)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Use source persona_id, or fallback to default persona if source had none
     let final_persona_id = if source.persona_id.is_none() {
         super::personas::default_persona_id(app.clone())
     } else {
         source.persona_id
     };
 
-    // Get chat_type and starting_scene from original session
     let chat_type: String = conn
         .query_row(
             "SELECT chat_type FROM group_sessions WHERE id = ?1",
@@ -1129,7 +1086,6 @@ pub fn group_session_duplicate_with_messages(
         )
         .ok();
 
-    // Get memories if including messages
     let (
         memories_json,
         memory_embeddings_json,
@@ -1197,7 +1153,6 @@ pub fn group_session_duplicate_with_messages(
     let lorebook_ids_json = serde_json::to_string(&source.lorebook_ids)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Try to insert with background_image_path, fall back if column doesn't exist
     let insert_result = conn.execute(
         "INSERT INTO group_sessions (id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 0, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
@@ -1222,7 +1177,6 @@ pub fn group_session_duplicate_with_messages(
     );
 
     if insert_result.is_err() {
-        // Fallback without background_image_path if column doesn't exist
         conn.execute(
             "INSERT INTO group_sessions (id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, lorebook_ids, disable_character_lorebooks, memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 0, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
@@ -1247,13 +1201,8 @@ pub fn group_session_duplicate_with_messages(
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     }
 
-    // Create participation records for each character
     ensure_participation_records(&conn, &new_id, &source.character_ids)?;
 
-    // Copy memory embeddings into the normalised table for the new session.
-    // The legacy JSON column was already copied above, but the source session
-    // may have already migrated to the new schema (legacy = '[]'), so we have
-    // to walk the new table too.
     if include_messages {
         let source_embeddings = read_group_embeddings_with_fallback(&conn, &source_id)?;
         if !source_embeddings.is_empty() {
@@ -1261,9 +1210,7 @@ pub fn group_session_duplicate_with_messages(
         }
     }
 
-    // Copy messages if requested
     if include_messages {
-        // Get all messages from source session
         let mut stmt = conn
             .prepare(
                 "SELECT id, role, content, speaker_character_id, turn_number, created_at, is_pinned, attachments
@@ -1299,7 +1246,6 @@ pub fn group_session_duplicate_with_messages(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-        // Insert copied messages
         for (
             _old_id,
             role,
@@ -1331,7 +1277,6 @@ pub fn group_session_duplicate_with_messages(
         }
     }
 
-    // Return the new session
     let new_session = read_group_session(&conn, &new_id)?
         .ok_or_else(|| "Failed to read newly created session".to_string())?;
 
@@ -1349,11 +1294,9 @@ pub fn group_session_branch_to_character(
 ) -> Result<String, String> {
     let mut conn = pool.get_connection()?;
 
-    // Read the source session
     let source = read_group_session(&conn, &source_id)?
         .ok_or_else(|| "Source session not found".to_string())?;
 
-    // Verify character exists in the group
     if !source.character_ids.contains(&character_id) {
         return Err(crate::utils::err_msg(
             module_path!(),
@@ -1362,7 +1305,6 @@ pub fn group_session_branch_to_character(
         ));
     }
 
-    // Get character info to build name and for placeholder replacement
     let character_name: String = conn
         .query_row(
             "SELECT name FROM characters WHERE id = ?1",
@@ -1371,7 +1313,6 @@ pub fn group_session_branch_to_character(
         )
         .map_err(|_| "Character not found".to_string())?;
 
-    // Get all character names for placeholder replacement
     let mut character_names = std::collections::HashMap::new();
     for char_id in &source.character_ids {
         if let Ok(name) = conn.query_row(
@@ -1388,13 +1329,10 @@ pub fn group_session_branch_to_character(
     let name = new_name.unwrap_or_else(|| format!("{} - {}", source.name, character_name));
     let memories_json = serde_json::to_string(&source.memories)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
-    // Embeddings live in the normalised table now; the legacy JSON column on
-    // the new `sessions` row stays at `[]`.
     let memory_embeddings_json = "[]";
     let memory_tool_events_json = serde_json::to_string(&source.memory_tool_events)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Create new single-character session
     conn.execute(
         "INSERT INTO sessions (
             id, character_id, persona_id, title, memories, memory_embeddings, memory_summary,
@@ -1420,7 +1358,6 @@ pub fn group_session_branch_to_character(
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Write embeddings into the normalised table for the new session.
     if !source.memory_embeddings.is_empty() {
         crate::storage_manager::memory_embeddings::replace_all(
             &mut *conn,
@@ -1430,7 +1367,6 @@ pub fn group_session_branch_to_character(
         )?;
     }
 
-    // Get messages from group session and convert to single-character messages
     let mut stmt = conn
         .prepare(
             "SELECT role, content, speaker_character_id, turn_number, created_at, is_pinned
@@ -1455,25 +1391,20 @@ pub fn group_session_branch_to_character(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Convert and insert messages - convert ALL messages to the chosen character
     for (role, content, _speaker_character_id, _turn_number, created_at, is_pinned) in messages {
         let new_message_id = Uuid::new_v4().to_string();
 
-        // Convert all assistant messages (from any character) to messages from the chosen character
         let new_role = if role == "assistant" {
             "assistant"
         } else {
             role.as_str()
         };
 
-        // Replace character name placeholders in content
         let mut processed_content = content.clone();
         for char_name in character_names.values() {
-            // Replace {{@"CharacterName"}} with the chosen character's name
             let placeholder = format!("{{{{@\"{}\"}}+}}", char_name);
             processed_content = processed_content.replace(&placeholder, &character_name);
 
-            // Also handle the format without the +
             let placeholder_alt = format!("{{{{@\"{}\"}}}}", char_name);
             processed_content = processed_content.replace(&placeholder_alt, &character_name);
         }
@@ -1493,7 +1424,6 @@ pub fn group_session_branch_to_character(
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     }
 
-    // Build response with the new session
     let session_json = super::sessions::session_get(app, new_session_id)?
         .ok_or_else(|| "Failed to read newly created session".to_string())?;
 
@@ -1519,7 +1449,6 @@ pub fn group_session_create(
     let character_ids: Vec<String> = serde_json::from_str(&character_ids_json)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Use provided persona_id, or fallback to default persona
     let final_persona_id = if persona_id.is_none() {
         super::personas::default_persona_id(app.clone())
     } else {
@@ -1549,10 +1478,8 @@ pub fn group_session_create(
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Create participation records for each character
     ensure_participation_records(&conn, &id, &character_ids)?;
 
-    // Insert starting scene message for roleplay type
     if chat_type_value == "roleplay" {
         if let Some(ref scene_value) = starting_scene_parsed {
             if let Some(content) = scene_value.get("content").and_then(|v| v.as_str()) {
@@ -1706,7 +1633,6 @@ pub fn group_session_update(
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // Ensure participation records exist for any new characters
     ensure_participation_records(&conn, &id, &character_ids)?;
 
     match read_group_session(&conn, &id)? {
@@ -1724,12 +1650,9 @@ pub fn group_session_update(
 pub fn group_session_delete(id: String, pool: State<'_, SwappablePool>) -> Result<(), String> {
     let conn = pool.get_connection()?;
 
-    // Cascading deletes will handle messages and participation
     conn.execute("DELETE FROM group_sessions WHERE id = ?1", params![id])
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    // The new memory_embeddings table has no FK; clean up explicitly using the
-    // same connection so we don't need to acquire another from the pool.
     let _ = crate::storage_manager::memory_embeddings::delete_all_for_session(
         &*conn,
         &id,

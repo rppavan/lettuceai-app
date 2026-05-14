@@ -121,14 +121,14 @@ export function ProviderStep({
         <div className="flex-1 flex flex-col border-r border-white/10">
           <div className="p-6 pb-3 flex items-start justify-between">
             <div>
-              <h2 className="text-sm font-medium text-white/70">
+              <h2 className="text-[15px] font-medium text-white/70">
                 {t("onboarding.provider.availableProviders")}
               </h2>
-              <p className="text-xs text-gray-500 mt-0.5">Click to select a provider</p>
+              <p className="text-[13px] text-white/55 mt-0.5">Click to select a provider</p>
             </div>
             <button
               onClick={() => setShowLocalLLMMenu(true)}
-              className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400 transition hover:bg-emerald-500/20 hover:border-emerald-500/40 active:scale-[0.98]"
+              className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[13px] font-medium text-emerald-400 transition hover:bg-emerald-500/20 hover:border-emerald-500/40 active:scale-[0.98]"
             >
               <Cpu size={14} />
               I want to use Local LLMs
@@ -158,12 +158,12 @@ export function ProviderStep({
         {/* Right Panel - Config */}
         <div className="w-100 shrink-0 p-8 overflow-y-auto">
           <div className="space-y-1 mb-6">
-            <h1 className="text-xl font-bold text-white">
+            <h1 className="text-[21px] font-bold text-white">
               {selectedProvider
                 ? `Configure ${selectedProvider.name}`
                 : t("onboarding.provider.chooseProvider")}
             </h1>
-            <p className="text-sm text-gray-400 leading-relaxed">
+            <p className="text-[15px] text-white/70 leading-relaxed">
               {selectedProvider
                 ? "Enter your API key to enable AI chat functionality."
                 : "Select a provider from the list to get started."}
@@ -192,7 +192,7 @@ export function ProviderStep({
             />
           ) : (
             <div className="rounded-xl border border-dashed border-white/20 bg-white/5 p-6 text-center">
-              <p className="text-sm text-gray-500">Select a provider to configure</p>
+              <p className="text-[15px] text-white/55">Select a provider to configure</p>
             </div>
           )}
         </div>
@@ -206,8 +206,8 @@ export function ProviderStep({
     <div className="flex flex-col items-center pb-8">
       {/* Title */}
       <div className="text-center space-y-2 mb-8">
-        <h1 className="text-2xl font-bold text-white">Choose your AI provider</h1>
-        <p className="text-sm text-gray-400 max-w-sm leading-relaxed">
+        <h1 className="text-[25px] font-bold text-white">Choose your AI provider</h1>
+        <p className="text-[15px] text-white/70 max-w-sm leading-relaxed">
           Select an AI provider to get started. Your API keys are securely encrypted on your device.
           No account signup needed.
         </p>
@@ -240,8 +240,8 @@ export function ProviderStep({
         className={`config-form-section w-full max-w-sm transition-all duration-300 ${showForm ? "opacity-100 max-h-500" : "opacity-0 max-h-0 overflow-hidden pointer-events-none"}`}
       >
         <div className="text-center space-y-2 mb-6">
-          <h2 className="text-lg font-semibold text-white">Connect {selectedProvider?.name}</h2>
-          <p className="text-xs text-gray-400 leading-relaxed">
+          <h2 className="text-[19px] font-semibold text-white">Connect {selectedProvider?.name}</h2>
+          <p className="text-[13px] text-white/70 leading-relaxed">
             Paste your API key below to enable chats. Need a key? Get one from the provider
             dashboard.
           </p>

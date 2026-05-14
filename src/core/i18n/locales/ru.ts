@@ -4314,6 +4314,11 @@ export const ruMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "Начать",
       "skipForNow": "Пропустить",
       "restoreFromBackup": "Восстановить из резервной копии",
+      "syncFromDevice": "Синхронизировать с другого устройства",
+      "headline": {
+        "lead": "Твой приватный ИИ",
+        "accent": "компаньон.",
+      },
       "setupTime": "Настройка занимает менее 2 минут",
       "skipWarning": {
         "title": "Пропустить настройку?",

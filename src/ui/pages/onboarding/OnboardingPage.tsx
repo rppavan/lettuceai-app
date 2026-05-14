@@ -5,6 +5,8 @@ import { ProviderStep } from "./steps/ProviderStep";
 import { ModelStep } from "./steps/ModelStep";
 import { MemoryStep } from "./steps/MemoryStep";
 import { ModelRecommendations } from "./ModelRecommendations";
+import { WelcomePage } from "./Welcome";
+import welcomeBg from "../../../assets/welcomebackground.png";
 import { cn, typography } from "../../design-tokens";
 import { getPlatform } from "../../../core/utils/platform";
 import { useState, useCallback, useEffect } from "react";
@@ -24,11 +26,13 @@ export function OnboardingPage() {
 
   useEffect(() => {
     const nextStep =
-      location.pathname === "/onboarding/models"
-        ? OnboardingStep.Model
-        : location.pathname === "/onboarding/memory"
-          ? OnboardingStep.Memory
-          : OnboardingStep.Provider;
+      location.pathname === "/welcome"
+        ? OnboardingStep.Welcome
+        : location.pathname === "/onboarding/models"
+          ? OnboardingStep.Model
+          : location.pathname === "/onboarding/memory"
+            ? OnboardingStep.Memory
+            : OnboardingStep.Provider;
 
     if (state.step !== nextStep) {
       controller.setStep(nextStep);
@@ -122,13 +126,28 @@ export function OnboardingPage() {
     exit: { opacity: 0, x: -20 },
   };
 
+  const isWelcomeStep = state.step === OnboardingStep.Welcome;
+
   return (
-    <div className="flex min-h-screen flex-col bg-surface text-gray-200 overflow-hidden">
-      {/* Header */}
+    <div className="relative flex min-h-screen flex-col text-gray-200">
+      {/* Background image + overlay — shared across all onboarding steps */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 bg-cover bg-center bg-no-repeat"
+        style={{ backgroundImage: `url(${welcomeBg})` }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 bg-[linear-gradient(180deg,rgba(5,5,5,0.50)_0%,rgba(5,5,5,0.65)_60%,rgba(5,5,5,0.75)_100%)]"
+      />
+
+      {/* Header — hidden on Welcome step, fixed on others */}
       <div
         className={cn(
-          "flex items-center justify-between border-b border-white/10",
-          isDesktop ? "px-8 py-6" : "px-4 py-4",
+          "fixed top-0 left-0 right-0 z-30 flex items-center justify-between",
+          "bg-[linear-gradient(180deg,rgba(5,5,5,0.7)_0%,rgba(5,5,5,0.4)_70%,rgba(5,5,5,0)_100%)]",
+          isDesktop ? "px-8 py-6 pb-10" : "px-4 py-4 pb-8 pt-[calc(env(safe-area-inset-top)+16px)]",
+          isWelcomeStep && "hidden",
         )}
       >
         <button
@@ -144,12 +163,12 @@ export function OnboardingPage() {
           <p
             className={cn(
               typography.caption.size,
-              "font-medium uppercase tracking-[0.25em] text-gray-500",
+              "font-medium uppercase tracking-[0.25em] text-white/55",
             )}
           >
             {t("onboarding.stepIndicator", { current: stepNumber, total: 3 })}
           </p>
-          <p className="text-xs text-gray-400 mt-0.5">{stepLabel}</p>
+          <p className="text-[13px] text-white/70 mt-0.5">{stepLabel}</p>
         </div>
         <div className={isDesktop ? "w-11" : "w-10"} />
       </div>
@@ -157,14 +176,28 @@ export function OnboardingPage() {
       {/* Main Content */}
       <main
         className={cn(
-          "flex flex-1 flex-col overflow-hidden",
-          !isDesktop && "px-4 pt-4 overflow-y-auto",
+          "relative z-10 flex flex-1 flex-col",
+          !isWelcomeStep && (isDesktop ? "pt-[88px]" : "pt-[calc(env(safe-area-inset-top)+72px)] px-4"),
         )}
       >
         {showRecommendations ? (
           <ModelRecommendations onBack={() => setShowRecommendations(false)} />
         ) : (
           <AnimatePresence mode="wait">
+            {state.step === OnboardingStep.Welcome && (
+              <motion.div
+                key="welcome"
+                variants={pageVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={{ duration: 0.2 }}
+                className="flex flex-1 flex-col"
+              >
+                <WelcomePage />
+              </motion.div>
+            )}
+
             {state.step === OnboardingStep.Provider && (
               <motion.div
                 key="provider"

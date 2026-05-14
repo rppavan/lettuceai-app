@@ -4368,6 +4368,11 @@ export const nlMessages: DeepPartialMessageTree<LocaleMessages> = {
       getStarted: "Aan de slag",
       skipForNow: "Voorlopig overslaan",
       restoreFromBackup: "Herstellen vanuit back-up",
+      syncFromDevice: "Synchroniseer vanaf ander apparaat",
+      headline: {
+        lead: "Jouw privé-AI",
+        accent: "metgezel.",
+      },
       setupTime: "Instelling duurt minder dan 2 minuten",
       skipWarning: {
         title: "Instelling overslaan?",

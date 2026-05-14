@@ -4015,6 +4015,11 @@ export const hiMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "शुरू करें",
       "skipForNow": "अभी छोड़ दें",
       "restoreFromBackup": "बैकअप से पुनर्स्थापित करें",
+      "syncFromDevice": "दूसरे डिवाइस से सिंक करें",
+      "headline": {
+        "lead": "आपका निजी AI",
+        "accent": "साथी।",
+      },
       "setupTime": "सेटअप में 2 मिनट से कम लगता है",
       "skipWarning": {
         "title": "सेटअप छोड़ दें?",

@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
+  Smartphone,
   FileArchive,
   Lock,
   Loader2,
@@ -20,14 +21,13 @@ import { motion } from "framer-motion";
 import { setOnboardingCompleted, setOnboardingSkipped } from "../../../core/storage/appState";
 import { storageBridge } from "../../../core/storage/files";
 import logoSvg from "../../../assets/logo.svg";
-import { typography, radius, spacing, interactive, shadows, colors, cn } from "../../design-tokens";
+import { typography, radius, spacing, interactive, shadows, cn } from "../../design-tokens";
 import { useI18n } from "../../../core/i18n/context";
 import { LocaleSelector } from "../../components/LocaleSelector";
 
 export function WelcomePage() {
   const { locale, setLocale, t } = useI18n();
   const navigate = useNavigate();
-  const quickFacts = useQuickFacts();
   const [showSkipWarning, setShowSkipWarning] = useState(false);
   const [showRestoreBackup, setShowRestoreBackup] = useState(false);
 
@@ -42,6 +42,23 @@ export function WelcomePage() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [navigate]);
+
+  // Load brand fonts (Fraunces for display, Noto Sans for body — same as lettuceai.app)
+  useEffect(() => {
+    const id = "lai-brand-fonts";
+    if (document.getElementById(id)) return;
+    const preconnect = document.createElement("link");
+    preconnect.rel = "preconnect";
+    preconnect.href = "https://fonts.gstatic.com";
+    preconnect.crossOrigin = "anonymous";
+    document.head.appendChild(preconnect);
+    const link = document.createElement("link");
+    link.id = id;
+    link.rel = "stylesheet";
+    link.href =
+      "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..900&family=Noto+Sans:wght@400;500;600;700&display=swap";
+    document.head.appendChild(link);
+  }, []);
 
   const handleAddProvider = () => {
     navigate("/onboarding/provider");
@@ -61,212 +78,181 @@ export function WelcomePage() {
   };
 
   return (
-    <div
-      className={cn("flex min-h-screen flex-col text-gray-200", colors.effects.gradient.surface)}
-    >
-      {/* Desktop: Split layout | Mobile: Stacked layout */}
-      <div className="flex flex-1 flex-col lg:flex-row items-center justify-center px-4 py-12 lg:px-16 lg:gap-16 xl:gap-24">
-        {/* Left Side - Branding (desktop) / Top (mobile) */}
-        <motion.div
-          className="flex flex-col items-center lg:items-start lg:flex-1 lg:max-w-lg"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: "easeOut" }}
-        >
-          {/* Logo Section */}
-          <div className="relative mb-8 overflow-visible">
-            {/* Glow effect - larger spread for smoother edges */}
-            <div
-              className={cn(
-                "absolute -inset-8 rounded-full blur-3xl opacity-60 animate-pulse",
-                colors.effects.gradient.brand,
-              )}
-            />
+    <div className="lai-welcome relative flex flex-col text-white">
+      <style>{LAI_WELCOME_STYLES}</style>
 
-            {/* Logo container */}
-            <div
-              className={cn(
-                "relative flex h-24 w-24 lg:h-32 lg:w-32 items-center justify-center",
-                colors.glass.default,
-                radius.full,
-                shadows.xl,
-              )}
-            >
-              <img
-                src={logoSvg}
-                alt={t("onboarding.welcome.appName")}
-                className="h-14 w-14 lg:h-20 lg:w-20"
-              />
-            </div>
-          </div>
+      {/* Top bar */}
+      <motion.div
+        className="relative z-10 flex items-center justify-between px-6 pt-6 lg:px-12 lg:pt-8"
+        initial={{ opacity: 0, y: -6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+      >
+        <div className="flex items-center gap-2.5">
+          <img src={logoSvg} alt="" className="h-7 w-7" />
+          <span className="lai-wordmark-sm">LettuceAI</span>
+        </div>
 
-          {/* Brand name */}
-          <h1
-            className={cn(
-              typography.display.size,
-              typography.display.weight,
-              "mb-3 lg:text-5xl",
-              "text-center lg:text-left",
-              colors.effects.gradient.text,
-            )}
-          >
-            {t("onboarding.welcome.appName")}
-          </h1>
+        {/* Mobile-only language selector — bare text + icon */}
+        <div className="lai-locale-bare lg:hidden">
+          <LocaleSelector
+            value={locale}
+            onChange={setLocale}
+            label=""
+            description=""
+            title={t("components.localeSelector.title")}
+            labelClassName="hidden"
+            descriptionClassName="hidden"
+            triggerClassName="lai-locale-trigger-bare"
+            menuClassName=""
+          />
+        </div>
+      </motion.div>
 
-          {/* Tagline */}
-          <p
-            className={cn(
-              typography.body.size,
-              typography.body.lineHeight,
-              "max-w-70lg:max-w-md lg:text-lg",
-              "text-center lg:text-left text-white/60",
-            )}
-          >
-            {t("onboarding.welcome.tagline")}
-          </p>
-
-          {/* Feature Pills */}
-          <div
-            className={cn(
-              "mt-6 flex items-center flex-wrap gap-2 lg:gap-3",
-              "justify-center lg:justify-start",
-            )}
-          >
-            {quickFacts.map(({ icon: Icon, label }) => (
-              <div
-                key={label}
-                className={cn(
-                  "flex items-center gap-1.5 border border-white/10 bg-white/5 px-3 py-1.5 lg:px-4 lg:py-2 backdrop-blur-sm",
-                  radius.full,
-                )}
-              >
-                <Icon size={14} className="text-emerald-400 lg:w-4 lg:h-4" strokeWidth={2.5} />
-                <span
-                  className={cn(
-                    typography.bodySmall.size,
-                    typography.label.weight,
-                    "text-white/70 lg:text-sm",
-                  )}
-                >
-                  {label}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          {/* Language Selector */}
+      {/* Main content — centered hero + action band */}
+      <div className="relative z-10 flex flex-1 items-center justify-center px-6 py-6 lg:px-16 lg:py-12">
+        <div className="w-full max-w-2xl flex flex-col items-center text-center">
+          {/* Logo */}
           <motion.div
-            className="mt-6 w-full max-w-xs lg:max-w-sm"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.3 }}
+            className="relative overflow-visible"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
           >
-            <LocaleSelector
-              value={locale}
-              onChange={setLocale}
-              label={t("onboarding.welcome.languageSelector.title")}
-              description={t("onboarding.welcome.languageSelector.description")}
-              title={t("components.localeSelector.title")}
-              labelClassName={cn(typography.caption.size, "font-medium text-white/70")}
-              descriptionClassName={cn(
-                "text-center lg:text-left",
-                typography.caption.size,
-                "text-white/35",
-              )}
-              triggerClassName={cn(
-                "border-white/10 bg-white/5 text-white backdrop-blur-sm",
-                "hover:border-white/20 hover:bg-white/8",
-                "focus:border-emerald-400/50 focus:ring-1 focus:ring-emerald-400/30",
-              )}
-              menuClassName="bg-[#0f1014]"
+            <div className="lai-logo-halo absolute" aria-hidden="true" />
+            <img
+              src={logoSvg}
+              alt={t("onboarding.welcome.appName")}
+              className="relative h-14 w-14 lg:h-20 lg:w-20"
             />
           </motion.div>
 
-          {/* Desktop-only: Bottom hint on left side */}
+          {/* Headline */}
+          <motion.h1
+            className="lai-headline mt-5 lg:mt-9"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.05 }}
+          >
+            {t("onboarding.welcome.headline.lead")}{" "}
+            <span className="lai-headline-accent">
+              {t("onboarding.welcome.headline.accent")}
+            </span>
+          </motion.h1>
+
+          {/* Tagline */}
           <motion.p
-            className={cn("mt-8 hidden lg:block", typography.caption.size, "text-white/40")}
+            className="lai-tagline mt-3 lg:mt-5 max-w-lg"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
+            transition={{ duration: 0.5, delay: 0.15 }}
           >
-            {t("onboarding.welcome.setupTime")}
+            {t("onboarding.welcome.tagline")}
           </motion.p>
-        </motion.div>
 
-        {/* Right Side - Actions (desktop) / Bottom (mobile) */}
-        <motion.div
-          className="flex flex-col items-center lg:items-stretch w-full max-w-xs lg:max-w-sm lg:flex-1 mt-8 lg:mt-0"
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.2 }}
-        >
-          {/* CTA Buttons */}
-          <div className={cn("w-full", spacing.field)}>
-            <button
-              className={cn(
-                "group w-full flex items-center justify-center gap-2 px-6 py-4",
-                radius.md,
-                "border border-emerald-400/40 bg-emerald-400/20 text-emerald-100",
-                typography.body.size,
-                typography.h3.weight,
-                shadows.glow,
-                interactive.transition.default,
-                interactive.active.scale,
-                "hover:border-emerald-400/60 hover:bg-emerald-400/30",
-              )}
-              onClick={handleAddProvider}
-            >
-              <span>{t("onboarding.welcome.getStarted")}</span>
-              <ArrowRight
-                size={18}
-                className="transition-transform group-hover:translate-x-0.5"
-                strokeWidth={2.5}
-              />
-            </button>
+          {/* Primary CTA */}
+          <motion.button
+            className="lai-cta-solo group mt-6 lg:mt-10 inline-flex items-center gap-2.5"
+            onClick={handleAddProvider}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.22 }}
+          >
+            <span className="lai-cta-label">{t("onboarding.welcome.getStarted")}</span>
+            <span className="lai-band-arrow">
+              <ArrowRight size={16} strokeWidth={2.25} />
+            </span>
+          </motion.button>
 
+          {/* Secondary actions */}
+          <motion.div
+            className="lai-secondary mt-3 lg:mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-2"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.28 }}
+          >
             <button
-              className={cn(
-                "w-full px-6 py-3",
-                radius.md,
-                "border border-white/10 bg-white/5 text-white/60",
-                typography.body.size,
-                interactive.transition.default,
-                interactive.active.scale,
-                "hover:border-white/20 hover:bg-white/8 hover:text-white/80",
-              )}
-              onClick={() => setShowSkipWarning(true)}
-            >
-              {t("onboarding.welcome.skipForNow")}
-            </button>
-
-            <button
-              className={cn(
-                "w-full flex items-center justify-center gap-2 px-6 py-3",
-                radius.md,
-                "border border-white/10 bg-white/5 text-white/60",
-                typography.body.size,
-                interactive.transition.default,
-                interactive.active.scale,
-                "hover:border-white/20 hover:bg-white/8 hover:text-white/80",
-              )}
               onClick={() => setShowRestoreBackup(true)}
+              className="lai-link group inline-flex items-center gap-1.5 py-1"
             >
-              <Upload size={16} />
-              {t("onboarding.welcome.restoreFromBackup")}
+              <Upload size={13} strokeWidth={2} />
+              <span className="lai-link-text">
+                {t("onboarding.welcome.restoreFromBackup")}
+              </span>
             </button>
-          </div>
 
-          {/* Mobile-only: Bottom hint */}
-          <motion.p
-            className={cn("mt-8 text-center lg:hidden", typography.caption.size, "text-white/40")}
+            <span className="lai-link-sep" />
+
+            <button
+              onClick={() => {
+                // TODO: wire up device sync flow
+              }}
+              className="lai-link group inline-flex items-center gap-1.5 py-1"
+            >
+              <Smartphone size={13} strokeWidth={2} />
+              <span className="lai-link-text">{t("onboarding.welcome.syncFromDevice")}</span>
+            </button>
+
+            <span className="lai-link-sep" />
+
+            <button
+              onClick={() => setShowSkipWarning(true)}
+              className="lai-link group inline-flex items-center py-1"
+            >
+              <span className="lai-link-text">
+                {t("onboarding.welcome.skipForNow")}
+              </span>
+            </button>
+          </motion.div>
+
+          {/* Trust line */}
+          <motion.div
+            className="lai-trust mt-4 lg:mt-7 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
           >
-            {t("onboarding.welcome.setupTime")}
-          </motion.p>
-        </motion.div>
+            <span className="inline-flex items-center gap-1.5">
+              <ShieldCheck size={12} className="lai-accent-text" strokeWidth={2.25} />
+              {t("onboarding.welcome.features.onDevice")}
+            </span>
+            <span className="lai-trust-sep">·</span>
+            <span className="inline-flex items-center gap-1.5">
+              <Sparkles size={12} className="lai-accent-text" strokeWidth={2.25} />
+              {t("onboarding.welcome.features.characterReady")}
+            </span>
+            <span className="lai-trust-sep">·</span>
+            <span>{t("onboarding.welcome.setupTime")}</span>
+          </motion.div>
+        </div>
       </div>
+
+      {/* Bottom footer strip — desktop only */}
+      <motion.div
+        className="lai-footer relative z-10 hidden lg:block px-6 py-4 lg:px-12 lg:py-5"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.4, delay: 0.3 }}
+      >
+        <div className="flex flex-col-reverse gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="lai-locale-bare flex items-center w-full lg:w-auto">
+            <LocaleSelector
+              value={locale}
+              onChange={setLocale}
+              label=""
+              description=""
+              title={t("components.localeSelector.title")}
+              labelClassName="hidden"
+              descriptionClassName="hidden"
+              triggerClassName="lai-locale-trigger-bare"
+              menuClassName=""
+            />
+          </div>
+          <p className="lai-footnote text-center lg:text-right">
+            {t("onboarding.welcome.languageSelector.description")}
+          </p>
+        </div>
+      </motion.div>
 
       {showSkipWarning && (
         <SkipWarning
@@ -286,13 +272,263 @@ export function WelcomePage() {
   );
 }
 
-const useQuickFacts = () => {
-  const { t } = useI18n();
-  return [
-    { icon: ShieldCheck, label: t("onboarding.welcome.features.onDevice") },
-    { icon: Sparkles, label: t("onboarding.welcome.features.characterReady") },
-  ];
-};
+const LAI_WELCOME_STYLES = `
+  .lai-welcome {
+    --lai-accent: #00d294;
+    --lai-accent-soft: rgba(0, 210, 148, 0.85);
+    --lai-accent-dim: rgba(0, 210, 148, 0.55);
+    --lai-bg-0: #050505;
+    --lai-ink: #f4f4f5;
+    --lai-ink-2: rgba(244, 244, 245, 0.62);
+    --lai-ink-3: rgba(244, 244, 245, 0.40);
+    --lai-ink-4: rgba(244, 244, 245, 0.22);
+    --lai-line: rgba(244, 244, 245, 0.08);
+    background: transparent;
+    font-family: "Noto Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    height: 100vh;
+    height: 100dvh;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .lai-bg-image {
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .lai-bg-overlay {
+    background:
+      linear-gradient(180deg, rgba(5,5,5,0.45) 0%, rgba(5,5,5,0.50) 60%, rgba(5,5,5,0.65) 100%);
+  }
+
+  .lai-wordmark-sm {
+    font-family: "Noto Sans", ui-sans-serif, system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.02em;
+    color: var(--lai-ink);
+  }
+
+  .lai-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px 5px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(0, 210, 148, 0.35);
+    background: rgba(8, 24, 18, 0.78);
+    backdrop-filter: blur(14px);
+  }
+  .lai-pill-dot {
+    width: 6px; height: 6px; border-radius: 999px;
+    background: var(--lai-accent);
+    box-shadow: 0 0 8px rgba(0, 210, 148, 0.55);
+    animation: lai-pulse 2.4s ease-in-out infinite;
+  }
+  .lai-pill-label {
+    font-size: 12.5px; font-weight: 500; letter-spacing: 0.01em;
+    color: rgba(0, 210, 148, 0.95);
+  }
+  @keyframes lai-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+
+  .lai-logo-halo {
+    inset: -30px;
+    border-radius: 9999px;
+    background: radial-gradient(closest-side, rgba(0, 210, 148, 0.20), transparent 70%);
+    filter: blur(22px);
+  }
+
+  .lai-headline {
+    font-family: "Noto Sans", ui-sans-serif, system-ui, sans-serif;
+    font-weight: 700;
+    font-size: clamp(37px, 5vw, 57px);
+    letter-spacing: -0.03em;
+    line-height: 1.08;
+    color: var(--lai-ink);
+    max-width: 18ch;
+  }
+  .lai-headline-accent {
+    font-family: "Fraunces", "Iowan Old Style", Georgia, serif;
+    font-style: italic;
+    font-weight: 500;
+    color: var(--lai-accent);
+    letter-spacing: -0.02em;
+    font-variation-settings: "opsz" 96;
+  }
+
+  .lai-tagline {
+    font-family: "Noto Sans", sans-serif;
+    font-size: 16.5px;
+    line-height: 1.55;
+    color: var(--lai-ink-2);
+    font-weight: 400;
+  }
+
+  .lai-trust {
+    font-size: 12.5px;
+    color: var(--lai-ink-3);
+    font-weight: 500;
+  }
+  .lai-trust-sep { color: var(--lai-ink-4); }
+  .lai-accent-text { color: var(--lai-accent); }
+
+  .lai-cta-label {
+    font-family: "Noto Sans", sans-serif;
+    font-weight: 600;
+    font-size: 16px;
+    letter-spacing: -0.005em;
+    color: #ffffff;
+  }
+
+  .lai-cta-solo {
+    padding: 12px 18px 12px 22px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(0, 210, 148, 0.28), rgba(0, 210, 148, 0.16));
+    border: 1px solid rgba(0, 210, 148, 0.45);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.10),
+      0 10px 28px -8px rgba(0, 210, 148, 0.40),
+      0 18px 44px -12px rgba(0,0,0,0.6);
+    transition: background 200ms ease, border-color 200ms ease, transform 200ms ease, box-shadow 240ms ease;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+  }
+  .lai-cta-solo:hover {
+    background: linear-gradient(180deg, rgba(0, 210, 148, 0.36), rgba(0, 210, 148, 0.22));
+    border-color: rgba(0, 210, 148, 0.65);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.12),
+      0 14px 36px -8px rgba(0, 210, 148, 0.50),
+      0 18px 44px -12px rgba(0,0,0,0.6);
+  }
+  .lai-cta-solo:active { transform: scale(0.985); }
+
+  .lai-secondary {
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(10, 10, 10, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(14px);
+  }
+  .lai-band-arrow {
+    display: inline-flex;
+    width: 22px; height: 22px;
+    align-items: center; justify-content: center;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.10);
+    color: #ffffff;
+    transition: transform 200ms ease, background 200ms ease;
+  }
+  .lai-cta-solo:hover .lai-band-arrow {
+    background: rgba(255,255,255,0.18);
+    transform: translateX(2px);
+  }
+
+  @media (max-width: 640px) {
+    .lai-headline {
+      font-size: clamp(29px, 8vw, 37px);
+      max-width: 14ch;
+      line-height: 1.05;
+    }
+    .lai-tagline { font-size: 14px; line-height: 1.45; }
+    .lai-cta-solo {
+      width: 100%;
+      justify-content: space-between;
+      padding: 12px 16px;
+    }
+    .lai-secondary {
+      flex-direction: column;
+      align-items: stretch;
+      width: 100%;
+      max-width: 320px;
+      gap: 0;
+      padding: 2px 0;
+      border-radius: 12px;
+      background: rgba(10, 10, 10, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .lai-secondary .lai-link {
+      width: 100%;
+      justify-content: center;
+      padding: 9px 14px;
+    }
+    .lai-secondary .lai-link-sep {
+      width: 100%;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .lai-trust {
+      font-size: 11.5px;
+      gap: 4px 8px;
+    }
+    .lai-footer { padding: 8px 16px 10px; }
+    .lai-footnote { font-size: 11px; }
+  }
+
+  .lai-link {
+    background: transparent;
+    color: var(--lai-ink-2);
+    font-size: 13.5px;
+    transition: color 150ms ease;
+    cursor: pointer;
+  }
+  .lai-link:hover { color: var(--lai-ink); }
+  .lai-link-text {
+    text-decoration: underline;
+    text-decoration-color: rgba(244, 244, 245, 0.18);
+    text-underline-offset: 4px;
+    transition: text-decoration-color 150ms ease;
+  }
+  .lai-link:hover .lai-link-text { text-decoration-color: var(--lai-accent-dim); }
+  .lai-link-sep {
+    width: 1px; height: 12px;
+    background: var(--lai-line);
+  }
+
+  .lai-footer {
+    border-top: 1px solid var(--lai-line);
+  }
+  .lai-footnote {
+    font-size: 12px;
+    color: var(--lai-ink-3);
+    font-weight: 400;
+  }
+
+  .lai-locale-trigger {
+    background: rgba(10, 10, 10, 0.78) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    color: var(--lai-ink) !important;
+    backdrop-filter: blur(14px) !important;
+  }
+  .lai-locale-trigger:hover {
+    background: rgba(20, 20, 20, 0.85) !important;
+    border-color: rgba(255, 255, 255, 0.18) !important;
+  }
+  .lai-locale-trigger-bare {
+    background: transparent !important;
+    border: none !important;
+    padding: 4px 0 !important;
+    font-size: 14px !important;
+    color: var(--lai-ink-2) !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+  }
+  .lai-locale-trigger-bare:hover {
+    background: transparent !important;
+    color: var(--lai-ink) !important;
+  }
+  .lai-locale-bare .tabular-nums { display: none !important; }
+  .lai-locale-menu {
+    background: #0a0a0a !important;
+    border-color: var(--lai-line) !important;
+  }
+`;
 
 function SkipWarning({
   onClose,
@@ -453,7 +689,6 @@ function RestoreBackupModal({
   const [showEmbeddingPrompt, setShowEmbeddingPrompt] = useState(false);
   const navigate = useNavigate();
 
-  // Load backups on mount
   useEffect(() => {
     loadBackups();
   }, []);
@@ -628,7 +863,7 @@ function RestoreBackupModal({
                 </p>
                 <button
                   onClick={handleBrowseForBackup}
-                  className="text-xs font-medium text-blue-400 hover:text-blue-300"
+                  className="text-[13px] font-medium text-blue-400 hover:text-blue-300"
                 >
                   {t("onboarding.welcome.restoreBackup.browse")}
                 </button>
@@ -638,7 +873,7 @@ function RestoreBackupModal({
               {error && (
                 <div
                   className={cn(
-                    "flex items-start gap-2 border border-red-400/30 bg-red-400/10 px-3 py-2 text-sm text-red-200 mb-4",
+                    "flex items-start gap-2 border border-red-400/30 bg-red-400/10 px-3 py-2 text-[15px] text-red-200 mb-4",
                     radius.md,
                   )}
                 >
@@ -650,11 +885,11 @@ function RestoreBackupModal({
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin text-white/30" />
-                  <p className="mt-2 text-sm text-white/40">{t("onboarding.welcome.restoreBackup.processing")}</p>
-                  <p className="text-xs text-white/20 mt-1">{t("onboarding.welcome.restoreBackup.processingNote")}</p>
+                  <p className="mt-2 text-[15px] text-white/40">{t("onboarding.welcome.restoreBackup.processing")}</p>
+                  <p className="text-[13px] text-white/20 mt-1">{t("onboarding.welcome.restoreBackup.processingNote")}</p>
                   <button
                     onClick={() => setLoading(false)}
-                    className="mt-6 text-xs text-red-400/60 hover:text-red-300 transition-colors"
+                    className="mt-6 text-[13px] text-red-400/60 hover:text-red-300 transition-colors"
                   >
                     {t("onboarding.welcome.restoreBackup.cancel")}
                   </button>
@@ -662,14 +897,14 @@ function RestoreBackupModal({
               ) : backups.length === 0 ? (
                 <div className={cn("border border-white/10 bg-white/5 p-6 text-center", radius.md)}>
                   <FileArchive className="mx-auto h-8 w-8 text-white/20" />
-                  <p className="mt-3 text-sm text-white/40">{t("onboarding.welcome.restoreBackup.noBackups")}</p>
-                  <p className="mt-1 text-xs text-white/30">{t("onboarding.welcome.restoreBackup.noBackupsHint")}</p>
+                  <p className="mt-3 text-[15px] text-white/40">{t("onboarding.welcome.restoreBackup.noBackups")}</p>
+                  <p className="mt-1 text-[13px] text-white/30">{t("onboarding.welcome.restoreBackup.noBackupsHint")}</p>
                   <button
                     onClick={handleBrowseForBackup}
                     className={cn(
                       "mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg",
                       "border border-blue-400/30 bg-blue-400/10",
-                      "text-sm text-blue-300 font-medium",
+                      "text-[15px] text-blue-300 font-medium",
                       "hover:bg-blue-400/20 active:scale-[0.98]",
                       interactive.transition.default,
                     )}
@@ -701,14 +936,14 @@ function RestoreBackupModal({
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <p className="truncate text-sm font-medium text-white">
+                            <p className="truncate text-[15px] font-medium text-white">
                               {backup.filename}
                             </p>
                             {backup.encrypted && (
                               <Lock className="h-3 w-3 shrink-0 text-amber-400/70" />
                             )}
                           </div>
-                          <p className="mt-0.5 text-[11px] text-white/40">
+                          <p className="mt-0.5 text-[12px] text-white/40">
                             {formatDate(backup.createdAt)} · v{backup.appVersion}
                           </p>
                         </div>
@@ -725,10 +960,10 @@ function RestoreBackupModal({
                 <div className="flex items-center gap-3">
                   <FileArchive className="h-6 w-6 text-white/40" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-white">
+                    <p className="truncate text-[15px] font-medium text-white">
                       {selectedBackup.filename}
                     </p>
-                    <p className="text-xs text-white/40">
+                    <p className="text-[13px] text-white/40">
                       {formatDate(selectedBackup.createdAt)} · v{selectedBackup.appVersion}
                     </p>
                   </div>
@@ -738,7 +973,7 @@ function RestoreBackupModal({
               {/* Info notice */}
               <div
                 className={cn(
-                  "flex items-start gap-2 border border-blue-400/30 bg-blue-400/10 px-3 py-2 text-xs text-blue-200",
+                  "flex items-start gap-2 border border-blue-400/30 bg-blue-400/10 px-3 py-2 text-[13px] text-blue-200",
                   radius.md,
                 )}
               >
@@ -749,7 +984,7 @@ function RestoreBackupModal({
               {error && (
                 <div
                   className={cn(
-                    "flex items-center gap-2 border border-red-400/30 bg-red-400/10 px-3 py-2 text-sm text-red-200",
+                    "flex items-center gap-2 border border-red-400/30 bg-red-400/10 px-3 py-2 text-[15px] text-red-200",
                     radius.md,
                   )}
                 >
@@ -760,7 +995,7 @@ function RestoreBackupModal({
 
               {selectedBackup.encrypted && (
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-white/50">
+                  <label className="mb-1.5 block text-[13px] font-medium text-white/50">
                     {t("onboarding.welcome.restoreBackup.passwordLabel")}
                   </label>
                   <div className="relative">
@@ -883,14 +1118,14 @@ function RestoreBackupModal({
               <div className="flex items-start gap-3 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3">
                 <HardDrive className="h-5 w-5 shrink-0 text-amber-400 mt-0.5" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-amber-200">{t("onboarding.welcome.restoreBackup.dynamicMemoryDetected")}</p>
-                  <p className="mt-1 text-xs text-amber-200/70">
+                  <p className="text-[15px] font-medium text-amber-200">{t("onboarding.welcome.restoreBackup.dynamicMemoryDetected")}</p>
+                  <p className="mt-1 text-[13px] text-amber-200/70">
                     {t("onboarding.welcome.restoreBackup.dynamicMemoryMessage")}
                   </p>
                 </div>
               </div>
 
-              <p className="text-sm text-white/60">
+              <p className="text-[15px] text-white/60">
                 {t("onboarding.welcome.restoreBackup.embeddingOptions")}
               </p>
 
@@ -925,7 +1160,7 @@ function RestoreBackupModal({
                 </button>
               </div>
 
-              <p className="text-xs text-white/40 text-center">
+              <p className="text-[13px] text-white/40 text-center">
                 {t("onboarding.welcome.restoreBackup.embeddingNote")}
               </p>
             </div>

@@ -4283,6 +4283,11 @@ export const zhHantMessages: DeepPartialMessageTree<LocaleMessages> = {
       getStarted: "開始使用",
       skipForNow: "暫時跳過",
       restoreFromBackup: "從備份還原",
+      syncFromDevice: "從其他裝置同步",
+      headline: {
+        lead: "你的私人AI",
+        accent: "夥伴。",
+      },
       setupTime: "設定只需不到 2 分鐘",
       skipWarning: {
         title: "跳過設定？",

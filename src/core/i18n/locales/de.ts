@@ -4337,6 +4337,11 @@ export const deMessages: DeepPartialMessageTree<LocaleMessages> = {
       getStarted: "Loslegen",
       skipForNow: "Vorerst überspringen",
       restoreFromBackup: "Aus Sicherung wiederherstellen",
+      syncFromDevice: "Von anderem Gerät synchronisieren",
+      headline: {
+        lead: "Dein privater KI",
+        accent: "Begleiter.",
+      },
       setupTime: "Einrichtung dauert weniger als 2 Minuten",
       skipWarning: {
         title: "Einrichtung überspringen?",

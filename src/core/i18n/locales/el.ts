@@ -4314,6 +4314,11 @@ export const elMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "Ξεκινήστε",
       "skipForNow": "Παράλειψη προς το παρόν",
       "restoreFromBackup": "Επαναφορά από Αντίγραφο",
+      "syncFromDevice": "Συγχρονισμός από άλλη συσκευή",
+      "headline": {
+        "lead": "Ο ιδιωτικός σου AI",
+        "accent": "σύντροφος.",
+      },
       "setupTime": "Η ρύθμιση διαρκεί λιγότερο από 2 λεπτά",
       "skipWarning": {
         "title": "Παράλειψη ρύθμισης;",

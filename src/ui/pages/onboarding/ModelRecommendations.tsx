@@ -81,15 +81,15 @@ export function ModelRecommendations({ onBack }: ModelRecommendationsProps) {
         >
           <ArrowLeft size={10} />
         </button>
-        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.15em] text-white/60">
+        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[12px] uppercase tracking-[0.15em] text-white/60">
           Model Guide
         </div>
         <div className="w-10" />
       </div>
 
       {/* Title & intro */}
-      <h1 className="text-2xl font-semibold leading-tight text-white">How do I choose a model?</h1>
-      <p className="mt-2 text-sm text-white/65">
+      <h1 className="text-[25px] font-semibold leading-tight text-white">How do I choose a model?</h1>
+      <p className="mt-2 text-[15px] text-white/65">
         LettuceAI doesn&apos;t force a single &quot;best&quot; model. Instead, you pick what fits
         your <span className="font-medium text-white/80">use case, budget, and vibe</span>. Use this
         guide to decide what to try and where to look.
@@ -109,12 +109,12 @@ export function ModelRecommendations({ onBack }: ModelRecommendationsProps) {
                   <Icon size={20} className="text-green-300" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-base font-semibold text-white mb-1">{factor.title}</h3>
-                  <p className="text-sm text-white/70 mb-3 leading-relaxed">{factor.description}</p>
+                  <h3 className="text-[17px] font-semibold text-white mb-1">{factor.title}</h3>
+                  <p className="text-[15px] text-white/70 mb-3 leading-relaxed">{factor.description}</p>
 
                   <div>
-                    <p className="text-xs font-medium text-white/50 mb-1.5">Ask yourself:</p>
-                    <ul className="space-y-1.5 text-xs text-white/75">
+                    <p className="text-[13px] font-medium text-white/50 mb-1.5">Ask yourself:</p>
+                    <ul className="space-y-1.5 text-[13px] text-white/75">
                       {factor.questions.map((q) => (
                         <li key={q} className="flex gap-1.5">
                           <span className="mt-[3px] h-1 w-1 rounded-full bg-white/40 shrink-0" />
@@ -132,14 +132,14 @@ export function ModelRecommendations({ onBack }: ModelRecommendationsProps) {
 
       {/* Where to look for models */}
       <div className="mt-8 rounded-2xl border border-white/10 bg-linear-to-br from-white/5 to-transparent p-4 space-y-3">
-        <h2 className="text-sm font-semibold text-white">Where can I find models?</h2>
-        <p className="text-xs text-white/70">
+        <h2 className="text-[15px] font-semibold text-white">Where can I find models?</h2>
+        <p className="text-[13px] text-white/70">
           Most providers and routers have a{" "}
           <span className="font-medium text-white/85">model list or catalog</span>. Browse those
           pages to see what they offer, pricing, limits, and special features.
         </p>
 
-        <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-white/75">
+        <div className="mt-2 grid grid-cols-1 gap-2 text-[13px] text-white/75">
           <div className="rounded-xl border border-white/10 bg-black/40 px-3 py-2">
             <p className="font-medium text-white/85 mb-0.5">Direct providers</p>
             <p className="text-white/60">
@@ -166,8 +166,8 @@ export function ModelRecommendations({ onBack }: ModelRecommendationsProps) {
 
       {/* Rules of thumb */}
       <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 space-y-2">
-        <h2 className="text-sm font-semibold text-white">Simple rules of thumb</h2>
-        <ul className="space-y-1.5 text-xs text-white/70">
+        <h2 className="text-[15px] font-semibold text-white">Simple rules of thumb</h2>
+        <ul className="space-y-1.5 text-[13px] text-white/70">
           <li>• For casual chatting → pick a fast, cheap chat model from your provider/router.</li>
           <li>
             • For experiments or high volume → start with the cheapest model that feels good enough,
@@ -180,7 +180,7 @@ export function ModelRecommendations({ onBack }: ModelRecommendationsProps) {
         </ul>
       </div>
 
-      <div className="mt-4 text-[11px] text-white/45">
+      <div className="mt-4 text-[12px] text-white/45">
         Always check the provider&apos;s own documentation for the latest model list, limits, and
         pricing. This page is about how to think, not what to buy.
       </div>

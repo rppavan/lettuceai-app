@@ -4015,6 +4015,11 @@ export const idMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "Mulai",
       "skipForNow": "Lewati untuk sekarang",
       "restoreFromBackup": "Pulihkan dari Cadangan",
+      "syncFromDevice": "Sinkronkan dari perangkat lain",
+      "headline": {
+        "lead": "AI pribadi Anda,",
+        "accent": "pendamping.",
+      },
       "setupTime": "Pengaturan memakan waktu kurang dari 2 menit",
       "skipWarning": {
         "title": "Lewati pengaturan?",

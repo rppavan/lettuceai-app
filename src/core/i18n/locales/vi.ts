@@ -4015,6 +4015,11 @@ export const viMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "Bắt đầu",
       "skipForNow": "Bỏ qua",
       "restoreFromBackup": "Khôi phục từ bản sao lưu",
+      "syncFromDevice": "Đồng bộ từ thiết bị khác",
+      "headline": {
+        "lead": "AI riêng tư",
+        "accent": "đồng hành.",
+      },
       "setupTime": "Thiết lập mất dưới 2 phút",
       "skipWarning": {
         "title": "Bỏ qua thiết lập?",

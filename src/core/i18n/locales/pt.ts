@@ -4015,6 +4015,11 @@ export const ptMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "Começar",
       "skipForNow": "Pular por enquanto",
       "restoreFromBackup": "Restaurar do Backup",
+      "syncFromDevice": "Sincronizar de outro dispositivo",
+      "headline": {
+        "lead": "Sua IA privada,",
+        "accent": "companheira.",
+      },
       "setupTime": "A configuração leva menos de 2 minutos",
       "skipWarning": {
         "title": "Pular configuração?",

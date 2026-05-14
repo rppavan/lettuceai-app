@@ -45,8 +45,8 @@ function ProviderCard({ provider, isActive, onClick }: ProviderCardProps) {
           </div>
         </div>
         <div className="space-y-0.5">
-          <h3 className="text-sm font-semibold text-white leading-tight">{provider.name}</h3>
-          <p className="text-[11px] text-gray-400 leading-snug line-clamp-2">
+          <h3 className="text-[15px] font-semibold text-white leading-tight">{provider.name}</h3>
+          <p className="text-[12px] text-white/70 leading-snug line-clamp-2">
             {getProviderDescription(provider.id)}
           </p>
         </div>
@@ -75,11 +75,11 @@ function ProviderCardCompact({ provider, isActive, onClick }: ProviderCardProps)
         </div>
         <div className="flex-1 min-w-0">
           <h3
-            className={`text-sm font-medium leading-tight truncate ${isActive ? "text-emerald-100" : "text-white"}`}
+            className={`text-[15px] font-medium leading-tight truncate ${isActive ? "text-emerald-100" : "text-white"}`}
           >
             {provider.name}
           </h3>
-          <p className="text-xs text-gray-500 leading-snug truncate">
+          <p className="text-[13px] text-white/55 leading-snug truncate">
             {getProviderDescriptionShort(provider.id)}
           </p>
         </div>
@@ -157,7 +157,7 @@ export function ProviderSetupPage() {
   const configFormContent = (
     <div className="space-y-4">
       <div className="space-y-2">
-        <label className="text-xs font-medium text-white/70">Display Label</label>
+        <label className="text-[13px] font-medium text-white/70">Display Label</label>
         <input
           type="text"
           value={label}
@@ -170,19 +170,19 @@ export function ProviderSetupPage() {
           placeholder={`My ${selectedProvider?.name}`}
           className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white placeholder-white/40 transition-colors focus:border-white/30 focus:outline-none"
         />
-        <p className="text-[11px] text-gray-500">How this provider will appear in your menus</p>
+        <p className="text-[12px] text-white/55">How this provider will appear in your menus</p>
       </div>
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-medium text-white/70">
+          <label className="text-[13px] font-medium text-white/70">
             API Key{isLocalProvider ? " (Optional)" : ""}
           </label>
           <button
             onClick={() =>
               navigate(`/wheretofind${selectedProviderId ? `?provider=${selectedProviderId}` : ""}`)
             }
-            className="text-[11px] text-gray-400 hover:text-white transition-colors"
+            className="text-[12px] text-white/70 hover:text-white transition-colors"
           >
             Where to find it
           </button>
@@ -194,12 +194,12 @@ export function ProviderSetupPage() {
           placeholder={isLocalProvider ? "Usually not required" : "sk-..."}
           className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white placeholder-white/40 transition-colors focus:border-white/30 focus:outline-none"
         />
-        <p className="text-[11px] text-gray-500">Keys are encrypted locally</p>
+        <p className="text-[12px] text-white/55">Keys are encrypted locally</p>
       </div>
 
       {showBaseUrl && (
         <div className="space-y-2">
-          <label className="text-xs font-medium text-white/70">Base URL</label>
+          <label className="text-[13px] font-medium text-white/70">Base URL</label>
           <input
             type="text"
             value={baseUrl}
@@ -220,7 +220,7 @@ export function ProviderSetupPage() {
             }
             className="w-full min-h-11 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white placeholder-white/40 transition-colors focus:border-white/30 focus:outline-none"
           />
-          <p className="text-[11px] text-gray-500">
+          <p className="text-[12px] text-white/55">
             {isLocalProvider
               ? "Your local server address with port"
               : isHostProvider
@@ -232,7 +232,7 @@ export function ProviderSetupPage() {
 
       {testResult && (
         <div
-          className={`rounded-xl border px-4 py-3 text-sm ${
+          className={`rounded-xl border px-4 py-3 text-[15px] ${
             testResult.success
               ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200"
               : "border-amber-400/40 bg-amber-400/10 text-amber-200"
@@ -246,7 +246,7 @@ export function ProviderSetupPage() {
         <button
           onClick={handleTestConnection}
           disabled={!canTest || isTesting}
-          className="w-full min-h-11 rounded-xl border border-white/20 bg-white/10 px-4 py-3 font-medium text-white transition-all duration-200 hover:border-white/30 hover:bg-white/15 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/5 disabled:text-gray-500"
+          className="w-full min-h-11 rounded-xl border border-white/20 bg-white/10 px-4 py-3 font-medium text-white transition-all duration-200 hover:border-white/30 hover:bg-white/15 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/5 disabled:text-white/55"
         >
           {isTesting ? (
             <div className="flex items-center justify-center gap-2">
@@ -291,10 +291,10 @@ export function ProviderSetupPage() {
             <ArrowLeft size={18} />
           </button>
           <div className="text-center">
-            <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-gray-500">
+            <p className="text-[11px] font-medium uppercase tracking-[0.25em] text-white/55">
               Step 1 of 3
             </p>
-            <p className="text-xs text-gray-400 mt-0.5">Provider Setup</p>
+            <p className="text-[13px] text-white/70 mt-0.5">Provider Setup</p>
           </div>
           <div className="w-10" />
         </div>
@@ -304,8 +304,8 @@ export function ProviderSetupPage() {
           {/* Left Panel */}
           <div className="flex-1 flex flex-col border-r border-white/10">
             <div className="p-6 pb-3">
-              <h2 className="text-sm font-medium text-white/70">Available Providers</h2>
-              <p className="text-xs text-gray-500 mt-0.5">Click to select a provider</p>
+              <h2 className="text-[15px] font-medium text-white/70">Available Providers</h2>
+              <p className="text-[13px] text-white/55 mt-0.5">Click to select a provider</p>
             </div>
             <div className="flex-1 overflow-y-auto px-6">
               <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
@@ -330,10 +330,10 @@ export function ProviderSetupPage() {
           {/* Right Panel */}
           <div className="w-100 shrink-0 p-8 overflow-y-auto">
             <div className="space-y-1 mb-6">
-              <h1 className="text-xl font-bold text-white">
+              <h1 className="text-[21px] font-bold text-white">
                 {selectedProvider ? `Configure ${selectedProvider.name}` : "Choose a provider"}
               </h1>
-              <p className="text-sm text-gray-400 leading-relaxed">
+              <p className="text-[15px] text-white/70 leading-relaxed">
                 {selectedProvider
                   ? "Enter your API key to enable AI chat functionality."
                   : "Select a provider from the list to get started."}
@@ -344,7 +344,7 @@ export function ProviderSetupPage() {
               configFormContent
             ) : (
               <div className="rounded-xl border border-dashed border-white/20 bg-white/5 p-6 text-center">
-                <p className="text-sm text-gray-500">Select a provider to configure</p>
+                <p className="text-[15px] text-white/55">Select a provider to configure</p>
               </div>
             )}
           </div>
@@ -366,18 +366,18 @@ export function ProviderSetupPage() {
             <ArrowLeft size={16} />
           </button>
           <div className="text-center">
-            <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-gray-500">
+            <p className="text-[11px] font-medium uppercase tracking-[0.25em] text-white/55">
               Step 1 of 3
             </p>
-            <p className="text-xs text-gray-400 mt-0.5">Provider Setup</p>
+            <p className="text-[13px] text-white/70 mt-0.5">Provider Setup</p>
           </div>
           <div className="w-10" />
         </div>
 
         {/* Title */}
         <div className="text-center space-y-2 mb-8">
-          <h1 className="text-2xl font-bold text-white">{t("onboarding.steps.provider")}</h1>
-          <p className="text-sm text-gray-400 max-w-sm leading-relaxed">
+          <h1 className="text-[25px] font-bold text-white">{t("onboarding.steps.provider")}</h1>
+          <p className="text-[15px] text-white/70 max-w-sm leading-relaxed">
             Select an AI provider to get started. Your API keys are securely encrypted on your
             device. No account signup needed.
           </p>
@@ -408,8 +408,8 @@ export function ProviderSetupPage() {
           className={`config-form-section w-full max-w-sm transition-all duration-300 ${showForm && selectedProvider ? "opacity-100 max-h-500" : "opacity-0 max-h-0 overflow-hidden pointer-events-none"}`}
         >
           <div className="text-center space-y-2 mb-6">
-            <h2 className="text-lg font-semibold text-white">Connect {selectedProvider?.name}</h2>
-            <p className="text-xs text-gray-400 leading-relaxed">
+            <h2 className="text-[19px] font-semibold text-white">Connect {selectedProvider?.name}</h2>
+            <p className="text-[13px] text-white/70 leading-relaxed">
               Paste your API key below to enable chats. Need a key? Get one from the provider
               dashboard.
             </p>

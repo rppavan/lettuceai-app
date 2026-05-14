@@ -4314,6 +4314,11 @@ export const frMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "Commencer",
       "skipForNow": "Passer pour l'instant",
       "restoreFromBackup": "Restaurer depuis une sauvegarde",
+      "syncFromDevice": "Synchroniser depuis un autre appareil",
+      "headline": {
+        "lead": "Votre IA privée,",
+        "accent": "compagne.",
+      },
       "setupTime": "La configuration prend moins de 2 minutes",
       "skipWarning": {
         "title": "Passer la configuration ?",

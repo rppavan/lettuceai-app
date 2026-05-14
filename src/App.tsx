@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster } from "sonner";
 
-import { WelcomePage, OnboardingPage } from "./ui/pages/onboarding";
+import { OnboardingPage } from "./ui/pages/onboarding";
 import { WhereToFindPage } from "./ui/pages/onboarding/WhereToFind";
 import { SettingsPage } from "./ui/pages/settings/Settings";
 import { SettingsLayout } from "./ui/pages/settings/SettingsLayout";
@@ -995,7 +995,9 @@ function AppContent() {
         <main
           ref={mainRef}
           className={`flex-1 ${showTopNav ? "pt-[var(--topnav-h,72px)]" : ""} ${
-            isOnboardingRoute
+            location.pathname === "/welcome"
+              ? "overflow-hidden px-0 pt-0 pb-0"
+              : isOnboardingRoute
               ? `overflow-y-auto ${isDesktop ? "" : "px-0 pt-5 pb-5"}`
               : isChatDetailRoute
                 ? "overflow-hidden px-0 pt-0 pb-0"
@@ -1036,7 +1038,7 @@ function AppContent() {
           >
             <Routes>
               <Route path="/" element={<OnboardingCheck />} />
-              <Route path="/welcome" element={<WelcomePage />} />
+              <Route path="/welcome" element={<OnboardingPage />} />
               <Route path="/onboarding/provider" element={<OnboardingPage />} />
               <Route path="/onboarding/models" element={<OnboardingPage />} />
               <Route path="/onboarding/memory" element={<OnboardingPage />} />

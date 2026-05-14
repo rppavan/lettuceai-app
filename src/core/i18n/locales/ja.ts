@@ -4015,6 +4015,11 @@ export const jaMessages: DeepPartialMessageTree<LocaleMessages> = {
       "getStarted": "始めましょう",
       "skipForNow": "今はスキップ",
       "restoreFromBackup": "バックアップから復元",
+      "syncFromDevice": "別のデバイスから同期",
+      "headline": {
+        "lead": "あなたのプライベートAI",
+        "accent": "コンパニオン。",
+      },
       "setupTime": "セットアップは2分以内で完了します",
       "skipWarning": {
         "title": "セットアップをスキップしますか？",

@@ -4314,6 +4314,11 @@ export const zhHansMessages: DeepPartialMessageTree<LocaleMessages> = {
       getStarted: "开始使用",
       skipForNow: "暂时跳过",
       restoreFromBackup: "从备份恢复",
+      syncFromDevice: "从其他设备同步",
+      headline: {
+        lead: "你的私人AI",
+        accent: "伙伴。",
+      },
       setupTime: "设置只需不到 2 分钟",
       skipWarning: {
         title: "跳过设置？",

@@ -4355,6 +4355,11 @@ export const noMessages: DeepPartialMessageTree<LocaleMessages> = {
       getStarted: "Kom i gang",
       skipForNow: "Hopp over for nå",
       restoreFromBackup: "Gjenopprett fra sikkerhetskopi",
+      syncFromDevice: "Synkroniser fra annen enhet",
+      headline: {
+        lead: "Din private AI",
+        accent: "følgesvenn.",
+      },
       setupTime: "Oppsettet tar mindre enn 2 minutter",
       skipWarning: {
         title: "Hopp over oppsett?",
