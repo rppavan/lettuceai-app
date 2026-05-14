@@ -5,7 +5,7 @@ use std::time::UNIX_EPOCH;
 use tauri::Manager;
 
 use super::legacy::storage_root;
-use crate::utils::{log_debug, log_info};
+use crate::utils::{log_debug, log_info, log_warn};
 
 pub struct StoredImageInfo {
     pub file_path: String,
@@ -1078,7 +1078,51 @@ pub fn generate_avatar_gradient(
     if samples.is_empty() {
         return Ok(create_default_gradient());
     }
-    let dominant_colors = find_dominant_colors(&samples, 8)?;
+    let dominant_colors = match find_dominant_colors(&samples, 8) {
+        Ok(colors) if !colors.is_empty() => colors,
+        Ok(_) => {
+            log_warn(
+                &app,
+                "gradient",
+                format!(
+                    "Dominant color extraction returned no colors for entity: {}. Falling back to default gradient.",
+                    entity_id
+                ),
+            );
+            let gradient = create_default_gradient();
+            let json = serde_json::to_string_pretty(&gradient).map_err(|e| {
+                crate::utils::err_msg(
+                    module_path!(),
+                    line!(),
+                    format!("Failed to serialize gradient cache: {}", e),
+                )
+            })?;
+            fs::write(&gradient_cache_path, json)
+                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+            return Ok(gradient);
+        }
+        Err(err) => {
+            log_warn(
+                &app,
+                "gradient",
+                format!(
+                    "Gradient extraction failed for entity {}: {}. Falling back to default gradient.",
+                    entity_id, err
+                ),
+            );
+            let gradient = create_default_gradient();
+            let json = serde_json::to_string_pretty(&gradient).map_err(|e| {
+                crate::utils::err_msg(
+                    module_path!(),
+                    line!(),
+                    format!("Failed to serialize gradient cache: {}", e),
+                )
+            })?;
+            fs::write(&gradient_cache_path, json)
+                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+            return Ok(gradient);
+        }
+    };
     let avg_hue = calculate_average_hue(&dominant_colors);
     let gradient_colors = generate_gradient_colors(&dominant_colors, avg_hue)?;
     let gradient_css = create_css_gradient(&gradient_colors);

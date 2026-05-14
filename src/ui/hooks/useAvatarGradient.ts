@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import {
     AVATAR_UPDATED_EVENT,
     getCachedGradient,
+    peekCachedGradient,
     type AvatarGradient,
     type EntityType,
 } from "../../core/storage/avatars";
@@ -88,13 +89,18 @@ export function useAvatarGradient(
     customColors?: CustomGradientColors,
     source: AvatarGradientSource = "round",
 ) {
-    const [gradient, setGradient] = useState<AvatarGradient | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
+    const hasCustomColors = Boolean(customColors?.colors && customColors.colors.length > 0);
+    const cachedGradient =
+        entityId && !hasCustomColors ? peekCachedGradient(type, entityId, source) ?? null : null;
+
+    const [gradient, setGradient] = useState<AvatarGradient | null>(() =>
+        cachedGradient
+    );
+    const [isLoading, setIsLoading] = useState(() =>
+        Boolean(entityId && avatarPath && !disabled && !hasCustomColors && !cachedGradient)
+    );
     const [error, setError] = useState<string | null>(null);
     const [refreshTick, setRefreshTick] = useState(0);
-
-    // Check if we have custom colors
-    const hasCustomColors = customColors?.colors && customColors.colors.length > 0;
 
     // Custom gradient - memoized to avoid recalculation
     const customGradient = useMemo(() => {
@@ -121,17 +127,29 @@ export function useAvatarGradient(
             return null;
         }
 
+        const existingGradient = peekCachedGradient(type, entityId, source) ?? null;
+        if (existingGradient) {
+            setGradient((current) => current ?? existingGradient);
+            if (!force) {
+                setIsLoading(false);
+                setError(null);
+                return existingGradient;
+            }
+        }
+
         setIsLoading(true);
         setError(null);
 
         try {
             const gradientData = await getCachedGradient(type, entityId, avatarPath, force, source);
-            setGradient(gradientData || null);
+            setGradient((current) => gradientData || current || null);
             return gradientData || null;
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : "Failed to generate gradient";
             setError(errorMessage);
-            setGradient(null);
+            if (!existingGradient) {
+                setGradient(null);
+            }
             throw err;
         } finally {
             setIsLoading(false);

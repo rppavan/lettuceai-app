@@ -1024,6 +1024,7 @@ function AppContent() {
             key={(() => {
               if (location.pathname.startsWith("/settings")) return "/settings";
               if (location.pathname.startsWith("/library")) return location.pathname;
+              if (location.pathname === "/chat") return "/chat";
               const chatMatch = location.pathname.match(/^\/chat\/([^/]+)/);
               if (chatMatch) return `/chat/${chatMatch[1]}`;
               const groupMatch = location.pathname.match(/^\/group-chats\/([^/]+)/);

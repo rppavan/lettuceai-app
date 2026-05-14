@@ -18,7 +18,11 @@ import { BottomMenu, CharacterExportMenu } from "../../components";
 import { AvatarImage } from "../../components/AvatarImage";
 import { useAvatar } from "../../hooks/useAvatar";
 import { useAvatarGradient } from "../../hooks/useAvatarGradient";
-import { getChatsViewMode, setChatsViewMode } from "../../../core/storage/appState";
+import {
+  getChatsViewMode,
+  getChatsViewModeCached,
+  setChatsViewMode,
+} from "../../../core/storage/appState";
 import {
   exportCharacterWithFormat,
   downloadJson,
@@ -34,8 +38,8 @@ import { isRenderableImageUrl } from "../../../core/utils/image";
 import { cleanupOldDrafts } from "./utils/draftCleanup";
 
 export function ChatPage() {
-  const [characters, setCharacters] = useState<Character[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [characters, setCharacters] = useState<Character[]>(() => chatsPageCache?.characters ?? []);
+  const [loading, setLoading] = useState(() => !chatsPageCache);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -45,9 +49,11 @@ export function ChatPage() {
   const [, setImportingChatpkg] = useState(false);
   const [latestSessionByCharacter, setLatestSessionByCharacter] = useState<
     Record<string, { id: string; updatedAt: number; archived: boolean }>
-  >({});
+  >(() => chatsPageCache?.latestSessionByCharacter ?? {});
   const [hiding, setHiding] = useState(false);
-  const [viewMode, setViewMode] = useState<ChatsViewMode>("hero");
+  const [viewMode, setViewMode] = useState<ChatsViewMode>(
+    () => getChatsViewModeCached() ?? "hero",
+  );
   const [templateSelectorCharacter, setTemplateSelectorCharacter] = useState<Character | null>(
     null,
   );
@@ -123,6 +129,10 @@ export function ChatPage() {
         return bTime - aTime;
       });
 
+      chatsPageCache = {
+        characters: sorted,
+        latestSessionByCharacter: latestByCharacter,
+      };
       setLatestSessionByCharacter(latestByCharacter);
       setCharacters(sorted);
     } catch (err) {
@@ -570,6 +580,13 @@ function CharacterSkeleton() {
   );
 }
 
+type ChatsPageCache = {
+  characters: Character[];
+  latestSessionByCharacter: Record<string, { id: string; updatedAt: number; archived: boolean }>;
+};
+
+let chatsPageCache: ChatsPageCache | null = null;
+
 function EmptyState() {
   const { t } = useI18n();
   return (
@@ -708,7 +725,7 @@ const CharacterCard = memo(
     };
 
     return (
-      <motion.button
+      <button
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onPointerDown={handlePointerDown}
@@ -781,7 +798,7 @@ const CharacterCard = memo(
         >
           <path d="m9 18 6-6-6-6" />
         </svg>
-      </motion.button>
+      </button>
     );
   },
 );
@@ -874,7 +891,7 @@ const HeroCard = memo(
 
     if (isBannerStyle) {
       return (
-        <motion.button
+        <button
           onClick={handleClick}
           onContextMenu={handleContextMenu}
           onPointerDown={handlePointerDown}
@@ -974,12 +991,12 @@ const HeroCard = memo(
               <path d="m9 18 6-6-6-6" />
             </svg>
           </div>
-        </motion.button>
+        </button>
       );
     }
 
     return (
-      <motion.button
+      <button
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onPointerDown={handlePointerDown}
@@ -1052,7 +1069,7 @@ const HeroCard = memo(
         >
           <path d="m9 18 6-6-6-6" />
         </svg>
-      </motion.button>
+      </button>
     );
   },
 );
@@ -1098,7 +1115,7 @@ const GalleryCard = memo(
     } = useLongPress(character, onSelect, onLongPress);
 
     return (
-      <motion.button
+      <button
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onPointerDown={handlePointerDown}
@@ -1144,7 +1161,7 @@ const GalleryCard = memo(
             </span>
           </div>
         )}
-      </motion.button>
+      </button>
     );
   },
 );

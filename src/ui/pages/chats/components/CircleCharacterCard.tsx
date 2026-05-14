@@ -1,5 +1,4 @@
 import { memo, useRef } from "react";
-import { motion } from "framer-motion";
 import type { Character } from "../../../../core/storage/schemas";
 import { cn, interactive } from "../../../design-tokens";
 import { useAvatarGradient } from "../../../hooks/useAvatarGradient";
@@ -72,7 +71,7 @@ export const CircleCharacterCard = memo(
     };
 
     return (
-      <motion.button
+      <button
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onPointerDown={handlePointerDown}
@@ -145,7 +144,7 @@ export const CircleCharacterCard = memo(
         >
           <path d="m9 18 6-6-6-6" />
         </svg>
-      </motion.button>
+      </button>
     );
   },
 );

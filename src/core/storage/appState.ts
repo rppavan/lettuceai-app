@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { readSettings, setAppState } from "./repo";
+import { readSettings, readSettingsCached, setAppState } from "./repo";
 import {
   createDefaultAppState,
   type AppState,
@@ -243,6 +243,12 @@ export async function setCustomColorPresets(presets: CustomColorPreset[]): Promi
 export async function getChatsViewMode(): Promise<ChatsViewMode> {
   const state = await getAppState();
   return state.chatsViewMode ?? "hero";
+}
+
+export function getChatsViewModeCached(): ChatsViewMode | null {
+  const settings = readSettingsCached();
+  if (!settings) return null;
+  return settings.appState.chatsViewMode ?? "hero";
 }
 
 export async function setChatsViewMode(mode: ChatsViewMode): Promise<void> {

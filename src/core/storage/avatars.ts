@@ -15,6 +15,8 @@ export const AVATAR_ROUND_FILENAME = "avatar_round.webp";
 export const AVATAR_BANNER_FILENAME = "avatar_banner.webp";
 export const AVATAR_UPDATED_EVENT = "lettuce:avatar-updated";
 
+const avatarUrlCache = new Map<string, string>();
+
 export interface GradientColor {
   r: number;
   g: number;
@@ -118,6 +120,7 @@ export async function saveAvatar(
 
     // Clear the gradient cache for this entity since avatar changed
     clearEntityGradientCache(type, entityId);
+    clearEntityAvatarUrlCache(type, entityId);
     console.log("[saveAvatar] Cleared gradient cache for entity:", prefixedId);
 
     try {
@@ -169,6 +172,12 @@ export async function loadAvatar(
   }
 
   try {
+    const cacheKey = `${type}:${entityId}:${avatarFilename}`;
+    const cached = avatarUrlCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const prefixedId = getPrefixedEntityId(type, entityId);
     const filePath = await invoke<string>("storage_get_avatar_path", {
       entityId: prefixedId,
@@ -177,7 +186,8 @@ export async function loadAvatar(
 
     console.log("[loadAvatar] Loaded avatar for entity:", prefixedId);
     const assetUrl = convertFileSrc(filePath);
-    const versionedUrl = `${assetUrl}${assetUrl.includes("?") ? "&" : "?"}v=${Date.now()}`;
+    const versionedUrl = `${assetUrl}${assetUrl.includes("?") ? "&" : "?"}avatar=${encodeURIComponent(avatarFilename)}`;
+    avatarUrlCache.set(cacheKey, versionedUrl);
     return versionedUrl;
   } catch (error) {
     console.error("[loadAvatar] Failed to load avatar:", error);
@@ -219,6 +229,9 @@ export async function deleteAvatar(
         }).catch(() => undefined),
       ),
     );
+    clearEntityAvatarUrlCache(type, entityId);
+    clearEntityGradientCache(type, entityId);
+    emitAvatarUpdated(type, entityId);
     console.log("[deleteAvatar] Deleted avatar for entity:", prefixedId);
   } catch (error) {
     console.error("[deleteAvatar] Failed to delete avatar:", error);
@@ -287,6 +300,14 @@ export async function generateGradientFromAvatar(
  * Cache for generated gradients to avoid recomputation
  */
 const gradientCache = new Map<string, AvatarGradient>();
+
+export function peekCachedGradient(
+  type: EntityType,
+  entityId: string,
+  source: AvatarGradientSource = "round",
+): AvatarGradient | undefined {
+  return gradientCache.get(`${type}-${entityId}-${source}`);
+}
 
 /**
  * Gets cached or generates a gradient for an avatar
@@ -363,6 +384,15 @@ export function clearEntityGradientCache(type: EntityType, entityId: string): vo
   for (const key of Array.from(gradientCache.keys())) {
     if (key.startsWith(prefix)) {
       gradientCache.delete(key);
+    }
+  }
+}
+
+function clearEntityAvatarUrlCache(type: EntityType, entityId: string): void {
+  const prefix = `${type}:${entityId}:`;
+  for (const key of Array.from(avatarUrlCache.keys())) {
+    if (key.startsWith(prefix)) {
+      avatarUrlCache.delete(key);
     }
   }
 }

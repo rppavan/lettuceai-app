@@ -79,9 +79,10 @@ function getItemDisableGradient(item: LibraryItem): boolean | undefined {
 export function LibraryPage() {
   const { t } = useI18n();
   const location = useLocation();
-  const [characters, setCharacters] = useState<Character[]>([]);
-  const [personas, setPersonas] = useState<Persona[]>([]);
-  const [lorebooks, setLorebooks] = useState<Lorebook[]>([]);
+  const [characters, setCharacters] = useState<Character[]>(() => libraryPageCache?.characters ?? []);
+  const [personas, setPersonas] = useState<Persona[]>(() => libraryPageCache?.personas ?? []);
+  const [lorebooks, setLorebooks] = useState<Lorebook[]>(() => libraryPageCache?.lorebooks ?? []);
+  const [loading, setLoading] = useState(() => !libraryPageCache);
   const [filter, setFilter] = useState<FilterOption>(() => resolveLibraryFilter(location.search));
   const [selectedItem, setSelectedItem] = useState<LibraryItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -123,11 +124,18 @@ export function LibraryPage() {
         listPersonas(),
         listLorebooks(),
       ]);
+      libraryPageCache = {
+        characters: chars,
+        personas: pers,
+        lorebooks: lbs,
+      };
       setCharacters(chars);
       setPersonas(pers);
       setLorebooks(lbs);
     } catch (error) {
       console.error("Failed to load library data:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -360,6 +368,8 @@ export function LibraryPage() {
             scrollContainerRef={mainRef}
             toolbarHost={isDesktop ? toolbarHost : null}
           />
+        ) : loading ? (
+          <LibraryGridSkeleton />
         ) : filteredItems.length === 0 ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -660,6 +670,33 @@ export function LibraryPage() {
     </div>
   );
 }
+
+function LibraryGridSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 pb-24 lg:grid-cols-3 xl:grid-cols-4">
+      {Array.from({ length: 8 }).map((_, index) => (
+        <div
+          key={index}
+          className="overflow-hidden rounded-3xl border border-fg/10 bg-fg/5 animate-pulse"
+        >
+          <div className="aspect-[4/5] bg-fg/10" />
+          <div className="space-y-2 p-4">
+            <div className="h-4 w-2/3 rounded bg-fg/10" />
+            <div className="h-3 w-1/2 rounded bg-fg/10" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type LibraryPageCache = {
+  characters: Character[];
+  personas: Persona[];
+  lorebooks: Lorebook[];
+};
+
+let libraryPageCache: LibraryPageCache | null = null;
 
 function isImageLike(s?: string) {
   return isRenderableImageUrl(s);

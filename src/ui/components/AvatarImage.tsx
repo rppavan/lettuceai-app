@@ -8,6 +8,8 @@ type AvatarImageProps = {
   applyCrop?: boolean;
   className?: string;
   imgClassName?: string;
+  loading?: "eager" | "lazy";
+  decoding?: "async" | "sync" | "auto";
 };
 
 export function AvatarImage({
@@ -17,6 +19,8 @@ export function AvatarImage({
   applyCrop: _applyCrop = true,
   className,
   imgClassName,
+  loading = "lazy",
+  decoding = "async",
 }: AvatarImageProps) {
   return (
     <div className={cn("relative h-full w-full overflow-hidden", className)}>
@@ -25,6 +29,8 @@ export function AvatarImage({
         alt={alt}
         className={cn("h-full w-full object-cover", imgClassName)}
         draggable={false}
+        loading={loading}
+        decoding={decoding}
       />
     </div>
   );
