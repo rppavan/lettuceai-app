@@ -336,41 +336,8 @@ impl WindowChromeFlags {
 }
 
 #[cfg(target_os = "linux")]
-fn configure_linux_webview_media(window: &tauri::WebviewWindow) {
-    let result = window.with_webview(|webview| {
-        use webkit2gtk::gio::prelude::Cast;
-        use webkit2gtk::{
-            PermissionRequestExt, SettingsExt, UserMediaPermissionRequest, WebViewExt,
-        };
+fn configure_linux_webview_media(_window: &tauri::WebviewWindow) {
 
-        let wv = webview.inner();
-        if let Some(settings) = WebViewExt::settings(&wv) {
-            settings.set_enable_media_stream(true);
-            settings.set_enable_mediasource(true);
-            settings.set_media_playback_requires_user_gesture(false);
-        }
-        wv.connect_permission_request(|_, request| {
-            if request
-                .downcast_ref::<UserMediaPermissionRequest>()
-                .is_some()
-            {
-                request.allow();
-                return true;
-            }
-            false
-        });
-    });
-
-    if let Err(err) = result {
-        utils::log_error(
-            window.app_handle(),
-            "webview",
-            format!(
-                "Failed to configure Linux webview media permissions: {}",
-                err
-            ),
-        );
-    }
 }
 
 pub(crate) fn setup_app(
