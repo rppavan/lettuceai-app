@@ -136,3 +136,11 @@ tauri-runtime-wry = { git = "https://github.com/tauri-apps/tauri", branch = "fea
 tauri-macros = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
 tauri-codegen = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
 tauri-plugin = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
+
+tauri-plugin-opener = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "feat/cef" }
+tauri-plugin-dialog = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "feat/cef" }
+tauri-plugin-fs = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "feat/cef" }
+tauri-plugin-os = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "feat/cef" }
+tauri-plugin-process = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "feat/cef" }
+tauri-plugin-barcode-scanner = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "feat/cef" }
+tauri-plugin-haptics = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "feat/cef" }
