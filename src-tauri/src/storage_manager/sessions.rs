@@ -24,6 +24,17 @@ const ALLOWED_MEMORY_CATEGORIES: &[&str] = &[
     "other",
 ];
 
+const COMPANION_MEMORY_CATEGORIES: &[&str] = &[
+    "relationship",
+    "milestone",
+    "boundary",
+    "preference",
+    "profile",
+    "routine",
+    "episodic",
+    "emotional_snapshot",
+];
+
 struct LoadedMemoryFields {
     memories_json: String,
     memory_embeddings: Vec<MemoryEmbedding>,
@@ -330,23 +341,46 @@ fn persist_shared_memory_from_session_json(
     Ok(true)
 }
 
-fn normalize_memory_category(category: Option<String>) -> Result<Option<String>, String> {
+fn allowed_memory_categories_for_mode(mode: &str) -> &'static [&'static str] {
+    if mode.eq_ignore_ascii_case("companion") {
+        &[
+            "character_trait",
+            "relationship",
+            "plot_event",
+            "world_detail",
+            "preference",
+            "other",
+            "milestone",
+            "boundary",
+            "profile",
+            "routine",
+            "episodic",
+            "emotional_snapshot",
+        ]
+    } else {
+        ALLOWED_MEMORY_CATEGORIES
+    }
+}
+
+fn normalize_memory_category(
+    category: Option<String>,
+    mode: &str,
+) -> Result<Option<String>, String> {
     let normalized = category
         .map(|c| c.trim().to_string())
         .filter(|c| !c.is_empty());
+    let allowed = allowed_memory_categories_for_mode(mode);
 
     match normalized {
-        Some(value) if !ALLOWED_MEMORY_CATEGORIES.contains(&value.as_str()) => {
-            Err(crate::utils::err_msg(
-                module_path!(),
-                line!(),
-                format!(
-                    "Invalid memory category '{}'. Allowed values: {}",
-                    value,
-                    ALLOWED_MEMORY_CATEGORIES.join(", ")
-                ),
-            ))
-        }
+        Some(value) if !allowed.contains(&value.as_str()) => Err(crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            format!(
+                "Invalid memory category '{}'. Allowed values: {}",
+                value,
+                allowed.join(", ")
+            ),
+        )),
         Some(value) => Ok(Some(value)),
         None => Ok(None),
     }
@@ -3447,6 +3481,15 @@ pub async fn session_add_memory(
     // Read current memories (legacy column) and embeddings (new table or
     // legacy fallback).
     let current_memories_json = read_session_memories_json_with_resolution(&conn, &session_id)?;
+    let session_mode: String = conn
+        .query_row(
+            "SELECT mode FROM sessions WHERE id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
+        .unwrap_or_else(|| "roleplay".to_string());
 
     let mut memories: Vec<String> =
         serde_json::from_str(&current_memories_json).unwrap_or_else(|_| vec![]);
@@ -3468,7 +3511,7 @@ pub async fn session_add_memory(
     };
 
     let token_count = crate::embedding::tokenizer::count_tokens(&app, &memory).unwrap_or(0);
-    let normalized_category = normalize_memory_category(memory_category)?;
+    let normalized_category = normalize_memory_category(memory_category, &session_mode)?;
     let (embedding_source_version, embedding_dimensions) =
         embedding::resolve_active_embedding_signature(&app)
             .unwrap_or_else(|_| ("v3".to_string(), 512));
@@ -3562,6 +3605,15 @@ pub async fn session_update_memory(
     let mut conn = open_db(&app)?;
 
     let current_memories_json = read_session_memories_json_with_resolution(&conn, &session_id)?;
+    let session_mode: String = conn
+        .query_row(
+            "SELECT mode FROM sessions WHERE id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
+        .unwrap_or_else(|| "roleplay".to_string());
 
     let mut memories: Vec<String> =
         serde_json::from_str(&current_memories_json).unwrap_or_else(|_| vec![]);
@@ -3569,7 +3621,7 @@ pub async fn session_update_memory(
 
     if memory_index < memories.len() {
         memories[memory_index] = new_memory.clone();
-        let normalized_category = normalize_memory_category(new_category)?;
+        let normalized_category = normalize_memory_category(new_category, &session_mode)?;
 
         let embedding = match embedding::compute_embedding(app.clone(), new_memory.clone()).await {
             Ok(vec) => vec,
