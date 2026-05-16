@@ -67,6 +67,8 @@ export function VoicesPage() {
 
   const getProviderBadge = (providerType: AudioProviderType) => {
     if (providerType === "gemini_tts") return t("voices.extra.badge.gemini");
+    if (providerType === "fish_tts") return t("voices.extra.badge.fish");
+    if (providerType === "fish_speech") return t("voices.extra.badge.fishSpeech");
     if (providerType === "openai_tts") return t("voices.extra.badge.openai");
     return t("voices.extra.badge.elevenlabs");
   };
@@ -631,7 +633,7 @@ function VoiceEditor({ isOpen, voice, providers, onClose, onSave }: VoiceEditorP
     const provider = providers.find((p) => p.id === formData.providerId);
     if (!provider) return;
 
-    if (provider.providerType === "elevenlabs") {
+    if (provider.providerType === "elevenlabs" || provider.providerType === "fish_tts") {
       setIsLoadingVoices(true);
       void (async () => {
         try {
@@ -676,6 +678,10 @@ function VoiceEditor({ isOpen, voice, providers, onClose, onSave }: VoiceEditorP
 
       if (provider?.providerType === "gemini_tts" && !finalVoiceData.voiceId.trim()) {
         finalVoiceData.voiceId = "kore";
+      }
+
+      if (provider?.providerType === "fish_tts" && !finalVoiceData.voiceId.trim()) {
+        throw new Error("Voice ID is required for Fish Audio (Cloud).");
       }
 
       if (provider?.providerType === "openai_tts") {
@@ -792,7 +798,12 @@ function VoiceEditor({ isOpen, voice, providers, onClose, onSave }: VoiceEditorP
   const isElevenLabsVoiceDesign = activeProvider?.providerType === "elevenlabs" && isNewVoice;
   const allowsVoiceLookupByName =
     activeProvider?.providerType === "elevenlabs" && !isElevenLabsVoiceDesign;
-  const requiresManualVoiceId = activeProvider?.providerType === "openai_tts";
+  const usesProviderVoicePicker =
+    activeProvider?.providerType === "elevenlabs" || activeProvider?.providerType === "fish_tts";
+  const requiresManualVoiceId =
+    activeProvider?.providerType === "openai_tts" ||
+    activeProvider?.providerType === "fish_tts" ||
+    activeProvider?.providerType === "fish_speech";
   const sampleLength = textSample.trim().length;
   const previewDisabled =
     isPlaying ||
@@ -883,11 +894,13 @@ function VoiceEditor({ isOpen, voice, providers, onClose, onSave }: VoiceEditorP
           )}
         </div>
 
-        {activeProvider?.providerType === "elevenlabs" && !isElevenLabsVoiceDesign && (
+        {usesProviderVoicePicker && !isElevenLabsVoiceDesign && (
           <div>
             <div className="mb-1 flex items-center justify-between">
               <label className="text-[11px] font-medium text-fg/70">
-                {t("voices.extra.editor.elevenlabsVoice")}
+                {activeProvider?.providerType === "fish_tts"
+                  ? t("voices.extra.editor.fishVoice")
+                  : t("voices.extra.editor.elevenlabsVoice")}
               </label>
               <button
                 type="button"
@@ -945,7 +958,9 @@ function VoiceEditor({ isOpen, voice, providers, onClose, onSave }: VoiceEditorP
               )}
             </select>
             <p className="mt-1 text-[10px] text-fg/40">
-              {t("voices.extra.editor.elevenlabsVoiceHint")}
+              {activeProvider?.providerType === "fish_tts"
+                ? t("voices.extra.editor.fishVoiceHint")
+                : t("voices.extra.editor.elevenlabsVoiceHint")}
             </p>
           </div>
         )}
@@ -998,7 +1013,7 @@ function VoiceEditor({ isOpen, voice, providers, onClose, onSave }: VoiceEditorP
           </div>
         )}
 
-        {activeProvider?.providerType === "openai_tts" && (
+        {requiresManualVoiceId && (
           <div>
             <label className="mb-1 block text-[11px] font-medium text-fg/70">
               {t("voices.extra.editor.voiceId")}
@@ -1007,11 +1022,21 @@ function VoiceEditor({ isOpen, voice, providers, onClose, onSave }: VoiceEditorP
               type="text"
               value={formData.voiceId}
               onChange={(e) => setFormData({ ...formData, voiceId: e.target.value })}
-              placeholder={t("voices.extra.editor.voiceIdPlaceholder")}
+              placeholder={
+                activeProvider?.providerType === "fish_tts"
+                  ? t("voices.extra.editor.fishVoiceIdPlaceholder")
+                  : activeProvider?.providerType === "fish_speech"
+                    ? t("voices.extra.editor.fishSpeechVoiceIdPlaceholder")
+                  : t("voices.extra.editor.voiceIdPlaceholder")
+              }
               className="w-full rounded-lg border border-fg/10 bg-surface-el/20 px-3 py-2 text-sm text-fg placeholder-fg/40 focus:border-fg/30 focus:outline-none"
             />
             <p className="mt-1 text-[10px] text-fg/40">
-              {t("voices.extra.editor.voiceIdHint")}
+              {activeProvider?.providerType === "fish_tts"
+                ? t("voices.extra.editor.fishVoiceIdHint")
+                : activeProvider?.providerType === "fish_speech"
+                  ? t("voices.extra.editor.fishSpeechVoiceIdHint")
+                : t("voices.extra.editor.voiceIdHint")}
             </p>
           </div>
         )}

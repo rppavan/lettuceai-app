@@ -2325,6 +2325,8 @@ export const enMessages = {
       },
       audioProviderLabel: {
         elevenlabs: "ElevenLabs",
+        fishTts: "Fish Audio (Cloud)",
+        fishSpeech: "Fish Speech (Local)",
         geminiTts: "Gemini TTS",
         openaiTts: "OpenAI-Compatible TTS",
         kokoro: "Kokoro (Local)",
@@ -2337,6 +2339,7 @@ export const enMessages = {
         providerType: "Provider Type",
         label: "Label",
         apiKey: "API Key",
+        apiKeyOptional: "API Key (optional)",
         modelVariant: "Model Variant",
         assetRoot: "Asset Root",
         projectId: "Google Cloud Project ID",
@@ -2345,12 +2348,16 @@ export const enMessages = {
         requestPath: "Request Path",
       },
       types: {
+        fish: "Fish Audio (Cloud)",
+        fishSpeech: "Fish Speech (Local)",
         gemini: "Gemini TTS (Google)",
         openai: "OpenAI-Compatible TTS",
         kokoro: "Kokoro (Local)",
       },
       placeholders: {
         labelGemini: "My Gemini TTS",
+        labelFish: "My Fish Audio Cloud",
+        labelFishSpeech: "My Fish Speech Local",
         labelOpenai: "My Compatible TTS",
         labelKokoro: "Kokoro Local",
         labelElevenlabs: "My ElevenLabs",
@@ -5334,6 +5341,15 @@ export const enMessages = {
         noVoicesAvailable: "No voices available",
         selectVoice: "Select a voice...",
         elevenlabsVoiceHint: "Select from your ElevenLabs voices",
+        fishVoice: "Fish Audio Cloud Voice Model",
+        fishVoiceHint:
+          "Select one of your Fish Audio cloud voice models, or paste a model ID below",
+        fishVoiceIdPlaceholder: "7f92f8afb8ec43bf81429cc1c9199cb1",
+        fishVoiceIdHint:
+          "Use the Fish Audio cloud voice model ID returned by the /model endpoint",
+        fishSpeechVoiceIdPlaceholder: "my-speaker",
+        fishSpeechVoiceIdHint:
+          "Optional: enter a Fish Speech local reference_id if your server is configured with one",
         geminiVoice: "Gemini Voice",
         geminiVoiceHint: "Select a Gemini TTS voice",
         voiceId: "Voice ID",
@@ -5425,6 +5441,8 @@ export const enMessages = {
         gemini: "G",
         openai: "API",
         elevenlabs: "11",
+        fish: "Cloud",
+        fishSpeech: "Local",
       },
     },
   },

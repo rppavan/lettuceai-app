@@ -68,6 +68,8 @@ export function AudioProviderEditor({
   }, [formData?.providerType]);
 
   const isKokoro = formData?.providerType === "kokoro";
+  const isOpenAiCompatible = formData?.providerType === "openai_tts";
+  const isFishSpeechLocal = formData?.providerType === "fish_speech";
 
   const browseAssetRoot = async () => {
     try {
@@ -106,7 +108,7 @@ export function AudioProviderEditor({
       return;
     }
 
-    if (!formData.apiKey?.trim()) {
+    if (formData.providerType !== "fish_speech" && !formData.apiKey?.trim()) {
       setValidationError(t("providers.audioEditor.errors.apiKeyRequired"));
       return;
     }
@@ -116,7 +118,10 @@ export function AudioProviderEditor({
       return;
     }
 
-    if (formData.providerType === "openai_tts" && !formData.baseUrl?.trim()) {
+    if (
+      (formData.providerType === "openai_tts" || formData.providerType === "fish_speech") &&
+      !formData.baseUrl?.trim()
+    ) {
       setValidationError(t("providers.audioEditor.errors.baseUrlRequired"));
       return;
     }
@@ -129,6 +134,7 @@ export function AudioProviderEditor({
         formData.providerType,
         formData.apiKey,
         formData.projectId,
+        formData.baseUrl,
       );
 
       if (!isValid) {
@@ -173,7 +179,12 @@ export function AudioProviderEditor({
                 projectId: undefined,
                 location: undefined,
                 baseUrl: undefined,
-                requestPath: next === "openai_tts" ? "/v1/audio/speech" : undefined,
+                requestPath:
+                  next === "openai_tts"
+                    ? "/v1/audio/speech"
+                    : next === "fish_speech"
+                      ? "/v1/tts"
+                      : undefined,
                 apiKey: next === "kokoro" ? undefined : formData.apiKey,
                 kokoroVariant: next === "kokoro" ? formData.kokoroVariant : undefined,
                 assetRoot: next === "kokoro" ? formData.assetRoot : undefined,
@@ -184,6 +195,12 @@ export function AudioProviderEditor({
           >
             <option value="elevenlabs" className="bg-surface-el">
               ElevenLabs
+            </option>
+            <option value="fish_tts" className="bg-surface-el">
+              {t("providers.audioEditor.types.fish")}
+            </option>
+            <option value="fish_speech" className="bg-surface-el">
+              {t("providers.audioEditor.types.fishSpeech")}
             </option>
             <option value="gemini_tts" className="bg-surface-el">
               {t("providers.audioEditor.types.gemini")}
@@ -210,6 +227,10 @@ export function AudioProviderEditor({
             placeholder={
               formData.providerType === "gemini_tts"
                 ? t("providers.audioEditor.placeholders.labelGemini")
+                : formData.providerType === "fish_tts"
+                  ? t("providers.audioEditor.placeholders.labelFish")
+                : formData.providerType === "fish_speech"
+                  ? t("providers.audioEditor.placeholders.labelFishSpeech")
                 : formData.providerType === "openai_tts"
                   ? t("providers.audioEditor.placeholders.labelOpenai")
                   : formData.providerType === "kokoro"
@@ -223,7 +244,9 @@ export function AudioProviderEditor({
         {!isKokoro && (
           <div>
             <label className="mb-1 block text-[11px] font-medium text-fg/70">
-              {t("providers.audioEditor.fields.apiKey")}
+              {isFishSpeechLocal
+                ? t("providers.audioEditor.fields.apiKeyOptional")
+                : t("providers.audioEditor.fields.apiKey")}
             </label>
             <input
               type="password"
@@ -345,7 +368,7 @@ export function AudioProviderEditor({
           </>
         )}
 
-        {formData.providerType === "openai_tts" && (
+        {(isOpenAiCompatible || isFishSpeechLocal) && (
           <>
             <div>
               <label className="mb-1 block text-[11px] font-medium text-fg/70">
@@ -368,9 +391,9 @@ export function AudioProviderEditor({
               </label>
               <input
                 type="text"
-                value={formData.requestPath ?? "/v1/audio/speech"}
+                value={formData.requestPath ?? (isFishSpeechLocal ? "/v1/tts" : "/v1/audio/speech")}
                 onChange={(e) => setFormData({ ...formData, requestPath: e.target.value })}
-                placeholder="/v1/audio/speech"
+                placeholder={isFishSpeechLocal ? "/v1/tts" : "/v1/audio/speech"}
                 className="w-full rounded-lg border border-fg/10 bg-surface-el/20 px-3 py-2 text-sm text-fg placeholder-fg/40 focus:border-fg/30 focus:outline-none"
               />
               <p className="mt-1 text-[10px] text-fg/40">

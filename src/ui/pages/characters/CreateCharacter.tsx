@@ -151,7 +151,10 @@ export function CreateCharacterPage() {
       await Promise.all(
         providers.map(async (provider) => {
           try {
-            if (provider.providerType === "elevenlabs" && provider.apiKey) {
+            if (
+              (provider.providerType === "elevenlabs" || provider.providerType === "fish_tts") &&
+              provider.apiKey
+            ) {
               voicesByProvider[provider.id] = await refreshProviderVoices(provider.id);
             } else {
               voicesByProvider[provider.id] = await getProviderVoices(provider.id);

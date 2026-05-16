@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type AudioProviderType = "gemini_tts" | "elevenlabs" | "openai_tts" | "kokoro";
+export type AudioProviderType =
+  | "gemini_tts"
+  | "elevenlabs"
+  | "fish_tts"
+  | "fish_speech"
+  | "openai_tts"
+  | "kokoro";
 
 export interface AudioProvider {
   id: string;
@@ -127,13 +133,15 @@ export async function deleteAudioProvider(id: string): Promise<void> {
 
 export async function verifyAudioProvider(
   providerType: AudioProviderType,
-  apiKey: string,
+  apiKey?: string,
   projectId?: string,
+  baseUrl?: string,
 ): Promise<boolean> {
   return invoke<boolean>("audio_provider_verify", {
     providerType,
     apiKey,
     projectId,
+    baseUrl,
   });
 }
 

@@ -9,7 +9,7 @@ use super::types::{
     AudioModel, AudioProvider, AudioProviderType, CachedVoice, CreatedVoiceResult,
     TtsPreviewResponse, UserVoice, VoiceDesignPreview,
 };
-use super::{elevenlabs, gemini, kokoro, openai_compatible};
+use super::{elevenlabs, fish, fish_speech, gemini, kokoro, openai_compatible};
 use crate::abort_manager::AbortRegistry;
 use crate::storage_manager::db::{now_ms, open_db};
 
@@ -199,6 +199,8 @@ pub fn audio_models_list(provider_type: String) -> Vec<AudioModel> {
     match AudioProviderType::from_str(&provider_type) {
         Some(AudioProviderType::GeminiTts) => gemini::get_models(),
         Some(AudioProviderType::Elevenlabs) => elevenlabs::get_models(),
+        Some(AudioProviderType::FishTts) => fish::default_models(),
+        Some(AudioProviderType::FishSpeech) => fish_speech::default_models(),
         Some(AudioProviderType::OpenAiTts) => openai_compatible::default_models(),
         Some(AudioProviderType::Kokoro) => kokoro_variants_as_models(),
         None => vec![],
@@ -210,6 +212,8 @@ pub fn audio_voice_design_models_list(provider_type: String) -> Vec<AudioModel> 
     match AudioProviderType::from_str(&provider_type) {
         Some(AudioProviderType::GeminiTts) => gemini::get_models(),
         Some(AudioProviderType::Elevenlabs) => elevenlabs::get_voice_design_models(),
+        Some(AudioProviderType::FishTts) => fish::default_models(),
+        Some(AudioProviderType::FishSpeech) => fish_speech::default_models(),
         Some(AudioProviderType::OpenAiTts) => openai_compatible::default_models(),
         Some(AudioProviderType::Kokoro) => kokoro_variants_as_models(),
         None => vec![],
@@ -476,11 +480,11 @@ pub fn audio_provider_voices(
             .collect());
     }
 
-    if provider_type == "openai_tts" {
+    if provider_type == "openai_tts" || provider_type == "fish_speech" {
         return Ok(Vec::new());
     }
 
-    // For ElevenLabs, return cached voices
+    // For ElevenLabs/Fish, return cached voices
     let mut stmt = conn
         .prepare(
             "SELECT id, provider_id, voice_id, name, preview_url, labels, cached_at
@@ -540,13 +544,23 @@ pub async fn audio_provider_refresh_voices(
         return audio_provider_voices(app, provider_id);
     }
 
-    if provider_type == "openai_tts" {
+    if provider_type == "openai_tts" || provider_type == "fish_speech" {
         return Ok(Vec::new());
     }
 
-    // ElevenLabs - fetch from API
+    // ElevenLabs/Fish - fetch from API
     let api_key = api_key.ok_or("API key not configured")?;
-    let voices = elevenlabs::fetch_voices(&api_key, None).await?;
+    let voices = match provider_type.as_str() {
+        "elevenlabs" => elevenlabs::fetch_voices(&api_key, None).await?,
+        "fish_tts" => fish::fetch_voices(&api_key).await?,
+        _ => {
+            return Err(crate::utils::err_msg(
+                module_path!(),
+                line!(),
+                format!("Voice refresh not supported for provider type: {}", provider_type),
+            ))
+        }
+    };
 
     // Clear old cache and insert new voices
     let now = now_ms();
@@ -709,7 +723,7 @@ pub async fn tts_preview(
             )
         })?;
 
-    let api_key = if provider_type == "kokoro" {
+    let api_key = if provider_type == "kokoro" || provider_type == "fish_speech" {
         String::new()
     } else {
         api_key.ok_or("API key not configured")?
@@ -740,6 +754,23 @@ pub async fn tts_preview(
             "elevenlabs" => {
                 let data =
                     elevenlabs::generate_speech(&text, &voice_id, &model_id, &api_key).await?;
+                Ok((data, "audio/mpeg".to_string()))
+            }
+            "fish_tts" => {
+                let data =
+                    fish::generate_speech(&api_key, &text, &voice_id, &model_id, prompt.as_deref())
+                        .await?;
+                Ok((data, "audio/mpeg".to_string()))
+            }
+            "fish_speech" => {
+                let data = fish_speech::generate_speech(
+                    base_url.as_deref(),
+                    request_path.as_deref(),
+                    if api_key.trim().is_empty() { None } else { Some(api_key.as_str()) },
+                    &text,
+                    &voice_id,
+                )
+                .await?;
                 Ok((data, "audio/mpeg".to_string()))
             }
             "openai_tts" => {
@@ -886,15 +917,19 @@ pub async fn tts_preview(
 #[tauri::command]
 pub async fn audio_provider_verify(
     provider_type: String,
-    api_key: String,
+    api_key: Option<String>,
     project_id: Option<String>,
+    base_url: Option<String>,
 ) -> Result<bool, String> {
     match provider_type.as_str() {
         "gemini_tts" => {
+            let api_key = api_key.ok_or("API key required for Gemini TTS")?;
             let project_id = project_id.ok_or("Project ID required for Gemini TTS")?;
             gemini::verify_api_key(&api_key, &project_id).await
         }
-        "elevenlabs" => elevenlabs::verify_api_key(&api_key).await,
+        "elevenlabs" => elevenlabs::verify_api_key(api_key.as_deref().unwrap_or("")).await,
+        "fish_tts" => fish::verify_api_key(api_key.as_deref().unwrap_or("")).await,
+        "fish_speech" => fish_speech::verify_server(base_url.as_deref(), api_key.as_deref()).await,
         "openai_tts" => Ok(true),
         "kokoro" => Ok(true),
         _ => Err(crate::utils::err_msg(

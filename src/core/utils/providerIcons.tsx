@@ -52,6 +52,8 @@ const ICON_MAP: Record<string, ReactElement> = {
   custom: <Settings className="h-6 w-6 text-gray-400" />,
   "custom-anthropic": <Settings className="h-6 w-6 text-gray-400" />,
   elevenlabs: <Mic className="h-6 w-6 text-violet-300" />,
+  fish_tts: <Volume2 className="h-6 w-6 text-cyan-300" />,
+  fish_speech: <Cpu className="h-6 w-6 text-cyan-300" />,
   gemini_tts: <img src={GeminiIcon} alt="Gemini TTS" className="h-6 w-6" />,
   openai_tts: <Volume2 className="h-6 w-6 text-emerald-300" />,
   kokoro: <Cpu className="h-6 w-6 text-pink-300" />,

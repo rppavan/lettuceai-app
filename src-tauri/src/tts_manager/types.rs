@@ -6,6 +6,8 @@ use std::collections::HashMap;
 pub enum AudioProviderType {
     GeminiTts,
     Elevenlabs,
+    FishTts,
+    FishSpeech,
     OpenAiTts,
     Kokoro,
 }
@@ -15,6 +17,8 @@ impl AudioProviderType {
         match s {
             "gemini_tts" => Some(Self::GeminiTts),
             "elevenlabs" => Some(Self::Elevenlabs),
+            "fish_tts" => Some(Self::FishTts),
+            "fish_speech" => Some(Self::FishSpeech),
             "openai_tts" => Some(Self::OpenAiTts),
             "kokoro" => Some(Self::Kokoro),
             _ => None,
