@@ -2,6 +2,7 @@ import type { TimeBehaviors, BaselineEmotions } from "../../../../core/engine/ty
 import { TagInput } from "../components/TagInput";
 import { CollapsibleSection } from "../components/CollapsibleSection";
 import { Switch } from "../../../components/Switch";
+import { NumberInput } from "../../../components/NumberInput";
 import { useI18n } from "../../../../core/i18n/context";
 
 type Props = {
@@ -193,18 +194,13 @@ export function CharacterWorldStep({
         </div>
         <div>
           <label className="mb-1 block text-[11px] font-medium text-white/70">{t("temperature")}</label>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            max="2"
+          <NumberInput
+            step={0.1}
+            min={0}
+            max={2}
+            decimals={2}
             value={temperature}
-            onChange={(e) =>
-              onFieldChange(
-                "temperature",
-                Math.min(2, Math.max(0, parseFloat(e.target.value) || 0.9)),
-              )
-            }
+            onChange={(next) => onFieldChange("temperature", next ?? 0.9)}
             className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
           />
         </div>

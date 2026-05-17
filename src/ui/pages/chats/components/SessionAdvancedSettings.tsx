@@ -7,6 +7,7 @@ import { cn } from "../../../design-tokens";
 import type { AdvancedModelSettings } from "../../../../core/storage/schemas";
 import { LlamaSamplerOrderEditor } from "../../../components/LlamaSamplerOrderEditor";
 import { Switch } from "../../../components/Switch";
+import { NumberInput } from "../../../components/NumberInput";
 import {
   ADVANCED_TEMPERATURE_RANGE,
   ADVANCED_TOP_P_RANGE,
@@ -43,7 +44,6 @@ function ParameterField({
   max,
   step,
   onChange,
-  inputMode = "decimal",
   rangeLabels,
   disabled = false,
 }: ParameterFieldProps) {
@@ -56,17 +56,13 @@ function ParameterField({
         </span>
       </div>
       <p className="text-[11px] text-fg/40 leading-relaxed">{description}</p>
-      <input
-        type="number"
-        inputMode={inputMode}
+      <NumberInput
         min={min}
         max={max}
         step={step}
-        value={value ?? ""}
-        onChange={(e) => {
-          const raw = e.target.value;
-          onChange(raw === "" ? null : Number(raw));
-        }}
+        decimals={step < 1 ? 2 : 0}
+        value={value ?? null}
+        onChange={onChange}
         disabled={disabled}
         placeholder={placeholder}
         className={cn(
@@ -361,15 +357,11 @@ export function SessionAdvancedSettings({
                               </button>
                             </div>
                             {draft.maxOutputTokens != null && (
-                              <input
-                                type="number"
-                                inputMode="numeric"
+                              <NumberInput
                                 min={ADVANCED_MAX_TOKENS_RANGE.min}
                                 max={ADVANCED_MAX_TOKENS_RANGE.max}
-                                value={draft.maxOutputTokens ?? ""}
-                                onChange={(e) =>
-                                  update({ maxOutputTokens: Number(e.target.value) })
-                                }
+                                value={draft.maxOutputTokens}
+                                onChange={(next) => update({ maxOutputTokens: next ?? 0 })}
                                 placeholder="2048"
                                 className="w-full rounded-lg border border-fg/10 bg-fg/5 px-3 py-2 text-sm text-fg placeholder-fg/30 transition focus:border-fg/20 focus:outline-none"
                               />

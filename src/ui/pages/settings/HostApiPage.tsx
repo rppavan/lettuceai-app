@@ -27,6 +27,7 @@ import {
 import type { HostApiSettings, Model } from "../../../core/storage/schemas";
 import { cn, colors } from "../../design-tokens";
 import { ModelSelectionBottomMenu } from "../../components/ModelSelectionBottomMenu";
+import { NumberInput } from "../../components/NumberInput";
 import { getProviderIcon } from "../../../core/utils/providerIcons";
 
 function createDefaultHostApiSettings(): HostApiSettings {
@@ -330,16 +331,12 @@ export function HostApiPage() {
                     <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-[0.16em] text-fg/35">
                       Port
                     </label>
-                    <input
-                      type="number"
+                    <NumberInput
                       min={1}
                       max={65535}
                       value={hostApi.port}
-                      onChange={(e) =>
-                        setHostApi((c) => ({
-                          ...c,
-                          port: Math.max(1, Math.min(65535, Number(e.target.value) || 3333)),
-                        }))
+                      onChange={(next) =>
+                        setHostApi((c) => ({ ...c, port: next ?? 3333 }))
                       }
                       className={cn(
                         "w-full rounded-lg border border-fg/15 bg-surface-el/30 px-3 py-2",

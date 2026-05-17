@@ -15,3 +15,4 @@ export * from "./ProviderParameterSupportInfo";
 export * from "./toast";
 export * from "./LocaleSelector";
 export * from "./Switch";
+export * from "./NumberInput";

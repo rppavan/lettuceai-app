@@ -1,4 +1,3 @@
-import type { ChangeEvent } from "react";
 import { Brain, Info } from "lucide-react";
 import {
   normalizeLlamaSamplerOrder,
@@ -8,6 +7,7 @@ import {
 import { cn } from "../design-tokens";
 import { useI18n } from "../../core/i18n/context";
 import { Switch } from "./Switch";
+import { NumberInput } from "./NumberInput";
 
 export const ADVANCED_TEMPERATURE_RANGE = { min: 0, max: 2 };
 export const ADVANCED_TOP_P_RANGE = { min: 0, max: 1 };
@@ -285,12 +285,10 @@ export function AdvancedModelSettingsForm({
 }: AdvancedModelSettingsFormProps) {
   const { t } = useI18n();
   const handleNumberChange =
-    (key: keyof AdvancedModelSettings) => (event: ChangeEvent<HTMLInputElement>) => {
-      const raw = event.target.value;
-      const nextValue = raw === "" ? null : Number(raw);
+    (key: keyof AdvancedModelSettings) => (next: number | null) => {
       onChange({
         ...settings,
-        [key]: nextValue,
+        [key]: next,
       });
     };
   const inputClassName =
@@ -318,13 +316,12 @@ export function AdvancedModelSettingsForm({
             {settings.temperature?.toFixed(2) ?? "0.70"}
           </span>
         </div>
-        <input
-          type="number"
-          inputMode="decimal"
+        <NumberInput
           min={ADVANCED_TEMPERATURE_RANGE.min}
           max={ADVANCED_TEMPERATURE_RANGE.max}
           step={0.01}
-          value={settings.temperature ?? ""}
+          decimals={2}
+          value={settings.temperature ?? null}
           onChange={handleNumberChange("temperature")}
           disabled={disabled}
           placeholder="0.70"
@@ -351,13 +348,12 @@ export function AdvancedModelSettingsForm({
             {settings.topP?.toFixed(2) ?? "1.00"}
           </span>
         </div>
-        <input
-          type="number"
-          inputMode="decimal"
+        <NumberInput
           min={ADVANCED_TOP_P_RANGE.min}
           max={ADVANCED_TOP_P_RANGE.max}
           step={0.01}
-          value={settings.topP ?? ""}
+          decimals={2}
+          value={settings.topP ?? null}
           onChange={handleNumberChange("topP")}
           disabled={disabled}
           placeholder="1.00"
@@ -381,11 +377,10 @@ export function AdvancedModelSettingsForm({
             </p>
           </div>
         </div>
-        <input
-          type="number"
+        <NumberInput
           min={ADVANCED_MAX_TOKENS_RANGE.min}
           max={ADVANCED_MAX_TOKENS_RANGE.max}
-          value={settings.maxOutputTokens ?? ""}
+          value={settings.maxOutputTokens ?? null}
           onChange={handleNumberChange("maxOutputTokens")}
           disabled={disabled}
           placeholder="1024"
@@ -410,22 +405,16 @@ export function AdvancedModelSettingsForm({
               : t("components.advancedModelSettings.contextLengthAuto")}
           </span>
         </div>
-        <input
-          type="number"
+        <NumberInput
           min={ADVANCED_CONTEXT_LENGTH_RANGE.min}
           max={ADVANCED_CONTEXT_LENGTH_RANGE.max}
-          value={settings.contextLength ?? ""}
-          onChange={(event) => {
-            const raw = event.target.value;
-            const nextValue = raw === "" ? null : Number(raw);
+          value={settings.contextLength ?? null}
+          onChange={(next) =>
             onChange({
               ...settings,
-              contextLength:
-                nextValue === null || !Number.isFinite(nextValue) || nextValue === 0
-                  ? null
-                  : Math.trunc(nextValue),
-            });
-          }}
+              contextLength: next === null || next === 0 ? null : Math.trunc(next),
+            })
+          }
           disabled={disabled}
           placeholder={t("components.advancedModelSettings.contextLengthAuto")}
           className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white placeholder-white/40 focus:border-white/30 focus:outline-none disabled:opacity-50"
@@ -451,13 +440,12 @@ export function AdvancedModelSettingsForm({
             {settings.frequencyPenalty?.toFixed(2) ?? "0.00"}
           </span>
         </div>
-        <input
-          type="number"
-          inputMode="decimal"
+        <NumberInput
           min={ADVANCED_FREQUENCY_PENALTY_RANGE.min}
           max={ADVANCED_FREQUENCY_PENALTY_RANGE.max}
           step={0.01}
-          value={settings.frequencyPenalty ?? ""}
+          decimals={2}
+          value={settings.frequencyPenalty ?? null}
           onChange={handleNumberChange("frequencyPenalty")}
           disabled={disabled}
           placeholder="0.00"
@@ -484,13 +472,12 @@ export function AdvancedModelSettingsForm({
             {settings.presencePenalty?.toFixed(2) ?? "0.00"}
           </span>
         </div>
-        <input
-          type="number"
-          inputMode="decimal"
+        <NumberInput
           min={ADVANCED_PRESENCE_PENALTY_RANGE.min}
           max={ADVANCED_PRESENCE_PENALTY_RANGE.max}
           step={0.01}
-          value={settings.presencePenalty ?? ""}
+          decimals={2}
+          value={settings.presencePenalty ?? null}
           onChange={handleNumberChange("presencePenalty")}
           disabled={disabled}
           placeholder="0.00"
@@ -514,11 +501,10 @@ export function AdvancedModelSettingsForm({
             </p>
           </div>
         </div>
-        <input
-          type="number"
+        <NumberInput
           min={ADVANCED_TOP_K_RANGE.min}
           max={ADVANCED_TOP_K_RANGE.max}
-          value={settings.topK ?? ""}
+          value={settings.topK ?? null}
           onChange={handleNumberChange("topK")}
           disabled={disabled}
           placeholder="40"
@@ -674,11 +660,10 @@ export function AdvancedModelSettingsForm({
                               {t("components.advancedModelSettings.reasoningBudgetDesc")}
                             </p>
                           </div>
-                          <input
-                            type="number"
+                          <NumberInput
                             min={ADVANCED_REASONING_BUDGET_RANGE.min}
                             max={ADVANCED_REASONING_BUDGET_RANGE.max}
-                            value={settings.reasoningBudgetTokens ?? ""}
+                            value={settings.reasoningBudgetTokens ?? null}
                             onChange={handleNumberChange("reasoningBudgetTokens")}
                             disabled={disabled}
                             placeholder="8192"
@@ -768,11 +753,10 @@ export function AdvancedModelSettingsForm({
                       {t("components.advancedModelSettings.reasoningBudgetExtendedDesc")}
                     </p>
                   </div>
-                  <input
-                    type="number"
+                  <NumberInput
                     min={ADVANCED_REASONING_BUDGET_RANGE.min}
                     max={ADVANCED_REASONING_BUDGET_RANGE.max}
-                    value={settings.reasoningBudgetTokens ?? ""}
+                    value={settings.reasoningBudgetTokens ?? null}
                     onChange={handleNumberChange("reasoningBudgetTokens")}
                     disabled={disabled}
                     placeholder="8192"

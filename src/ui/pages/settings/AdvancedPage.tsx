@@ -25,6 +25,7 @@ import { EmbeddingDownloadPrompt } from "../../components/EmbeddingDownloadPromp
 import { openDocs, DOCS } from "../../../core/utils/docs";
 import { useI18n } from "../../../core/i18n/context";
 import { Switch } from "../../components/Switch";
+import { NumberInput } from "../../components/NumberInput";
 
 type DocsKey = keyof typeof DOCS;
 
@@ -588,15 +589,11 @@ export function AdvancedPage() {
                       {t("advanced.dynamicMemory.contextWindowDesc")}
                     </p>
                   </div>
-                  <input
-                    type="number"
+                  <NumberInput
                     min={1}
                     max={1000}
                     value={manualWindow ?? 50}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value);
-                      handleManualWindowChange(isNaN(val) ? null : val);
-                    }}
+                    onChange={(next) => handleManualWindowChange(next)}
                     className={cn(
                       "w-20 rounded-lg border border-fg/15 bg-surface-el/30 px-3 py-1.5",
                       "text-center font-mono text-sm text-fg",

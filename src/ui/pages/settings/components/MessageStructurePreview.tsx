@@ -9,7 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn, radius, interactive } from "../../../design-tokens";
-import { BottomMenu } from "../../../components";
+import { BottomMenu, NumberInput } from "../../../components";
 import { confirmBottomMenu } from "../../../components/ConfirmBottomMenu";
 import type { SystemPromptEntry } from "../../../../core/storage/schemas";
 import { useI18n, type TranslationKey } from "../../../../core/i18n/context";
@@ -428,16 +428,12 @@ export function MessageStructurePreview({
           <label htmlFor="mock-pair-count" className="text-[11px] text-fg/30">
             {t("systemPrompts.preview.turns" as TranslationKey)}
           </label>
-          <input
+          <NumberInput
             id="mock-pair-count"
-            type="number"
             min={0}
             max={50}
             value={mockPairCount}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10);
-              if (!isNaN(v) && v >= 0 && v <= 50) setMockPairCount(v);
-            }}
+            onChange={(next) => setMockPairCount(next ?? 0)}
             className={cn(
               "w-12 h-6 text-center text-[11px] font-mono",
               radius.md,

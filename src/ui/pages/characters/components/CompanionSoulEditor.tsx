@@ -14,6 +14,7 @@ import {
 import type { CompanionConfig } from "../../../../core/storage/schemas";
 import { cn, interactive, radius, spacing, typography } from "../../../design-tokens";
 import { Switch } from "../../../components/Switch";
+import { NumberInput } from "../../../components/NumberInput";
 import { normalizeCompanionConfig } from "../utils/companionDefaults";
 import {
   SOUL_PRESETS,
@@ -238,30 +239,13 @@ export function CompanionSoulEditor({
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm text-fg/80">{spec.label}</span>
           <span className="inline-flex items-center gap-0.5 text-[11px] text-fg/50">
-            <input
-              type="number"
+            <NumberInput
               min={0}
               max={100}
               step={1}
               disabled={disabled}
               value={intValue}
-              onChange={(event) => {
-                const raw = event.target.value;
-                if (raw === "") {
-                  onSliderChange(0);
-                  return;
-                }
-                const parsed = Number(raw);
-                if (!Number.isFinite(parsed)) return;
-                const clamped = Math.min(100, Math.max(0, Math.round(parsed)));
-                onSliderChange(clamped / 100);
-              }}
-              onBlur={(event) => {
-                // Restore canonical value if user cleared the field
-                if (event.target.value === "") {
-                  onSliderChange(0);
-                }
-              }}
+              onChange={(next) => onSliderChange((next ?? 0) / 100)}
               className={cn(
                 "w-9 border-b border-transparent bg-transparent text-right text-fg/70 tabular-nums outline-none",
                 "hover:border-fg/15 focus:border-fg/30 focus:text-fg",

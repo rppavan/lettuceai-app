@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { cn, radius, interactive } from "../../design-tokens";
 import { MessageStructurePreview } from "./components/MessageStructurePreview";
-import { BottomMenu } from "../../components";
+import { BottomMenu, NumberInput } from "../../components";
 import { confirmBottomMenu } from "../../components/ConfirmBottomMenu";
 import { useI18n } from "../../../core/i18n/context";
 import { Switch } from "../../components/Switch";
@@ -999,17 +999,13 @@ function ConditionRuleRow({
             ))}
           </div>
         ) : meta.kind === "number" ? (
-          <input
-            type="number"
+          <NumberInput
             min={condition.type === "messageCountAtLeast" ? 0 : 1}
             value={"value" in condition ? Number(condition.value) : 1}
-            onChange={(event) =>
+            onChange={(next) =>
               onChange({
                 ...condition,
-                value: Math.max(
-                  condition.type === "messageCountAtLeast" ? 0 : 1,
-                  Number(event.target.value) || 0,
-                ),
+                value: next,
               } as SimplePromptEntryCondition)
             }
             className={controlClasses}
@@ -1584,11 +1580,10 @@ function PromptEntryEditorForm({
       >
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-fg/55">Insertion Depth</label>
-          <input
-            type="number"
+          <NumberInput
             min={0}
             value={entry.injectionDepth}
-            onChange={(event) => onUpdate({ injectionDepth: Number(event.target.value) })}
+            onChange={(next) => onUpdate({ injectionDepth: next ?? 0 })}
             className="h-10 w-full rounded-lg border border-fg/10 bg-fg/5 px-3 text-sm text-fg"
             placeholder="0"
           />
@@ -1600,15 +1595,10 @@ function PromptEntryEditorForm({
         {entry.injectionPosition === "conditional" ? (
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-fg/55">Min Messages</label>
-            <input
-              type="number"
+            <NumberInput
               min={1}
               value={entry.conditionalMinMessages ?? DEFAULT_CONDITIONAL_MIN_MESSAGES}
-              onChange={(event) =>
-                onUpdate({
-                  conditionalMinMessages: Math.max(1, Number(event.target.value) || 1),
-                })
-              }
+              onChange={(next) => onUpdate({ conditionalMinMessages: next })}
               className="h-10 w-full rounded-lg border border-fg/10 bg-fg/5 px-3 text-sm text-fg"
             />
             <p className="text-[11px] text-fg/45">
@@ -1618,15 +1608,10 @@ function PromptEntryEditorForm({
         ) : entry.injectionPosition === "interval" ? (
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-fg/55">Every N Messages</label>
-            <input
-              type="number"
+            <NumberInput
               min={1}
               value={entry.intervalTurns ?? DEFAULT_INTERVAL_TURNS}
-              onChange={(event) =>
-                onUpdate({
-                  intervalTurns: Math.max(1, Number(event.target.value) || 1),
-                })
-              }
+              onChange={(next) => onUpdate({ intervalTurns: next })}
               className="h-10 w-full rounded-lg border border-fg/10 bg-fg/5 px-3 text-sm text-fg"
             />
             <p className="text-[11px] text-fg/45">Inject every N context turns.</p>

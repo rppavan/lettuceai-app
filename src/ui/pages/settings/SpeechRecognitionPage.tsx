@@ -33,6 +33,7 @@ import { join as joinPath, tempDir } from "@tauri-apps/api/path";
 import { cn, radius, interactive, typography, animations } from "../../design-tokens";
 import { Switch } from "../../components/Switch";
 import { BottomMenu } from "../../components/BottomMenu";
+import { NumberInput } from "../../components/NumberInput";
 import { GuidedTour, useGuidedTour } from "../../components/GuidedTour";
 import { getPlatform } from "../../../core/utils/platform";
 import { toast } from "../../components/toast";
@@ -3152,17 +3153,13 @@ function VocabularyEditor({
         </FieldShell>
       </div>
       <FieldShell label="Priority" hint="Higher values appear earlier in the prompt (default 50).">
-        <input
-          type="number"
+        <NumberInput
           min={0}
           max={100}
           className={inputClass()}
           value={draft.priority ?? 50}
-          onChange={(e) =>
-            setDraft((p) => ({
-              ...p,
-              priority: Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 50,
-            }))
+          onChange={(next) =>
+            setDraft((p) => ({ ...p, priority: next ?? 50 }))
           }
         />
       </FieldShell>
@@ -3252,18 +3249,15 @@ function CorrectionEditor({
         </FieldShell>
       </div>
       <FieldShell label="Confidence (0-1)">
-        <input
-          type="number"
+        <NumberInput
           min={0}
           max={1}
           step={0.05}
+          decimals={2}
           className={inputClass()}
           value={draft.confidence ?? 0.9}
-          onChange={(e) =>
-            setDraft((p) => ({
-              ...p,
-              confidence: Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0.9,
-            }))
+          onChange={(next) =>
+            setDraft((p) => ({ ...p, confidence: next ?? 0.9 }))
           }
         />
       </FieldShell>

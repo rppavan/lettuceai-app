@@ -48,6 +48,7 @@ import { ModelSelectionBottomMenu } from "../../components/ModelSelectionBottomM
 import { getProviderIcon } from "../../../core/utils/providerIcons";
 import { useI18n } from "../../../core/i18n/context";
 import { Switch } from "../../components/Switch";
+import { NumberInput } from "../../components/NumberInput";
 import { getPlatform } from "../../../core/utils/platform";
 
 const DYNAMIC_MEMORY_LLAMA_OVERWRITE_ORDER = [
@@ -1648,8 +1649,6 @@ function SettingRow({
   decimals = 0,
   onChange,
 }: SettingRowProps) {
-  const displayValue = decimals > 0 ? value.toFixed(decimals) : value;
-
   return (
     <div className="flex items-center justify-between gap-4">
       <div className="min-w-0 flex-1">
@@ -1657,20 +1656,15 @@ function SettingRow({
         <div className="text-[10px] text-fg/40">{description}</div>
       </div>
       <div className="grid grid-cols-[96px_56px] items-center gap-2 shrink-0">
-        <input
-          type="number"
-          inputMode={decimals > 0 ? "decimal" : "numeric"}
+        <NumberInput
+          value={value}
+          onChange={(next) => {
+            if (next !== null) onChange(next);
+          }}
           min={min}
           max={max}
           step={step}
-          value={displayValue}
-          onChange={(e) => {
-            const raw = e.target.value;
-            const next = Number(raw);
-            if (raw && Number.isFinite(next)) {
-              onChange(Math.min(max, Math.max(min, next)));
-            }
-          }}
+          decimals={decimals}
           className={cn(
             "w-full rounded-lg border border-fg/10 bg-surface-el/30",
             "px-2.5 py-1.5 text-sm text-fg text-right",

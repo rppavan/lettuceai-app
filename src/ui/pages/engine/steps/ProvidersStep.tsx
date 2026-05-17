@@ -9,6 +9,7 @@ import type { LlmProviderConfig } from "../hooks/engineSetupReducer";
 import type { ProviderCredential } from "../../../../core/storage/schemas";
 import { getProviderIcon } from "../../../../core/utils/providerIcons";
 import { useI18n } from "../../../../core/i18n/context";
+import { NumberInput } from "../../../components/NumberInput";
 
 type Props = {
   llmProviders: Record<EngineLlmProviderId, LlmProviderConfig>;
@@ -194,13 +195,11 @@ export function ProvidersStep({
                       <label className="mb-1 block text-[11px] font-medium text-white/70">
                         {t("engine.config.fields.maxTokens")}
                       </label>
-                      <input
-                        type="number"
+                      <NumberInput
+                        min={1}
                         value={config.maxTokens}
-                        onChange={(e) =>
-                          onUpdate(provider.id, {
-                            maxTokens: Math.max(1, parseInt(e.target.value) || 1024),
-                          })
+                        onChange={(next) =>
+                          onUpdate(provider.id, { maxTokens: next ?? 1024 })
                         }
                         className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
                       />
@@ -209,16 +208,14 @@ export function ProvidersStep({
                       <label className="mb-1 block text-[11px] font-medium text-white/70">
                         {t("engine.config.fields.temperature")}
                       </label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        max="2"
+                      <NumberInput
+                        step={0.1}
+                        min={0}
+                        max={2}
+                        decimals={2}
                         value={config.temperature}
-                        onChange={(e) =>
-                          onUpdate(provider.id, {
-                            temperature: Math.min(2, Math.max(0, parseFloat(e.target.value) || 0.9)),
-                          })
+                        onChange={(next) =>
+                          onUpdate(provider.id, { temperature: next ?? 0.9 })
                         }
                         className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
                       />

@@ -1,5 +1,6 @@
 import type { EngineSettings } from "../hooks/engineSetupReducer";
 import { useI18n } from "../../../../core/i18n/context";
+import { NumberInput } from "../../../components/NumberInput";
 
 type Props = {
   settings: EngineSettings;
@@ -27,13 +28,13 @@ function NumberField({
   return (
     <div>
       <label className="mb-1 block text-[11px] font-medium text-white/70">{label}</label>
-      <input
-        type="number"
+      <NumberInput
         value={value}
         min={min}
         max={max}
         step={step}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        decimals={step !== undefined && step < 1 ? 2 : 0}
+        onChange={(next) => onChange(next ?? 0)}
         className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
       />
     </div>

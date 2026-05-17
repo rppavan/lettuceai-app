@@ -18,6 +18,7 @@ import {
 import { getProviderIcon } from "../../../core/utils/providerIcons";
 import { cn } from "../../design-tokens";
 import { ModelSelectionBottomMenu } from "../../components/ModelSelectionBottomMenu";
+import { NumberInput } from "../../components/NumberInput";
 
 const FALLBACK_OPTIONS: Array<{
   value: DynamicMemoryStructuredFallbackFormat;
@@ -371,15 +372,13 @@ export function LorebookGeneratorPage() {
                     onChange={(e) => void handleTargetCountChange(Number(e.target.value))}
                     className="min-w-0 flex-1 accent-accent"
                   />
-                  <input
-                    type="number"
+                  <NumberInput
                     min={MIN_TARGET}
                     max={MAX_TARGET}
                     step={1}
                     value={targetCount}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      if (Number.isFinite(n)) void handleTargetCountChange(n);
+                    onChange={(next) => {
+                      if (next !== null) void handleTargetCountChange(next);
                     }}
                     className="w-16 shrink-0 rounded-lg border border-fg/10 bg-surface-el/20 px-2 py-2 text-center text-sm tabular-nums focus:border-fg/25 focus:outline-none"
                   />
@@ -396,13 +395,14 @@ export function LorebookGeneratorPage() {
                   </div>
                   <h3 className="text-sm font-semibold text-fg">Max output tokens</h3>
                 </div>
-                <input
-                  type="number"
+                <NumberInput
                   min={MIN_MAX_TOKENS}
                   max={MAX_MAX_TOKENS}
                   step={128}
                   value={maxTokens}
-                  onChange={(e) => void handleMaxTokensChange(Number(e.target.value))}
+                  onChange={(next) => {
+                    if (next !== null) void handleMaxTokensChange(next);
+                  }}
                   className="w-full rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-sm focus:border-fg/25 focus:outline-none"
                 />
                 <p className="px-1 text-xs text-fg/50">

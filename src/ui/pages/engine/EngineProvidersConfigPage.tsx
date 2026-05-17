@@ -8,6 +8,7 @@ import type { ProviderCredential } from "../../../core/storage/schemas";
 import { ENGINE_LLM_PROVIDERS, type EngineLlmProviderId } from "../../../core/engine/types";
 import { getProviderIcon } from "../../../core/utils/providerIcons";
 import { useI18n } from "../../../core/i18n/context";
+import { NumberInput } from "../../components/NumberInput";
 
 export function EngineProvidersConfigPage() {
   const { credentialId } = useParams<{ credentialId: string }>();
@@ -368,22 +369,22 @@ function ProviderForm({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="mb-1 block text-[11px] font-medium text-white/70">{t("engine.config.fields.maxTokens")}</label>
-          <input
-            type="number"
+          <NumberInput
+            min={1}
             value={config.maxTokens}
-            onChange={(e) => onUpdate({ maxTokens: Math.max(1, parseInt(e.target.value) || 1024) })}
+            onChange={(next) => onUpdate({ maxTokens: next ?? 1024 })}
             className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
           />
         </div>
         <div>
           <label className="mb-1 block text-[11px] font-medium text-white/70">{t("engine.config.fields.temperature")}</label>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            max="2"
+          <NumberInput
+            step={0.1}
+            min={0}
+            max={2}
+            decimals={2}
             value={config.temperature}
-            onChange={(e) => onUpdate({ temperature: Math.min(2, Math.max(0, parseFloat(e.target.value) || 0.9)) })}
+            onChange={(next) => onUpdate({ temperature: next ?? 0.9 })}
             className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
           />
         </div>

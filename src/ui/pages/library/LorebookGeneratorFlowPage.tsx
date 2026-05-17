@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { BottomMenu } from "../../components/BottomMenu";
+import { NumberInput } from "../../components/NumberInput";
 import { AvatarImage } from "../../components/AvatarImage";
 import { useAvatar } from "../../hooks/useAvatar";
 import { isRenderableImageUrl } from "../../../core/utils/image";
@@ -951,16 +952,13 @@ function BriefForm({
             onChange={(e) => setTargetCount(Number(e.target.value))}
             className="min-w-0 flex-1 accent-accent"
           />
-          <input
-            type="number"
+          <NumberInput
             min={MIN_TARGET}
             max={MAX_TARGET}
             step={1}
             value={targetCount}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              if (!Number.isFinite(n)) return;
-              setTargetCount(Math.min(MAX_TARGET, Math.max(MIN_TARGET, Math.round(n))));
+            onChange={(next) => {
+              if (next !== null) setTargetCount(Math.round(next));
             }}
             className="w-16 shrink-0 rounded-lg border border-fg/10 bg-transparent px-2 py-1.5 text-center text-sm tabular-nums focus:border-fg/30 focus:outline-none"
           />
