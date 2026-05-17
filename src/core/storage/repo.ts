@@ -2,6 +2,7 @@ import { z } from "zod";
 import { storageBridge } from "./files";
 import { getDefaultCharacterRules } from "./defaults";
 import { convertToImageRef } from "./images";
+import { logManager } from "../utils/logger";
 import {
   CharacterSchema,
   CompanionScheduledNoteSchema,
@@ -39,6 +40,8 @@ import {
 } from "./schemas";
 import { setDeveloperModeOverride } from "../utils/env";
 import { APP_COMPANION_TEMPLATE_ID } from "../prompts/constants";
+
+const logger = logManager({ component: "storage/repo" });
 
 const SessionPreviewSchema = z.object({
   id: z.string(),
@@ -859,7 +862,23 @@ export async function setDefaultModelId(id: string): Promise<void> {
 
 export async function listCharacters(): Promise<Character[]> {
   const data = await storageBridge.charactersList();
-  return z.array(CharacterSchema).parse(data);
+  const parsed: Character[] = [];
+
+  for (const item of data) {
+    const result = CharacterSchema.safeParse(item);
+    if (result.success) {
+      parsed.push(result.data);
+      continue;
+    }
+
+    const characterId =
+      item && typeof item === "object" && "id" in item && typeof item.id === "string"
+        ? item.id
+        : "<unknown>";
+    logger.warn(`Skipping invalid character payload ${characterId}`, result.error);
+  }
+
+  return parsed;
 }
 
 export async function listImageLibraryItems(): Promise<ImageLibraryItem[]> {

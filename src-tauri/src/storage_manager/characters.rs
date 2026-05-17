@@ -2,7 +2,7 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use super::db::{now_ms, open_db};
-use crate::utils::{log_error, log_info};
+use crate::utils::{log_error, log_info, log_warn};
 
 fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, String> {
     let row: (
@@ -469,11 +469,29 @@ where
     let mut out = Vec::new();
     for row in rows {
         let id = row.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
-        out.push(read_character(&conn, &id)?);
+        let value = match read_character(&conn, &id) {
+            Ok(value) => value,
+            Err(error) => {
+                log_warn(
+                    app,
+                    "characters_list_typed",
+                    format!("Skipping unreadable character {}: {}", id, error),
+                );
+                continue;
+            }
+        };
+        match serde_json::from_value::<T>(value) {
+            Ok(character) => out.push(character),
+            Err(error) => {
+                log_warn(
+                    app,
+                    "characters_list_typed",
+                    format!("Skipping unparseable character {}: {}", id, error),
+                );
+            }
+        }
     }
-
-    serde_json::from_value(JsonValue::Array(out))
-        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+    Ok(out)
 }
 
 pub fn character_upsert_typed<T, R>(app: &tauri::AppHandle, character: &T) -> Result<R, String>
@@ -518,12 +536,11 @@ pub fn characters_list(app: tauri::AppHandle) -> Result<String, String> {
         match read_character(&conn, &id) {
             Ok(char_data) => out.push(char_data),
             Err(e) => {
-                log_error(
+                log_warn(
                     &app,
                     "characters_list",
-                    format!("Failed to read character {}: {}", id, e),
+                    format!("Skipping unreadable character {}: {}", id, e),
                 );
-                return Err(e);
             }
         }
     }
