@@ -21,7 +21,6 @@ interface ModelStepProps {
   onSave: () => void;
   onSkip: () => void;
   onGoBack: () => void;
-  onShowRecommendations: () => void;
 }
 
 export function ModelStep({
@@ -39,7 +38,6 @@ export function ModelStep({
   onSave,
   onSkip,
   onGoBack,
-  onShowRecommendations,
 }: ModelStepProps) {
   const { t } = useI18n();
   const platform = getPlatform();

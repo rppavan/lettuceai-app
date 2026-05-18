@@ -225,7 +225,6 @@ export function OnboardingPage() {
                   onSave={controller.handleSaveModel}
                   onSkip={controller.handleSkipModel}
                   onGoBack={controller.goBack}
-                  onShowRecommendations={() => setShowRecommendations(true)}
                 />
               </div>
             )}
