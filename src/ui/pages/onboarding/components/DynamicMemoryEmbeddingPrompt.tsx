@@ -1,8 +1,8 @@
-import { motion } from "framer-motion";
 import { Download, HardDrive } from "lucide-react";
 
 import { typography, radius, interactive, shadows, cn } from "../../../design-tokens";
 import { useI18n } from "../../../../core/i18n/context";
+import { BottomMenu } from "../../../components/BottomMenu";
 
 export interface DynamicMemoryEmbeddingPromptProps {
   onDownload: () => void;
@@ -16,23 +16,14 @@ export function DynamicMemoryEmbeddingPrompt({
   const { t } = useI18n();
 
   return (
-    <motion.div
-      className="absolute inset-0 z-10 flex items-end justify-center bg-black/60"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      onClick={(e) => e.stopPropagation()}
+    <BottomMenu
+      isOpen
+      onClose={onContinueWithout}
+      title={t("onboarding.welcome.restoreBackup.embeddingTitle")}
+      includeExitIcon={false}
+      className={cn("bg-[#0b0b0d]", shadows.xl)}
     >
-      <motion.div
-        className={cn(
-          "w-full max-w-lg border border-white/10 bg-[#0b0b0d] p-6",
-          "rounded-t-3xl",
-          shadows.xl,
-        )}
-        initial={{ y: "100%" }}
-        animate={{ y: 0 }}
-        transition={{ type: "spring", damping: 30, stiffness: 350 }}
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="space-y-4 p-1">
         <h3 className={cn(typography.h2.size, typography.h2.weight, "text-white mb-4")}>
           {t("onboarding.welcome.restoreBackup.embeddingTitle")}
         </h3>
@@ -89,7 +80,7 @@ export function DynamicMemoryEmbeddingPrompt({
             {t("onboarding.welcome.restoreBackup.embeddingNote")}
           </p>
         </div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </BottomMenu>
   );
 }

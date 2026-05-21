@@ -1205,12 +1205,10 @@ export function SyncPage() {
       )}
 
       {showEmbeddingPrompt && (
-        <div className="fixed inset-0 z-50">
-          <DynamicMemoryEmbeddingPrompt
-            onDownload={handleDownloadEmbedding}
-            onContinueWithout={() => void handleContinueWithoutEmbedding()}
-          />
-        </div>
+        <DynamicMemoryEmbeddingPrompt
+          onDownload={handleDownloadEmbedding}
+          onContinueWithout={() => void handleContinueWithoutEmbedding()}
+        />
       )}
     </div>
   );

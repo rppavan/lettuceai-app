@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -57,7 +57,7 @@ type SyncStatus =
   | { status: "SyncCompleted" }
   | { status: "Error"; details: { message: string } };
 
-const COMPLETION_DESTINATION = "/";
+const COMPLETION_DESTINATION = "/chat";
 
 function requiresEmbeddingModel(advanced: Awaited<ReturnType<typeof readAdvancedSettings>>): boolean {
   return advanced.dynamicMemory?.enabled === true || advanced.groupDynamicMemory?.enabled === true;
@@ -103,6 +103,7 @@ export function OnboardingSyncStep() {
   const [showEmbeddingPrompt, setShowEmbeddingPrompt] = useState(false);
   const [sawSyncing, setSawSyncing] = useState(false);
   const [rejected, setRejected] = useState(false);
+  const handledCompletionRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -135,7 +136,13 @@ export function OnboardingSyncStep() {
   }, [status]);
 
   useEffect(() => {
-    if (status.status !== "SyncCompleted" || completing) return;
+    if (status.status !== "SyncCompleted") {
+      handledCompletionRef.current = false;
+      return;
+    }
+
+    if (handledCompletionRef.current) return;
+    handledCompletionRef.current = true;
 
     if (!sawSyncing) {
       setRejected(true);
@@ -148,8 +155,6 @@ export function OnboardingSyncStep() {
     const finish = async () => {
       setCompleting(true);
       try {
-        await setOnboardingCompleted(true);
-
         const advanced = await readAdvancedSettings();
         if (requiresEmbeddingModel(advanced)) {
           const hasModel = await storageBridge.checkEmbeddingModel();
@@ -162,6 +167,10 @@ export function OnboardingSyncStep() {
           }
         }
 
+        void setOnboardingCompleted(true).catch((e) => {
+          console.error("Failed to persist onboarding completion after sync", e);
+        });
+
         if (!cancelled) navigate(COMPLETION_DESTINATION);
       } catch (e) {
         console.error("Failed to finalize sync onboarding", e);
@@ -173,7 +182,7 @@ export function OnboardingSyncStep() {
     return () => {
       cancelled = true;
     };
-  }, [status.status, completing, sawSyncing, navigate]);
+  }, [status.status, sawSyncing, navigate]);
 
   const handleConnect = async (override?: string) => {
     setIsConnecting(true);
@@ -247,6 +256,9 @@ export function OnboardingSyncStep() {
 
   const handleDownloadEmbedding = () => {
     setShowEmbeddingPrompt(false);
+    void setOnboardingCompleted(true).catch((e) => {
+      console.error("Failed to persist onboarding completion before embedding download", e);
+    });
     navigate(`/settings/embedding-download?returnTo=${encodeURIComponent(COMPLETION_DESTINATION)}`);
   };
 
@@ -257,6 +269,9 @@ export function OnboardingSyncStep() {
     } catch (e) {
       console.error("Failed to disable dynamic memory", e);
     }
+    void setOnboardingCompleted(true).catch((e) => {
+      console.error("Failed to persist onboarding completion after skipping embedding download", e);
+    });
     navigate(COMPLETION_DESTINATION);
   };
 
@@ -526,12 +541,10 @@ export function OnboardingSyncStep() {
       </main>
 
       {showEmbeddingPrompt && (
-        <div className="fixed inset-0 z-40">
-          <DynamicMemoryEmbeddingPrompt
-            onDownload={handleDownloadEmbedding}
-            onContinueWithout={() => void handleContinueWithoutEmbedding()}
-          />
-        </div>
+        <DynamicMemoryEmbeddingPrompt
+          onDownload={handleDownloadEmbedding}
+          onContinueWithout={() => void handleContinueWithoutEmbedding()}
+        />
       )}
 
       {isScanning && (
