@@ -436,7 +436,8 @@ export function useOnboardingController(): OnboardingController {
         outputScopes: ["text"],
       };
 
-      await addOrUpdateModel(model);
+      const savedModel = await addOrUpdateModel(model);
+      dispatch({ type: "SET_SAVED_MODEL_ID", payload: savedModel.id });
       await setModelSetupCompleted(true);
       dispatch({ type: "SET_STEP", payload: OnboardingStep.Memory });
       window.history.replaceState(null, "", "/onboarding/memory");
@@ -479,6 +480,16 @@ export function useOnboardingController(): OnboardingController {
 
         dynamicMemory.enabled = enableDynamic;
 
+        if (enableDynamic && !advancedSettings.summarisationModelId) {
+          const latestModelId =
+            [...(currentSettings.models || [])]
+              .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0]
+              ?.id ?? null;
+
+          advancedSettings.summarisationModelId =
+            state.savedModelId || currentSettings.defaultModelId || latestModelId || undefined;
+        }
+
         await storageBridge.settingsSetAdvanced({
           ...advancedSettings,
           dynamicMemory,
@@ -490,7 +501,7 @@ export function useOnboardingController(): OnboardingController {
     } finally {
       dispatch({ type: "SET_PROCESSING_MEMORY", payload: false });
     }
-  }, []);
+  }, [state.savedModelId]);
 
   const handleFinish = useCallback(async () => {
     if (!state.memoryType) return;

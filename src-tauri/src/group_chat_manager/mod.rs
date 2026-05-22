@@ -117,6 +117,35 @@ fn dynamic_memory_manager_template_id(
         })
 }
 
+fn resolve_group_dynamic_memory_summarisation_model_id(
+    app: &AppHandle,
+    settings: &Settings,
+) -> Result<String, String> {
+    if let Some(id) = settings
+        .advanced_settings
+        .as_ref()
+        .and_then(|advanced| advanced.summarisation_model_id.as_ref())
+        .filter(|id| !id.trim().is_empty())
+    {
+        return Ok(id.clone());
+    }
+
+    if let Some(id) = settings
+        .default_model_id
+        .as_ref()
+        .filter(|id| !id.trim().is_empty())
+    {
+        log_info(
+            app,
+            "group_dynamic_memory",
+            format!("summarisation model not set; falling back to app default model: {}", id),
+        );
+        return Ok(id.clone());
+    }
+
+    Err("Summarisation model not configured".to_string())
+}
+
 fn max_hard_deletes_per_cycle(initial_count: usize, ratio: f32) -> usize {
     if initial_count == 0 {
         return 0;
@@ -2432,49 +2461,25 @@ async fn process_group_dynamic_memory_cycle(
         );
     }
 
-    // Get summarisation model
-    let Some(advanced) = settings.advanced_settings.as_ref() else {
-        record_group_dynamic_memory_error(
-            app,
-            session,
-            pool,
-            "Advanced settings missing",
-            "settings",
-            window_start,
-            window_end,
-            &window_message_ids,
-            None,
-            None,
-        );
-        return Err(crate::utils::err_msg(
-            module_path!(),
-            line!(),
-            "Advanced settings missing",
-        ));
-    };
-
-    let summarisation_model_id = match advanced.summarisation_model_id.as_ref() {
-        Some(id) => id.clone(),
-        None => {
-            record_group_dynamic_memory_error(
-                app,
-                session,
-                pool,
-                "Summarisation model not configured",
-                "summary_model",
-                window_start,
-                window_end,
-                &window_message_ids,
-                None,
-                None,
-            );
-            return Err(crate::utils::err_msg(
-                module_path!(),
-                line!(),
-                "Summarisation model not configured",
-            ));
-        }
-    };
+    let summarisation_model_id =
+        match resolve_group_dynamic_memory_summarisation_model_id(app, settings) {
+            Ok(id) => id,
+            Err(err) => {
+                record_group_dynamic_memory_error(
+                    app,
+                    session,
+                    pool,
+                    &err,
+                    "summary_model",
+                    window_start,
+                    window_end,
+                    &window_message_ids,
+                    None,
+                    None,
+                );
+                return Err(crate::utils::err_msg(module_path!(), line!(), err));
+            }
+        };
 
     let (summary_model, summary_provider) =
         match find_model_with_credential(settings, &summarisation_model_id) {

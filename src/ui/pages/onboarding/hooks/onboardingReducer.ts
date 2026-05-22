@@ -38,6 +38,7 @@ export interface OnboardingState {
   modelLoading: boolean;
   isSavingModel: boolean;
   modelError: string | null;
+  savedModelId: string | null;
 
   // Memory setup
   memoryType: MemoryType | null;
@@ -81,6 +82,7 @@ export type OnboardingAction =
   | { type: "SET_DISPLAY_NAME"; payload: string }
   | { type: "SET_SAVING_MODEL"; payload: boolean }
   | { type: "SET_MODEL_ERROR"; payload: string | null }
+  | { type: "SET_SAVED_MODEL_ID"; payload: string | null }
 
   // Memory
   | { type: "SET_MEMORY_TYPE"; payload: MemoryType | null }
@@ -111,6 +113,7 @@ export const initialOnboardingState: OnboardingState = {
   modelLoading: true,
   isSavingModel: false,
   modelError: null,
+  savedModelId: null,
 
   memoryType: null,
   isProcessingMemory: false,
@@ -185,6 +188,8 @@ export function onboardingReducer(
       return { ...state, isSavingModel: action.payload };
     case "SET_MODEL_ERROR":
       return { ...state, modelError: action.payload };
+    case "SET_SAVED_MODEL_ID":
+      return { ...state, savedModelId: action.payload };
 
     // Memory
     case "SET_MEMORY_TYPE":

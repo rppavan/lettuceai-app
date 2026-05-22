@@ -100,6 +100,41 @@ fn dynamic_memory_manager_template_id(
         })
 }
 
+fn resolve_dynamic_memory_summarisation_model_id(
+    app: &AppHandle,
+    settings: &Settings,
+    override_model_id: Option<&str>,
+) -> Result<String, String> {
+    if let Some(id) = override_model_id {
+        log_info(app, "dynamic_memory", format!("using override model: {}", id));
+        return Ok(id.to_string());
+    }
+
+    if let Some(id) = settings
+        .advanced_settings
+        .as_ref()
+        .and_then(|advanced| advanced.summarisation_model_id.as_ref())
+        .filter(|id| !id.trim().is_empty())
+    {
+        return Ok(id.clone());
+    }
+
+    if let Some(id) = settings
+        .default_model_id
+        .as_ref()
+        .filter(|id| !id.trim().is_empty())
+    {
+        log_info(
+            app,
+            "dynamic_memory",
+            format!("summarisation model not set; falling back to app default model: {}", id),
+        );
+        return Ok(id.clone());
+    }
+
+    Err("Summarisation model not configured".to_string())
+}
+
 fn response_preview(provider_id: &str, value: &Value) -> String {
     if let Some(text) =
         extract_text(value, Some(provider_id)).filter(|text| !text.trim().is_empty())
@@ -2075,25 +2110,15 @@ async fn process_dynamic_memory_cycle_with_model(
         );
     }
 
-    let summarisation_model_id: String = match model_id_override {
-        Some(id) => {
-            log_info(
-                app,
-                "dynamic_memory",
-                format!("using override model: {}", id),
-            );
-            id.to_string()
-        }
-        None => match advanced.summarisation_model_id.as_ref() {
-            Some(id) => id.clone(),
-            None => {
-                let err = "Summarisation model not configured";
-                log_warn(app, "dynamic_memory", err);
-                record_dynamic_memory_error(app, session, err, "summary_model");
-                return Err(err.to_string());
+    let summarisation_model_id =
+        match resolve_dynamic_memory_summarisation_model_id(app, settings, model_id_override) {
+            Ok(id) => id,
+            Err(err) => {
+                log_warn(app, "dynamic_memory", &err);
+                record_dynamic_memory_error(app, session, &err, "summary_model");
+                return Err(err);
             }
-        },
-    };
+        };
 
     let (summary_model, summary_provider) =
         match find_model_with_credential(settings, &summarisation_model_id) {
