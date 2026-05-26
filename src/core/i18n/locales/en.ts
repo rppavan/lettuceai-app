@@ -3115,6 +3115,13 @@ export const enMessages = {
     confirmButton: "Yes, Reset Everything",
   },
   chatAppearance: {
+    tabs: {
+      typography: "Typography",
+      bubbles: "Bubbles",
+      layout: "Layout",
+      colors: "Colors",
+      background: "Background",
+    },
     typography: "Typography",
     fontSize: {
       label: "Font Size",
