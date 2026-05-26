@@ -72,12 +72,6 @@ const BUBBLE_PADDING_MAP = {
   normal: "px-4 py-2.5",
   spacious: "px-5 py-3.5",
 } as const;
-const BUBBLE_BLUR_MAP = {
-  none: "",
-  light: "backdrop-blur-sm",
-  medium: "backdrop-blur-md",
-  heavy: "backdrop-blur-lg",
-} as const;
 const AVATAR_SHAPE_MAP = { circle: "rounded-full", rounded: "rounded-lg", hidden: "" } as const;
 const AVATAR_SIZE_MAP = { small: "h-6 w-6", medium: "h-8 w-8", large: "h-10 w-10" } as const;
 const AVATAR_ICON_SIZE_MAP = { small: 12, medium: 16, large: 20 } as const;
@@ -738,7 +732,6 @@ function ChatMessageInner({
           chatAppearance ? LINE_SPACING_MAP[chatAppearance.lineSpacing] : "leading-relaxed",
           chatAppearance ? BUBBLE_RADIUS_MAP[chatAppearance.bubbleRadius] : radius.lg,
           chatAppearance ? FONT_SIZE_MAP[chatAppearance.fontSize] : typography.body.size,
-          chatAppearance ? BUBBLE_BLUR_MAP[chatAppearance.bubbleBlur] : "",
           message.role === "user" || computed.isVisibleSystem
             ? cn(
                 "ml-auto",

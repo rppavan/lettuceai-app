@@ -207,9 +207,10 @@ export function GroupChatLayout() {
       )}
       {backgroundImageData && chatAppearance.backgroundBlur > 0 && (
         <div
-          className="pointer-events-none fixed inset-0 z-0 transform-gpu backdrop-blur-md will-change-opacity"
+          className="pointer-events-none fixed inset-0 z-0 transform-gpu"
           style={{
-            opacity: Math.min(1, chatAppearance.backgroundBlur / 20),
+            backdropFilter: `blur(${chatAppearance.backgroundBlur}px)`,
+            WebkitBackdropFilter: `blur(${chatAppearance.backgroundBlur}px)`,
             backgroundColor: "rgba(0, 0, 0, 0.01)",
           }}
         />

@@ -178,26 +178,6 @@ export function ChatLayout() {
 
   return (
     <>
-      {activeBackgroundImageData && (
-        <div
-          className="pointer-events-none fixed inset-0 z-0"
-          style={{
-            backgroundImage: `url(${activeBackgroundImageData})`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-            backgroundRepeat: "no-repeat",
-          }}
-        />
-      )}
-      {activeBackgroundImageData && chatAppearance.backgroundBlur > 0 && (
-        <div
-          className="pointer-events-none fixed inset-0 z-0 transform-gpu backdrop-blur-md will-change-opacity"
-          style={{
-            opacity: Math.min(1, chatAppearance.backgroundBlur / 20),
-            backgroundColor: "rgba(0, 0, 0, 0.01)",
-          }}
-        />
-      )}
       {activeBackgroundImageData && chatAppearance.backgroundDim > 0 && (
         <div
           className="pointer-events-none fixed inset-0 z-0"

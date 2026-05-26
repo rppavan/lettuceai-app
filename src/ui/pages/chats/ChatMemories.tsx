@@ -1500,10 +1500,22 @@ export function ChatMemoriesPage() {
       )}
     >
       {backgroundImageData && (
-        <div
-          className="pointer-events-none absolute inset-0 z-0 bg-surface/70 backdrop-blur-xl"
-          aria-hidden
-        />
+        <>
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              backgroundImage: `url(${backgroundImageData})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              backgroundRepeat: "no-repeat",
+            }}
+          />
+          <div
+            className="pointer-events-none absolute inset-0 z-0 bg-surface/70 backdrop-blur-xl"
+            aria-hidden
+          />
+        </>
       )}
       <div className="relative z-10 flex h-full flex-col">
       {/* Header */}

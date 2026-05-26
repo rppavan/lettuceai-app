@@ -2110,10 +2110,27 @@ export function ChatConversationPage() {
   return (
     <div
       className={cn(
-        "flex h-screen flex-col overflow-hidden",
+        "relative flex h-screen flex-col overflow-hidden",
         !backgroundImageData && !backgroundImageLoading && "bg-surface",
       )}
     >
+      {backgroundImageData && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+          style={{
+            backgroundImage: `url(${backgroundImageData})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            backgroundRepeat: "no-repeat",
+            filter:
+              chatAppearance.backgroundBlur > 0
+                ? `blur(${chatAppearance.backgroundBlur}px)`
+                : undefined,
+            transform: chatAppearance.backgroundBlur > 0 ? "scale(1.06)" : undefined,
+          }}
+        />
+      )}
       {beetrootRain.overlay}
       <AnimatePresence>
         {swapPlaces && (

@@ -548,19 +548,6 @@ export function ChatAppearanceForm({
         overridden={isOverridden("backgroundBlur")}
         onReset={resetFor("backgroundBlur")}
       />
-      <OptionGrid
-        label={t("chatAppearance.backgroundTransparency.bubbleBlur")}
-        value={settings.bubbleBlur}
-        options={[
-          { value: "none", label: t("chatAppearance.backgroundTransparency.none") },
-          { value: "light", label: t("chatAppearance.backgroundTransparency.light") },
-          { value: "medium", label: t("chatAppearance.backgroundTransparency.medium") },
-          { value: "heavy", label: t("chatAppearance.backgroundTransparency.heavy") },
-        ]}
-        onChange={(v) => onUpdate("bubbleBlur", v)}
-        overridden={isOverridden("bubbleBlur")}
-        onReset={resetFor("bubbleBlur")}
-      />
       <SliderControl
         label={t("chatAppearance.backgroundTransparency.bubbleOpacity")}
         value={settings.bubbleOpacity}
