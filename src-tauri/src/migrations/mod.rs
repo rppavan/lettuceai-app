@@ -3551,13 +3551,50 @@ fn migrate_v60_to_v61(app: &AppHandle) -> Result<(), String> {
 
 fn migrate_v61_to_v62(app: &AppHandle) -> Result<(), String> {
     let conn = crate::storage_manager::db::open_db(app)?;
+
+    let mut columns = std::collections::HashSet::new();
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(asr_corrections)")
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+
+    for row in rows {
+        columns.insert(row.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?);
+    }
+
+    if !columns.contains("accepted_count") {
+        conn.execute(
+            "ALTER TABLE asr_corrections ADD COLUMN accepted_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    }
+    if !columns.contains("rejected_count") {
+        conn.execute(
+            "ALTER TABLE asr_corrections ADD COLUMN rejected_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    }
+    if !columns.contains("seen_count") {
+        conn.execute(
+            "ALTER TABLE asr_corrections ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    }
+    if !columns.contains("last_seen_at") {
+        conn.execute(
+            "ALTER TABLE asr_corrections ADD COLUMN last_seen_at TEXT",
+            [],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    }
+
     conn.execute_batch(
         r#"
-        ALTER TABLE asr_corrections ADD COLUMN accepted_count INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE asr_corrections ADD COLUMN rejected_count INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE asr_corrections ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE asr_corrections ADD COLUMN last_seen_at TEXT;
-
         UPDATE asr_corrections
         SET accepted_count = CASE WHEN user_approved != 0 THEN MAX(use_count, 1) ELSE 0 END,
             seen_count = CASE WHEN user_approved != 0 THEN MAX(use_count, 1) ELSE 0 END,
