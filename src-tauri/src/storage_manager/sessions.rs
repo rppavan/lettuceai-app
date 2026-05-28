@@ -351,6 +351,46 @@ fn allowed_memory_categories_for_mode(mode: &str) -> &'static [&'static str] {
     }
 }
 
+/// Resolve the mode used for memory-category validation. A session may default
+/// to "roleplay" even for a companion character, so companion categories must
+/// also be allowed when the underlying character is in companion mode.
+fn resolve_memory_category_mode(conn: &rusqlite::Connection, session_id: &str) -> String {
+    let row: Option<(String, String)> = conn
+        .query_row(
+            "SELECT character_id, mode FROM sessions WHERE id = ?1",
+            params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let (character_id, session_mode) = match row {
+        Some(v) => v,
+        None => return "roleplay".to_string(),
+    };
+    if session_mode.eq_ignore_ascii_case("companion") {
+        return session_mode;
+    }
+    let character_mode: Option<String> = conn
+        .query_row(
+            "SELECT mode FROM characters WHERE id = ?1",
+            params![character_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    if character_mode
+        .as_deref()
+        .map(|m| m.eq_ignore_ascii_case("companion"))
+        .unwrap_or(false)
+    {
+        "companion".to_string()
+    } else {
+        session_mode
+    }
+}
+
 fn normalize_memory_category(
     category: Option<String>,
     mode: &str,
@@ -3478,15 +3518,6 @@ pub async fn session_add_memory(
     // Read current memories (legacy column) and embeddings (new table or
     // legacy fallback).
     let current_memories_json = read_session_memories_json_with_resolution(&conn, &session_id)?;
-    let session_mode: String = conn
-        .query_row(
-            "SELECT mode FROM sessions WHERE id = ?1",
-            params![session_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
-        .unwrap_or_else(|| "roleplay".to_string());
 
     let mut memories: Vec<String> =
         serde_json::from_str(&current_memories_json).unwrap_or_else(|_| vec![]);
@@ -3508,7 +3539,8 @@ pub async fn session_add_memory(
     };
 
     let token_count = crate::embedding::tokenizer::count_tokens(&app, &memory).unwrap_or(0);
-    let normalized_category = normalize_memory_category(memory_category, &session_mode)?;
+    let category_mode = resolve_memory_category_mode(&conn, &session_id);
+    let normalized_category = normalize_memory_category(memory_category, &category_mode)?;
     let (embedding_source_version, embedding_dimensions) =
         embedding::resolve_active_embedding_signature(&app)
             .unwrap_or_else(|_| ("v3".to_string(), 512));
@@ -3602,15 +3634,6 @@ pub async fn session_update_memory(
     let mut conn = open_db(&app)?;
 
     let current_memories_json = read_session_memories_json_with_resolution(&conn, &session_id)?;
-    let session_mode: String = conn
-        .query_row(
-            "SELECT mode FROM sessions WHERE id = ?1",
-            params![session_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
-        .unwrap_or_else(|| "roleplay".to_string());
 
     let mut memories: Vec<String> =
         serde_json::from_str(&current_memories_json).unwrap_or_else(|_| vec![]);
@@ -3618,7 +3641,8 @@ pub async fn session_update_memory(
 
     if memory_index < memories.len() {
         memories[memory_index] = new_memory.clone();
-        let normalized_category = normalize_memory_category(new_category, &session_mode)?;
+        let category_mode = resolve_memory_category_mode(&conn, &session_id);
+        let normalized_category = normalize_memory_category(new_category, &category_mode)?;
 
         let embedding = match embedding::compute_embedding(app.clone(), new_memory.clone()).await {
             Ok(vec) => vec,
