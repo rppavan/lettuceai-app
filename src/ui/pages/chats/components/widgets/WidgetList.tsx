@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, Pencil, RotateCcw } from "lucide-react";
+import { Check, Pencil, Plus, RotateCcw } from "lucide-react";
 import type { WidgetNode } from "../../../../../core/storage/schemas";
 import { WidgetRenderer } from "./WidgetRenderer";
 import { WidgetEditList } from "./WidgetEditList";
 import { WidgetEmptyState } from "./WidgetEmptyState";
 import { useWidgetEdit, type WidgetSide } from "./WidgetEditContext";
+import { WidgetTypePickerSheet } from "./editor/WidgetTypePickerSheet";
+import { createWidgetNode } from "./editor/widgetFactories";
 
 interface WidgetListProps {
   nodes: WidgetNode[];
@@ -14,6 +17,7 @@ interface WidgetListProps {
 
 export function WidgetList({ nodes, side, canMove }: WidgetListProps) {
   const edit = useWidgetEdit();
+  const [topPickerOpen, setTopPickerOpen] = useState(false);
   const displayNodes = edit.editing ? edit.getNodes(side) : nodes;
 
   return (
@@ -22,8 +26,14 @@ export function WidgetList({ nodes, side, canMove }: WidgetListProps) {
         editing={edit.editing}
         saving={edit.saving}
         onEnter={edit.enterEdit}
+        onAdd={() => setTopPickerOpen(true)}
         onRevert={edit.revert}
         onDone={edit.done}
+      />
+      <WidgetTypePickerSheet
+        open={topPickerOpen}
+        onClose={() => setTopPickerOpen(false)}
+        onPick={(type) => edit.addNode(side, createWidgetNode(type))}
       />
 
       {edit.editing ? (
@@ -62,11 +72,12 @@ interface ToolbarProps {
   editing: boolean;
   saving: boolean;
   onEnter: () => void;
+  onAdd: () => void;
   onRevert: () => void;
   onDone: () => void;
 }
 
-function Toolbar({ editing, saving, onEnter, onRevert, onDone }: ToolbarProps) {
+function Toolbar({ editing, saving, onEnter, onAdd, onRevert, onDone }: ToolbarProps) {
   return (
     <div className="flex min-h-[44px] items-center justify-end gap-2 px-2 py-2">
       <AnimatePresence mode="wait" initial={false}>
@@ -77,8 +88,17 @@ function Toolbar({ editing, saving, onEnter, onRevert, onDone }: ToolbarProps) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.16, ease: "easeOut" }}
-            className="flex items-center gap-1"
+            className="flex w-full items-center justify-between gap-1"
           >
+            <button
+              type="button"
+              onClick={onAdd}
+              className="flex items-center gap-1 rounded-md border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-accent shadow-sm transition hover:bg-accent/20"
+            >
+              <Plus size={12} strokeWidth={2.4} />
+              Add
+            </button>
+            <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={onRevert}
@@ -97,6 +117,7 @@ function Toolbar({ editing, saving, onEnter, onRevert, onDone }: ToolbarProps) {
               <Check size={12} strokeWidth={2.4} />
               Done
             </button>
+            </div>
           </motion.div>
         ) : (
           <motion.div
