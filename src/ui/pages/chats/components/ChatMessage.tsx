@@ -76,6 +76,49 @@ const AVATAR_SHAPE_MAP = { circle: "rounded-full", rounded: "rounded-lg", hidden
 const AVATAR_SIZE_MAP = { small: "h-6 w-6", medium: "h-8 w-8", large: "h-10 w-10" } as const;
 const AVATAR_ICON_SIZE_MAP = { small: 12, medium: 16, large: 20 } as const;
 
+function formatMessageTimestamp(
+  ms: number,
+  format: "relative" | "time" | "datetime",
+): string {
+  const date = new Date(ms);
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (format === "time") return time;
+  if (format === "datetime") {
+    return `${date.toLocaleDateString()} ${time}`;
+  }
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dayMs = 86_400_000;
+  if (ms >= startOfToday) return time;
+  if (ms >= startOfToday - dayMs) return `Yesterday at ${time}`;
+  return `${date.toLocaleDateString()}, ${time}`;
+}
+
+function BubbleHeaderWrap({
+  above,
+  rightAligned,
+  header,
+  children,
+}: {
+  above: boolean;
+  rightAligned: boolean;
+  header: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  if (!above) return <>{children}</>;
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 flex-1 flex-col",
+        rightAligned ? "items-end" : "items-start",
+      )}
+    >
+      {header}
+      {children}
+    </div>
+  );
+}
+
 // Avatar component for user/assistant
 const MessageAvatar = React.memo(function MessageAvatar({
   role,
@@ -566,6 +609,38 @@ function ChatMessageInner({
     : (persona?.title ?? "User");
   const resolvedDisplayContent =
     displayContent ?? replacePlaceholders(message.content, effectiveCharName, effectivePersonaName);
+
+  const messageHeaderPlacement = chatAppearance?.messageHeaderPlacement ?? "inside";
+  const showMessageHeader =
+    !!(chatAppearance?.showMessageAuthor || chatAppearance?.showMessageTimestamp) &&
+    !computed.isPlaceholder;
+  const headerAuthorName = computed.isUser
+    ? effectivePersonaName
+    : computed.isAssistant || computed.isScene
+      ? effectiveCharName
+      : "System";
+  const headerRightAligned = message.role === "user" || computed.isVisibleSystem;
+  const messageHeaderNode = showMessageHeader ? (
+    <div
+      className={cn(
+        "mb-1 flex items-baseline gap-2",
+        headerRightAligned ? "justify-end" : "justify-start",
+      )}
+    >
+      {chatAppearance?.showMessageAuthor && headerAuthorName && (
+        <span className="text-[13px] font-semibold">{headerAuthorName}</span>
+      )}
+      {chatAppearance?.showMessageTimestamp && (
+        <span className="text-[11px] font-normal opacity-50">
+          {formatMessageTimestamp(
+            message.createdAt,
+            chatAppearance?.timestampFormat ?? "relative",
+          )}
+        </span>
+      )}
+    </div>
+  ) : null;
+  const headerAbove = messageHeaderPlacement === "above" && !!messageHeaderNode;
   const voiceConfig = character?.voiceConfig;
   const hasVoiceAssignment =
     voiceConfig?.source === "user"
@@ -721,6 +796,11 @@ function ChatMessageInner({
           </div>
         )}
 
+      <BubbleHeaderWrap
+        above={headerAbove}
+        rightAligned={headerRightAligned}
+        header={messageHeaderNode}
+      >
       <motion.div
         {...(computed.isLatestAssistant ? { "data-tour-id": "chat-message-bubble" } : {})}
         initial={computed.shouldAnimate ? { opacity: 0, y: 4 } : false}
@@ -769,6 +849,8 @@ function ChatMessageInner({
             <Pin size={12} className="text-blue-300" />
           </motion.div>
         )}
+
+        {messageHeaderPlacement === "inside" && messageHeaderNode}
 
         {/* Thinking/Reasoning section - shown even during typing indicator */}
         {computed.isAssistant && reasoning && (
@@ -905,6 +987,7 @@ function ChatMessageInner({
           </motion.div>
         )}
       </motion.div>
+      </BubbleHeaderWrap>
 
       {(message.role === "user" || computed.isVisibleSystem) &&
         chatAppearance?.avatarShape !== "hidden" && (

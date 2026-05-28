@@ -2729,6 +2729,12 @@ export const ChatAppearanceSettingsSchema = z.object({
   bubbleMaxWidth: z.enum(["compact", "normal", "wide"]).default("normal"),
   bubblePadding: z.enum(["compact", "normal", "spacious"]).default("normal"),
 
+  // Message header (Discord-style author name + timestamp above message text)
+  showMessageAuthor: z.boolean().default(false),
+  showMessageTimestamp: z.boolean().default(false),
+  timestampFormat: z.enum(["relative", "time", "datetime"]).default("relative"),
+  messageHeaderPlacement: z.enum(["inside", "above"]).default("inside"),
+
   // Layout
   messageGap: z.enum(["tight", "normal", "relaxed"]).default("relaxed"),
   avatarShape: z.enum(["circle", "rounded", "hidden"]).default("circle"),
@@ -2785,6 +2791,10 @@ export function createDefaultChatAppearanceSettings(): ChatAppearanceSettings {
     bubbleRadius: "rounded",
     bubbleMaxWidth: "normal",
     bubblePadding: "normal",
+    showMessageAuthor: false,
+    showMessageTimestamp: false,
+    timestampFormat: "relative",
+    messageHeaderPlacement: "inside",
     messageGap: "relaxed",
     avatarShape: "circle",
     avatarSize: "medium",

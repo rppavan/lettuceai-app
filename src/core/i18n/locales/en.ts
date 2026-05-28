@@ -3162,6 +3162,21 @@ export const enMessages = {
         normal: "Normal",
         spacious: "Spacious",
       },
+      showAuthor: "Show Author Name",
+      showAuthorDesc: "Display the character or persona name above each message.",
+      showTimestamp: "Show Timestamp",
+      showTimestampDesc: "Display the time each message was sent.",
+      timestampFormat: {
+        label: "Timestamp Format",
+        relative: "Relative",
+        time: "Time",
+        datetime: "Date + Time",
+      },
+      headerPlacement: {
+        label: "Header Placement",
+        inside: "Inside Bubble",
+        above: "Above Bubble",
+      },
     },
     layout: {
       label: "Layout",

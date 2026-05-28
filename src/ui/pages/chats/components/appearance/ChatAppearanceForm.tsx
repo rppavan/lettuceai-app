@@ -359,6 +359,49 @@ export function ChatAppearanceForm({
           overridden={isOverridden("bubblePadding")}
           onReset={resetFor("bubblePadding")}
         />
+        <ToggleControl
+          label={t("chatAppearance.messageBubbles.showAuthor")}
+          description={t("chatAppearance.messageBubbles.showAuthorDesc")}
+          checked={settings.showMessageAuthor}
+          onChange={(v) => onUpdate("showMessageAuthor", v)}
+          overridden={isOverridden("showMessageAuthor")}
+          onReset={resetFor("showMessageAuthor")}
+        />
+        <ToggleControl
+          label={t("chatAppearance.messageBubbles.showTimestamp")}
+          description={t("chatAppearance.messageBubbles.showTimestampDesc")}
+          checked={settings.showMessageTimestamp}
+          onChange={(v) => onUpdate("showMessageTimestamp", v)}
+          overridden={isOverridden("showMessageTimestamp")}
+          onReset={resetFor("showMessageTimestamp")}
+        />
+        {settings.showMessageTimestamp && (
+          <OptionGrid
+            label={t("chatAppearance.messageBubbles.timestampFormat.label")}
+            value={settings.timestampFormat}
+            options={[
+              { value: "relative", label: t("chatAppearance.messageBubbles.timestampFormat.relative") },
+              { value: "time", label: t("chatAppearance.messageBubbles.timestampFormat.time") },
+              { value: "datetime", label: t("chatAppearance.messageBubbles.timestampFormat.datetime") },
+            ]}
+            onChange={(v) => onUpdate("timestampFormat", v)}
+            overridden={isOverridden("timestampFormat")}
+            onReset={resetFor("timestampFormat")}
+          />
+        )}
+        {(settings.showMessageAuthor || settings.showMessageTimestamp) && (
+          <OptionGrid
+            label={t("chatAppearance.messageBubbles.headerPlacement.label")}
+            value={settings.messageHeaderPlacement}
+            options={[
+              { value: "inside", label: t("chatAppearance.messageBubbles.headerPlacement.inside") },
+              { value: "above", label: t("chatAppearance.messageBubbles.headerPlacement.above") },
+            ]}
+            onChange={(v) => onUpdate("messageHeaderPlacement", v)}
+            overridden={isOverridden("messageHeaderPlacement")}
+            onReset={resetFor("messageHeaderPlacement")}
+          />
+        )}
       </div>
     );
   }
