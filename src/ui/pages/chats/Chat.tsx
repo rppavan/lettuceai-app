@@ -198,6 +198,17 @@ export function ChatConversationPage() {
     : [];
 
   const scrollContainerRef = useRef<HTMLElement | null>(null);
+  const footerRef = useRef<HTMLDivElement | null>(null);
+  const [footerHeight, setFooterHeight] = useState(0);
+  useEffect(() => {
+    const el = footerRef.current;
+    if (!el) return;
+    const update = () => setFooterHeight(el.offsetHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
   const pressStartPosition = useRef<{ x: number; y: number } | null>(null);
   const [sessionForHeader, setSessionForHeader] = useState(chatController.session);
   const pendingScrollAdjustRef = useRef<{ prevScrollTop: number; prevScrollHeight: number } | null>(
@@ -2425,7 +2436,10 @@ export function ChatConversationPage() {
   }
 
   const footerBottomOffset = `calc(env(safe-area-inset-bottom) + ${keyboardInset}px)`;
-  const scrollButtonBottomOffset = `calc(env(safe-area-inset-bottom) + ${keyboardInset}px + 88px)`;
+  const scrollButtonBottomOffset =
+    footerHeight > 0
+      ? `${footerHeight + 12}px`
+      : `calc(env(safe-area-inset-bottom) + ${keyboardInset}px + 88px)`;
 
   return (
     <div
@@ -2713,6 +2727,7 @@ export function ChatConversationPage() {
 
       {footerInside && (
       <div
+        ref={footerRef}
         className="relative z-10"
         style={{ paddingBottom: footerBottomOffset }}
       >
@@ -2766,6 +2781,7 @@ export function ChatConversationPage() {
 
       {!footerInside && (
       <div
+        ref={footerRef}
         className={`relative z-10 ${applyFooterColumnClass ? getChatColumnLayout(chatAppearance).className : ""}`}
         style={{
           paddingBottom: footerBottomOffset,
