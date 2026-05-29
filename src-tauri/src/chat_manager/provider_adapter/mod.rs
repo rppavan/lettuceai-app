@@ -100,10 +100,14 @@ pub trait ProviderAdapter {
                             .map(|s| s.to_string()),
                         context_length: item.get("context_length").and_then(|c| c.as_u64()),
                         input_modalities: item
-                            .get("input_modalities")
+                            .get("architecture")
+                            .and_then(|a| a.get("input_modalities"))
+                            .or_else(|| item.get("input_modalities"))
                             .and_then(|v| serde_json::from_value(v.clone()).ok()),
                         output_modalities: item
-                            .get("output_modalities")
+                            .get("architecture")
+                            .and_then(|a| a.get("output_modalities"))
+                            .or_else(|| item.get("output_modalities"))
                             .and_then(|v| serde_json::from_value(v.clone()).ok()),
                         supported_endpoints: item
                             .get("supported_endpoints")

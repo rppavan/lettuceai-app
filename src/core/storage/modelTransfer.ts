@@ -41,7 +41,9 @@ function normalizeScopes(value: unknown): Array<"text" | "image" | "audio"> {
       normalized.add(scope);
     }
   }
-  normalized.add("text");
+  if (normalized.size === 0) {
+    normalized.add("text");
+  }
   return orderedScopes.filter((scope) => normalized.has(scope));
 }
 

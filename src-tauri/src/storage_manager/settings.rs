@@ -955,3 +955,21 @@ pub fn settings_set_migration_version(app: tauri::AppHandle, version: i64) -> Re
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     Ok(())
 }
+
+pub fn get_model_output_scopes(
+    app: &tauri::AppHandle,
+    model_name: &str,
+    provider_id: &str,
+) -> Result<Option<Vec<String>>, String> {
+    let conn = open_db(app)?;
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT output_scopes FROM models WHERE name = ?1 AND provider_id = ?2 LIMIT 1",
+            params![model_name, provider_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
+        .flatten();
+    Ok(raw.and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()))
+}

@@ -99,9 +99,19 @@ fn record_image_generation_usage(
 #[tauri::command]
 pub async fn generate_image(
     app: AppHandle,
-    request: ImageGenerationRequest,
+    mut request: ImageGenerationRequest,
 ) -> Result<ImageGenerationResponse, String> {
     let mut provider_label = request.provider_id.clone();
+
+    if request.output_modalities.is_none() {
+        request.output_modalities = crate::storage_manager::settings::get_model_output_scopes(
+            &app,
+            &request.model,
+            &request.provider_id,
+        )
+        .ok()
+        .flatten();
+    }
 
     let result: Result<(ImageGenerationResponse, Option<UsageSummary>), String> = async {
         log_info(

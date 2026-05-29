@@ -64,11 +64,11 @@ pub async fn get_openrouter_models(_app: AppHandle) -> Result<Vec<OpenRouterMode
         .into_iter()
         .map(|m| {
             let mut input_scopes = m.architecture.input_modalities.clone();
-            if !input_scopes.iter().any(|s| s.eq_ignore_ascii_case("text")) {
+            if input_scopes.is_empty() {
                 input_scopes.push("text".to_string());
             }
             let mut output_scopes = m.architecture.output_modalities.clone();
-            if !output_scopes.iter().any(|s| s.eq_ignore_ascii_case("text")) {
+            if output_scopes.is_empty() {
                 output_scopes.push("text".to_string());
             }
 

@@ -13,6 +13,8 @@ pub struct ImageGenerationRequest {
     pub advanced_model_settings: Option<AdvancedModelSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_images: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_modalities: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

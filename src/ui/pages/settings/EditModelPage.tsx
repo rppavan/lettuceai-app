@@ -1612,7 +1612,7 @@ export function EditModelPage() {
   const scopeOrder = ["text", "image", "audio"] as const;
   const toggleScope = (
     key: "inputScopes" | "outputScopes",
-    scope: "image" | "audio",
+    scope: "text" | "image" | "audio",
     enabled: boolean,
   ) => {
     if (!editorModel) return;
@@ -1620,8 +1620,8 @@ export function EditModelPage() {
     const current = new Set((editorModel as any)[key] ?? ["text"]);
     if (enabled) current.add(scope);
     else current.delete(scope);
-    current.add("text");
-    const next = scopeOrder.filter((s) => current.has(s));
+    let next = scopeOrder.filter((s) => current.has(s));
+    if (next.length === 0) next = ["text"];
     updateEditorModel({ [key]: next } as any);
   };
 
@@ -1639,19 +1639,26 @@ export function EditModelPage() {
     const supportsAudioInput = inputModalities.has("audio");
     const supportsAudioOutput = outputModalities.has("audio");
 
+    const supportsTextInput = inputModalities.size === 0 || inputModalities.has("text");
+    const supportsTextOutput = outputModalities.size === 0 || outputModalities.has("text");
+
+    const inputScopes = scopeOrder.filter(
+      (scope) =>
+        (scope === "text" && supportsTextInput) ||
+        (scope === "image" && supportsImageInput) ||
+        (scope === "audio" && supportsAudioInput),
+    );
+    const outputScopes = scopeOrder.filter(
+      (scope) =>
+        (scope === "text" && supportsTextOutput) ||
+        (scope === "image" && supportsImageOutput) ||
+        (scope === "audio" && supportsAudioOutput),
+    );
+
+    const fallback: Array<"text" | "image" | "audio"> = ["text"];
     return {
-      inputScopes: scopeOrder.filter(
-        (scope) =>
-          scope === "text" ||
-          (scope === "image" && supportsImageInput) ||
-          (scope === "audio" && supportsAudioInput),
-      ),
-      outputScopes: scopeOrder.filter(
-        (scope) =>
-          scope === "text" ||
-          (scope === "image" && supportsImageOutput) ||
-          (scope === "audio" && supportsAudioOutput),
-      ),
+      inputScopes: inputScopes.length > 0 ? inputScopes : fallback,
+      outputScopes: outputScopes.length > 0 ? outputScopes : fallback,
     };
   };
 
@@ -4767,7 +4774,7 @@ export function EditModelPage() {
                                 <p className="text-[13px] font-medium text-fg/72">
                                   {t("editModel.capabilities.input")}
                                 </p>
-                                {["image", "audio"].map((scope) => (
+                                {["text", "image", "audio"].map((scope) => (
                                   <button
                                     key={scope}
                                     type="button"
@@ -4799,7 +4806,7 @@ export function EditModelPage() {
                                 <p className="text-[13px] font-medium text-fg/72">
                                   {t("editModel.capabilities.output")}
                                 </p>
-                                {["image", "audio"].map((scope) => (
+                                {["text", "image", "audio"].map((scope) => (
                                   <button
                                     key={scope}
                                     type="button"
