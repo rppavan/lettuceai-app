@@ -9,7 +9,8 @@ use crate::chat_manager::companion;
 use crate::chat_manager::execution::RequestSettings;
 use crate::chat_manager::memory::manual::{has_manual_memories, render_manual_memory_lines};
 use crate::chat_manager::temporal::{
-    companion_time_awareness_enabled, format_memory_for_prompt, time_placeholder_values,
+    companion_effective_now, companion_time_awareness_enabled, format_memory_for_prompt,
+    time_placeholder_values,
 };
 use crate::chat_manager::types::{
     Character, Model, Persona, PromptEntryChatMode, PromptEntryCondition, PromptEntryImageSlot,
@@ -3812,7 +3813,7 @@ pub fn render_with_context_internal(
 
     // Replace all template variables
     let mut result = base_template.to_string();
-    let reference_ms = crate::utils::now_millis().unwrap_or_default();
+    let reference_ms = companion_effective_now(session);
 
     if let Some(app) = app {
         utils::log_info(

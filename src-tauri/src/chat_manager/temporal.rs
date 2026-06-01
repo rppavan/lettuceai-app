@@ -174,6 +174,34 @@ pub fn companion_time_awareness_enabled(session: &Session) -> bool {
         .unwrap_or(false)
 }
 
+pub fn companion_effective_now(session: &Session) -> u64 {
+    let real_now = crate::utils::now_millis().unwrap_or_default();
+    let Some(override_value) = session
+        .companion_state
+        .as_ref()
+        .and_then(|value| value.get("preferences"))
+        .and_then(|value| value.get("timeOverride"))
+    else {
+        return real_now;
+    };
+    let mode = override_value
+        .get("mode")
+        .and_then(|value| value.as_str())
+        .unwrap_or("off");
+    let anchor = override_value.get("anchorMs").and_then(|value| value.as_u64());
+    match mode {
+        "frozen" => anchor.unwrap_or(real_now),
+        "ticking" => {
+            let set_at = override_value.get("setAtMs").and_then(|value| value.as_u64());
+            match (anchor, set_at) {
+                (Some(anchor), Some(set_at)) => anchor.saturating_add(real_now.saturating_sub(set_at)),
+                _ => real_now,
+            }
+        }
+        _ => real_now,
+    }
+}
+
 pub fn time_placeholder_values(reference_ms: u64) -> Vec<(&'static str, String)> {
     let now = local_datetime_from_ms(reference_ms);
     let date_full = format!(

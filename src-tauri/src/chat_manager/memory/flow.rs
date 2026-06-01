@@ -49,7 +49,8 @@ use crate::chat_manager::request_builder;
 use crate::chat_manager::service::{record_usage_if_available, require_api_key, ChatContext};
 use crate::chat_manager::storage::save_session;
 use crate::chat_manager::temporal::{
-    companion_time_awareness_enabled, detect_temporal_query_range, memory_matches_temporal_range,
+    companion_effective_now, companion_time_awareness_enabled, detect_temporal_query_range,
+    memory_matches_temporal_range,
 };
 use crate::chat_manager::thinking::normalize_thinking_content;
 use crate::chat_manager::tooling::{
@@ -165,7 +166,7 @@ fn latest_observed_memory_context(
     });
 
     (
-        source.map(|message| message.created_at),
+        source.map(|_| companion_effective_now(session)),
         source.map(|message| message.role.clone()),
         source.map(|message| message.id.clone()),
     )
@@ -1212,7 +1213,7 @@ pub(crate) async fn select_relevant_memories(
         return Vec::new();
     }
 
-    let reference_ms = now_millis().unwrap_or_default();
+    let reference_ms = companion_effective_now(session);
     let temporal_range = if temporal_query_features_enabled
         && companion_time_awareness_enabled(session)
     {
