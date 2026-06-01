@@ -2,19 +2,17 @@ import { useMemo } from "react";
 import { Clock } from "lucide-react";
 import type { TimeNode } from "../../../../../core/storage/chatWidgetSchemas";
 import { cn, interactive } from "../../../../design-tokens";
+import { DateTimePicker } from "../../../../components/DateTimePicker";
 import { useWidgetContext } from "./WidgetContext";
 import { useWidgetEdit } from "./WidgetEditContext";
 import { widgetCardClass } from "./widgetSurface";
-import {
-  useCompanionTimeOverrideEditor,
-  type OverrideMode,
-} from "../../utils/companionTimeOverride";
+import { useCompanionTimeOverrideEditor } from "../../utils/companionTimeOverride";
 
-const MODE_OPTIONS: { mode: OverrideMode; label: string }[] = [
+const MODE_OPTIONS = [
   { mode: "off", label: "Live" },
   { mode: "frozen", label: "Frozen" },
   { mode: "ticking", label: "Ticking" },
-];
+] as const;
 
 export function WidgetTime({ node }: { node: TimeNode }) {
   const { hasBackground, character, session, onUpdateCompanionTimeOverride } =
@@ -26,11 +24,13 @@ export function WidgetTime({ node }: { node: TimeNode }) {
   const {
     activeMode,
     selectedMode,
-    selectMode,
-    draft,
-    setDraft,
-    beginEditing,
+    editing,
+    beginEdit,
+    selectLive,
     apply,
+    cancel,
+    draftMs,
+    setDraftMs,
     shownMs,
     nowMs,
     isOverridden,
@@ -59,7 +59,6 @@ export function WidgetTime({ node }: { node: TimeNode }) {
 
   const isCompanion = character?.mode === "companion";
   const awarenessOff = !session?.companionState?.preferences?.timeAwarenessEnabled;
-  const showEditor = canEdit && selectedMode !== "off";
 
   return (
     <section
@@ -101,11 +100,13 @@ export function WidgetTime({ node }: { node: TimeNode }) {
             <button
               key={opt.mode}
               type="button"
-              onClick={() => selectMode(opt.mode)}
+              onClick={() =>
+                opt.mode === "off" ? selectLive() : beginEdit(opt.mode)
+              }
               className={cn(
                 "flex-1 rounded-md border px-2 py-1 text-[11px] font-medium",
                 interactive.transition.fast,
-                selectedMode === opt.mode
+                (editing ? selectedMode : activeMode) === opt.mode
                   ? "border-accent/40 bg-accent/15 text-accent/90"
                   : "border-fg/12 bg-fg/5 text-fg/60 hover:border-fg/25 hover:bg-fg/10 hover:text-fg/80",
               )}
@@ -116,27 +117,56 @@ export function WidgetTime({ node }: { node: TimeNode }) {
         </div>
       )}
 
-      {showEditor && (
+      {canEdit && !editing && isOverridden && (
+        <button
+          type="button"
+          onClick={() => beginEdit(activeMode === "frozen" ? "frozen" : "ticking")}
+          className={cn(
+            "self-center text-[11px] text-accent/80 hover:text-accent",
+            interactive.transition.fast,
+          )}
+        >
+          Change time
+        </button>
+      )}
+
+      {editing && selectedMode !== "off" && (
         <div className="flex flex-col gap-2">
-          <input
-            type="datetime-local"
-            value={draft}
-            onFocus={beginEditing}
-            onChange={(e) => setDraft(e.target.value)}
-            className="w-full rounded-md border border-fg/12 bg-fg/5 px-2 py-1.5 text-[12px] text-fg/85 focus:border-accent/40 focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={apply}
-            className={cn(
-              "rounded-md bg-accent px-2 py-1.5 text-[12px] font-semibold text-black shadow-sm",
-              interactive.transition.fast,
-              interactive.active.scale,
-              "hover:brightness-110",
-            )}
-          >
-            {selectedMode === "frozen" ? "Freeze at this time" : "Set and keep ticking"}
-          </button>
+          <DateTimePicker valueMs={draftMs} onChange={setDraftMs} />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDraftMs(Date.now())}
+              className={cn(
+                "rounded-md border border-fg/12 bg-fg/5 px-2 py-1.5 text-[11px] font-medium text-fg/60 hover:border-fg/25 hover:text-fg/80",
+                interactive.transition.fast,
+              )}
+            >
+              Now
+            </button>
+            <button
+              type="button"
+              onClick={cancel}
+              className={cn(
+                "ml-auto rounded-md border border-fg/12 bg-fg/5 px-2.5 py-1.5 text-[11px] font-medium text-fg/60 hover:border-fg/25 hover:text-fg/80",
+                interactive.transition.fast,
+              )}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={apply}
+              className={cn(
+                "rounded-md bg-accent px-2.5 py-1.5 text-[11px] font-semibold text-black shadow-sm",
+                interactive.transition.fast,
+                interactive.active.scale,
+                "hover:brightness-110",
+              )}
+            >
+              {selectedMode === "frozen" ? "Freeze" : "Set"}
+            </button>
+          </div>
         </div>
       )}
 

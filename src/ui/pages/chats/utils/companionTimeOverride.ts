@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CompanionTimeOverride } from "../../../../core/storage/schemas";
 
 export type OverrideMode = CompanionTimeOverride["mode"];
@@ -12,12 +12,8 @@ export function effectiveOverrideMs(
   return override.anchorMs + (nowMs - override.setAtMs);
 }
 
-export function toLocalInputValue(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours(),
-  )}:${pad(d.getMinutes())}`;
+function floorToMinute(ms: number): number {
+  return ms - (ms % 60000);
 }
 
 export function useCompanionTimeOverrideEditor(
@@ -27,56 +23,58 @@ export function useCompanionTimeOverrideEditor(
 ) {
   const activeMode: OverrideMode = override?.mode ?? "off";
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [editing, setEditing] = useState(false);
   const [selectedMode, setSelectedMode] = useState<OverrideMode>(activeMode);
-  const [draft, setDraft] = useState("");
-  const editingRef = useRef(false);
+  const [draftMs, setDraftMs] = useState(() => floorToMinute(Date.now()));
 
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
 
+  // If the persisted override changes from elsewhere, drop any open edit session.
   useEffect(() => {
     setSelectedMode(activeMode);
+    setEditing(false);
   }, [activeMode]);
 
   const shownMs = effectiveOverrideMs(override, nowMs);
 
-  useEffect(() => {
-    if (selectedMode === "off" || editingRef.current) return;
-    const next = toLocalInputValue(shownMs);
-    setDraft((prev) => (prev === next ? prev : next));
-  }, [selectedMode, shownMs]);
-
-  const selectMode = (mode: OverrideMode) => {
+  const beginEdit = (mode: Exclude<OverrideMode, "off">) => {
     if (!canEdit) return;
-    editingRef.current = false;
     setSelectedMode(mode);
-    if (mode === "off") {
-      void onApply(null);
-      return;
-    }
-    setDraft(toLocalInputValue(shownMs));
+    setDraftMs(floorToMinute(effectiveOverrideMs(override, Date.now())));
+    setEditing(true);
+  };
+
+  const selectLive = () => {
+    if (!canEdit) return;
+    setSelectedMode("off");
+    setEditing(false);
+    void onApply(null);
   };
 
   const apply = () => {
     if (!canEdit || selectedMode === "off") return;
-    const anchorMs = new Date(draft).getTime();
-    if (Number.isNaN(anchorMs)) return;
-    editingRef.current = false;
-    void onApply({ mode: selectedMode, anchorMs, setAtMs: Date.now() });
+    setEditing(false);
+    void onApply({ mode: selectedMode, anchorMs: draftMs, setAtMs: Date.now() });
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setSelectedMode(activeMode);
   };
 
   return {
     activeMode,
     selectedMode,
-    selectMode,
-    draft,
-    setDraft,
-    beginEditing: () => {
-      editingRef.current = true;
-    },
+    editing,
+    beginEdit,
+    selectLive,
     apply,
+    cancel,
+    draftMs,
+    setDraftMs,
     shownMs,
     nowMs,
     isOverridden: activeMode !== "off",

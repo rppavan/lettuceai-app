@@ -2,16 +2,14 @@ import { useMemo } from "react";
 import { History } from "lucide-react";
 import type { CompanionTimeOverride, Session } from "../../../../core/storage/schemas";
 import { cn, interactive, radius } from "../../../design-tokens";
-import {
-  useCompanionTimeOverrideEditor,
-  type OverrideMode,
-} from "../utils/companionTimeOverride";
+import { DateTimePicker } from "../../../components/DateTimePicker";
+import { useCompanionTimeOverrideEditor } from "../utils/companionTimeOverride";
 
-const MODE_OPTIONS: { mode: OverrideMode; label: string }[] = [
+const MODE_OPTIONS = [
   { mode: "off", label: "Live" },
   { mode: "frozen", label: "Frozen" },
   { mode: "ticking", label: "Ticking" },
-];
+] as const;
 
 interface CompanionTimeOverrideCardProps {
   session: Session | null;
@@ -29,11 +27,13 @@ export function CompanionTimeOverrideCard({
   const {
     activeMode,
     selectedMode,
-    selectMode,
-    draft,
-    setDraft,
-    beginEditing,
+    editing,
+    beginEdit,
+    selectLive,
     apply,
+    cancel,
+    draftMs,
+    setDraftMs,
     shownMs,
     nowMs,
     isOverridden,
@@ -50,8 +50,6 @@ export function CompanionTimeOverrideCard({
       }),
     [],
   );
-
-  const showEditor = canEdit && selectedMode !== "off";
 
   return (
     <div
@@ -102,12 +100,12 @@ export function CompanionTimeOverrideCard({
             key={opt.mode}
             type="button"
             disabled={!canEdit}
-            onClick={() => selectMode(opt.mode)}
+            onClick={() => (opt.mode === "off" ? selectLive() : beginEdit(opt.mode))}
             className={cn(
               "flex-1 border px-2 py-1.5 text-xs font-medium",
               radius.md,
               interactive.transition.default,
-              selectedMode === opt.mode
+              (editing ? selectedMode : activeMode) === opt.mode
                 ? "border-accent/40 bg-accent/15 text-accent"
                 : "border-white/10 bg-[#0c0d13]/85 text-white/60 hover:border-white/20 hover:text-white/80",
               !canEdit && "cursor-not-allowed opacity-50",
@@ -118,31 +116,59 @@ export function CompanionTimeOverrideCard({
         ))}
       </div>
 
-      {showEditor && (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <input
-            type="datetime-local"
-            value={draft}
-            onFocus={beginEditing}
-            onChange={(e) => setDraft(e.target.value)}
-            className={cn(
-              "flex-1 border border-white/10 bg-[#0c0d13]/85 px-3 py-2 text-sm text-white focus:border-accent/40 focus:outline-none",
-              radius.lg,
-            )}
-          />
-          <button
-            type="button"
-            onClick={apply}
-            className={cn(
-              "bg-accent px-3 py-2 text-sm font-semibold text-black",
-              radius.lg,
-              interactive.transition.default,
-              interactive.active.scale,
-              "hover:brightness-110",
-            )}
-          >
-            {selectedMode === "frozen" ? "Freeze" : "Set"}
-          </button>
+      {canEdit && !editing && isOverridden && (
+        <button
+          type="button"
+          onClick={() => beginEdit(activeMode === "frozen" ? "frozen" : "ticking")}
+          className={cn(
+            "self-start text-xs font-medium text-accent hover:brightness-110",
+            interactive.transition.default,
+          )}
+        >
+          Change time
+        </button>
+      )}
+
+      {editing && selectedMode !== "off" && (
+        <div className="flex flex-col gap-2">
+          <DateTimePicker valueMs={draftMs} onChange={setDraftMs} />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDraftMs(Date.now())}
+              className={cn(
+                "border border-white/10 bg-[#0c0d13]/85 px-3 py-2 text-xs font-medium text-white/60 hover:border-white/20 hover:text-white/80",
+                radius.lg,
+                interactive.transition.default,
+              )}
+            >
+              Now
+            </button>
+            <button
+              type="button"
+              onClick={cancel}
+              className={cn(
+                "ml-auto border border-white/10 bg-[#0c0d13]/85 px-3 py-2 text-xs font-medium text-white/60 hover:border-white/20 hover:text-white/80",
+                radius.lg,
+                interactive.transition.default,
+              )}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={apply}
+              className={cn(
+                "bg-accent px-3 py-2 text-xs font-semibold text-black",
+                radius.lg,
+                interactive.transition.default,
+                interactive.active.scale,
+                "hover:brightness-110",
+              )}
+            >
+              {selectedMode === "frozen" ? "Freeze" : "Set"}
+            </button>
+          </div>
         </div>
       )}
     </div>
