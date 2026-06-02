@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer } from "react";
 
-import { listCharacters, deleteCharacter } from "../../../../core/storage/repo";
+import { listCharacters, deleteCharacter, cloneCharacterDeep } from "../../../../core/storage/repo";
 import type { Character } from "../../../../core/storage/schemas";
 
 type CharactersState = {
@@ -9,6 +9,7 @@ type CharactersState = {
   selectedCharacter: Character | null;
   showDeleteConfirm: boolean;
   deleting: boolean;
+  cloningId: string | null;
 };
 
 type Action =
@@ -16,7 +17,8 @@ type Action =
   | { type: "set_characters"; payload: Character[] }
   | { type: "set_selected_character"; payload: Character | null }
   | { type: "set_show_delete_confirm"; payload: boolean }
-  | { type: "set_deleting"; payload: boolean };
+  | { type: "set_deleting"; payload: boolean }
+  | { type: "set_cloning_id"; payload: string | null };
 
 const initialState: CharactersState = {
   characters: [],
@@ -24,6 +26,7 @@ const initialState: CharactersState = {
   selectedCharacter: null,
   showDeleteConfirm: false,
   deleting: false,
+  cloningId: null,
 };
 
 function reducer(state: CharactersState, action: Action): CharactersState {
@@ -38,6 +41,8 @@ function reducer(state: CharactersState, action: Action): CharactersState {
       return { ...state, showDeleteConfirm: action.payload };
     case "set_deleting":
       return { ...state, deleting: action.payload };
+    case "set_cloning_id":
+      return { ...state, cloningId: action.payload };
     default:
       return state;
   }
@@ -87,11 +92,27 @@ export function useCharactersController() {
     [state.selectedCharacter, loadCharacters],
   );
 
+  const handleCloneDeep = useCallback(
+    async (character: Character) => {
+      dispatch({ type: "set_cloning_id", payload: character.id });
+      try {
+        await cloneCharacterDeep(character.id);
+        await loadCharacters();
+      } catch (error) {
+        console.error("Failed to clone character:", error);
+      } finally {
+        dispatch({ type: "set_cloning_id", payload: null });
+      }
+    },
+    [loadCharacters],
+  );
+
   return {
     state,
     setSelectedCharacter,
     setShowDeleteConfirm,
     handleDelete,
+    handleCloneDeep,
     reload: loadCharacters,
   };
 }

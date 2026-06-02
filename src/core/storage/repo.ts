@@ -1028,6 +1028,11 @@ export async function deleteCharacter(id: string): Promise<void> {
   await storageBridge.characterDelete(id);
 }
 
+export async function cloneCharacterDeep(id: string): Promise<Character> {
+  const data = await storageBridge.characterCloneDeep(id);
+  return CharacterSchema.parse(data);
+}
+
 export async function listCompanionScheduledNotes(
   characterId: string,
 ): Promise<CompanionScheduledNote[]> {

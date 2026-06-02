@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { Trash2, Edit2, Sparkles } from "lucide-react";
+import { Trash2, Edit2, Sparkles, Copy, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Character } from "../../../core/storage/schemas";
 import { BottomMenu } from "../../components";
@@ -70,10 +70,11 @@ export function CharactersPage() {
   const navigate = useNavigate();
   const { t } = useI18n();
   const {
-    state: { characters, loading, selectedCharacter, showDeleteConfirm, deleting },
+    state: { characters, loading, selectedCharacter, showDeleteConfirm, deleting, cloningId },
     setSelectedCharacter,
     setShowDeleteConfirm,
     handleDelete,
+    handleCloneDeep,
   } = useCharactersController();
 
   // Get gradients for all characters at once (follows React rules of hooks)
@@ -184,6 +185,25 @@ export function CharactersPage() {
                         aria-label="Edit Character"
                       >
                         <Edit2 size={12} />
+                      </button>
+                      <button
+                        onClick={() => void handleCloneDeep(character)}
+                        disabled={cloningId !== null}
+                        className={cn(
+                          "relative flex items-center justify-center",
+                          radius.full,
+                          "border border-fg/10 bg-fg/25 text-fg/70",
+                          "transition-all hover:border-fg/50 hover:text-fg",
+                          "disabled:opacity-50",
+                        )}
+                        aria-label="Clone character with all sessions and memory (dev)"
+                        title="Clone with everything (dev)"
+                      >
+                        {cloningId === character.id ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <Copy size={12} />
+                        )}
                       </button>
                       <button
                         onClick={() => {

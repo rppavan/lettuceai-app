@@ -266,6 +266,8 @@ export const storageBridge = {
       chatAppearanceJson,
     }).then((s) => JSON.parse(s)),
   characterDelete: (id: string) => invoke("character_delete", { id }) as Promise<void>,
+  characterCloneDeep: (id: string) =>
+    invoke<string>("character_clone_deep", { id }).then((s) => JSON.parse(s)),
   companionScheduledNotesList: (characterId: string) =>
     invoke<string>("companion_scheduled_notes_list", { characterId }).then((s) => JSON.parse(s)),
   companionScheduledNotesUpsert: (note: unknown) =>
