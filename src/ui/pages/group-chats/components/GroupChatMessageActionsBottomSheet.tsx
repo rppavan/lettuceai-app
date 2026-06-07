@@ -95,6 +95,7 @@ export function GroupChatMessageActionsBottomSheet({
   const usedLorebookEntries = messageAction?.message.usedLorebookEntries ?? [];
 
   const isAssistant = messageAction?.message.role === "assistant";
+  const isScene = messageAction?.message.role === "scene";
 
   useEffect(() => {
     readSettings().then(setSettings).catch(console.error);
@@ -123,7 +124,13 @@ export function GroupChatMessageActionsBottomSheet({
         isOpen={Boolean(messageAction) && !showCharacterPicker}
         includeExitIcon={false}
         onClose={closeMessageActions}
-        title={isAssistant ? "Character Message" : "Your Message"}
+        title={
+          isScene
+            ? t("chats.message.sceneLabel")
+            : isAssistant
+              ? t("groupChats.messageActions.characterMessage")
+              : t("groupChats.messageActions.yourMessage")
+        }
       >
         {messageAction && (
           <div className="text-fg">
