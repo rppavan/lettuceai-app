@@ -2770,6 +2770,7 @@ export const ChatAppearanceSettingsSchema = z.object({
   participantsBarAvatarSize: z.enum(["small", "medium", "large"]).default("medium"),
   participantsBarGap: z.enum(["tight", "normal", "relaxed"]).default("normal"),
   participantsBarAlign: z.enum(["left", "center", "right"]).default("left"),
+  participantsBarHintPosition: z.enum(["top", "bottom", "hidden"]).default("bottom"),
 
   chatWidgetAreaEnabled: z.boolean().default(false),
   chatWidgetCenterMode: z.enum(["both", "left", "right"]).default("both"),
@@ -2838,6 +2839,7 @@ export function createDefaultChatAppearanceSettings(): ChatAppearanceSettings {
     participantsBarAvatarSize: "medium",
     participantsBarGap: "normal",
     participantsBarAlign: "left",
+    participantsBarHintPosition: "bottom",
     chatWidgetAreaEnabled: false,
     chatWidgetCenterMode: "both",
     chatWidgetSlots: { left: [], right: [] },

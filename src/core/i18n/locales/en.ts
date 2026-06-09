@@ -3283,6 +3283,10 @@ export const enMessages = {
       sizeLabel: "Avatar Size",
       gapLabel: "Avatar Spacing",
       alignLabel: "Alignment",
+      hintPositionLabel: "Director Hint",
+      hintTop: "Top",
+      hintBottom: "Bottom",
+      hintHidden: "Hidden",
     },
     colors: {
       label: "Colors",

@@ -2079,6 +2079,7 @@ export function GroupChatPage() {
         directorMode={isDirectorMode}
         directorSelectedId={directorSelectedId}
         directorWiggleNonce={directorWiggleNonce}
+        directorHintPosition={chatAppearance.participantsBarHintPosition}
         onSelectSpeaker={handleDirectorTap}
         hasBackgroundImage={!!backgroundImageData}
         footerOverlayClassName={theme.footerOverlay}

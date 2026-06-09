@@ -83,6 +83,7 @@ interface GroupChatParticipantsBarProps {
   directorMode?: boolean;
   selectedId?: string | null;
   wiggleNonce?: number;
+  hintPosition?: "top" | "bottom" | "hidden";
   onSelectSpeaker?: (characterId: string) => void;
 }
 
@@ -99,6 +100,7 @@ export function GroupChatParticipantsBar({
   directorMode = false,
   selectedId = null,
   wiggleNonce = 0,
+  hintPosition = "bottom",
   onSelectSpeaker,
 }: GroupChatParticipantsBarProps) {
   const { t } = useI18n();
@@ -128,8 +130,35 @@ export function GroupChatParticipantsBar({
 
   if (characters.length < 2) return null;
 
+  const hint =
+    directorMode && hintPosition !== "hidden" ? (
+      <div
+        className={cn(
+          "flex items-center gap-1.5 px-1.5 text-[11px] text-fg/55 drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]",
+          ALIGN_CLASS[align],
+          hintPosition === "top" ? "mb-1" : "mt-1",
+        )}
+      >
+        <Clapperboard size={12} className="text-accent/80" />
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={selectedName ?? "none"}
+            initial={{ opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -3 }}
+            transition={{ duration: 0.16 }}
+          >
+            {selectedName
+              ? t("groupChats.footer.directorSelectedHint", { name: selectedName })
+              : t("groupChats.footer.directorHint")}
+          </motion.span>
+        </AnimatePresence>
+      </div>
+    ) : null;
+
   return (
     <div className="mb-1">
+      {hintPosition === "top" && hint}
       <motion.div
         animate={wiggleControls}
         className={cn(
@@ -164,24 +193,7 @@ export function GroupChatParticipantsBar({
             );
           })}
       </motion.div>
-      {directorMode && (
-        <div className="mt-1 flex items-center gap-1.5 px-1.5 text-[11px] text-fg/55 drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">
-          <Clapperboard size={12} className="text-accent/80" />
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.span
-              key={selectedName ?? "none"}
-              initial={{ opacity: 0, y: 3 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -3 }}
-              transition={{ duration: 0.16 }}
-            >
-              {selectedName
-                ? t("groupChats.footer.directorSelectedHint", { name: selectedName })
-                : t("groupChats.footer.directorHint")}
-            </motion.span>
-          </AnimatePresence>
-        </div>
-      )}
+      {hintPosition === "bottom" && hint}
     </div>
   );
 }

@@ -719,6 +719,18 @@ export function ChatAppearanceForm({
               overridden={isOverridden("participantsBarAlign")}
               onReset={resetFor("participantsBarAlign")}
             />
+            <OptionGrid
+              label={t("chatAppearance.participantsBar.hintPositionLabel")}
+              value={settings.participantsBarHintPosition}
+              options={[
+                { value: "top", label: t("chatAppearance.participantsBar.hintTop") },
+                { value: "bottom", label: t("chatAppearance.participantsBar.hintBottom") },
+                { value: "hidden", label: t("chatAppearance.participantsBar.hintHidden") },
+              ]}
+              onChange={(v) => onUpdate("participantsBarHintPosition", v)}
+              overridden={isOverridden("participantsBarHintPosition")}
+              onReset={resetFor("participantsBarHintPosition")}
+            />
           </>
         )}
       </div>
