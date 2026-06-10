@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Cpu, Download, FolderOpen, Image as ImageIcon } from "lucide-react";
+import { Brain, Cpu, Download, FolderOpen, Image, Layers, Ruler, Trash2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import {
@@ -15,6 +15,7 @@ import {
 import { readSettings, saveAdvancedSettings } from "../../../core/storage/repo";
 import { useDownloadQueue } from "../../../core/downloads/DownloadQueueContext";
 import { useI18n } from "../../../core/i18n/context";
+import { cn } from "../../design-tokens";
 import { toast } from "../../components/toast";
 import { NumberInput } from "../../components/NumberInput";
 
@@ -32,28 +33,45 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** exponent).toFixed(exponent > 1 ? 1 : 0)} ${units[exponent]}`;
 }
 
-const selectClassName =
-  "rounded-[9px] border border-fg/12 bg-surface/60 px-3 py-2 text-sm text-fg focus:border-fg/25 focus:outline-none";
+function SectionHeading({ label }: { label: string }) {
+  return (
+    <h3 className="px-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-fg/35">
+      {label}
+    </h3>
+  );
+}
 
 function SettingRow({
+  icon,
+  iconClassName,
   title,
   description,
   children,
 }: {
+  icon: React.ReactNode;
+  iconClassName: string;
   title: string;
   description: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-fg/10 bg-surface/40 px-3.5 py-3">
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-fg">{title}</p>
-        <p className="mt-0.5 text-xs leading-5 text-fg/45">{description}</p>
+    <div className="rounded-xl border border-fg/10 bg-fg/5 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className={cn("rounded-lg border p-1.5", iconClassName)}>{icon}</div>
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-fg">{title}</span>
+            <p className="text-[11px] text-fg/45">{description}</p>
+          </div>
+        </div>
+        <div className="shrink-0">{children}</div>
       </div>
-      <div className="shrink-0">{children}</div>
     </div>
   );
 }
+
+const controlClassName =
+  "rounded-xl border border-fg/10 bg-surface-el/20 px-3 py-2 text-sm text-fg transition hover:bg-surface-el/30 focus:border-fg/25 focus:outline-none";
 
 export function LocalRuntimeDefaultsPage() {
   const { t } = useI18n();
@@ -103,31 +121,31 @@ export function LocalRuntimeDefaultsPage() {
       });
   }, [status, variants]);
 
-  const persistDefaults = useCallback(async (next: RuntimeDefaults) => {
-    setDefaults(next);
-    try {
-      const settings = await readSettings();
-      await saveAdvancedSettings({
-        ...(settings.advancedSettings ?? {}),
-        llamaDefaultContextLength: next.llamaDefaultContextLength ?? undefined,
-        llamaDefaultKvCacheType:
-          next.llamaDefaultKvCacheType === "auto" ? undefined : next.llamaDefaultKvCacheType,
-        sdDefaultOffloadMode:
-          next.sdDefaultOffloadMode === "auto" ? undefined : next.sdDefaultOffloadMode,
-        sdDefaultSize: next.sdDefaultSize.trim() || undefined,
-      });
-    } catch (err) {
-      toast.error(
-        t("runtimeDefaults.saveFailed"),
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-  }, [t]);
-
-  const engineItems = useMemo(
-    () => queue.filter((item) => item.queueKind === "sdcpp"),
-    [queue],
+  const persistDefaults = useCallback(
+    async (next: RuntimeDefaults) => {
+      setDefaults(next);
+      try {
+        const settings = await readSettings();
+        await saveAdvancedSettings({
+          ...(settings.advancedSettings ?? {}),
+          llamaDefaultContextLength: next.llamaDefaultContextLength ?? undefined,
+          llamaDefaultKvCacheType:
+            next.llamaDefaultKvCacheType === "auto" ? undefined : next.llamaDefaultKvCacheType,
+          sdDefaultOffloadMode:
+            next.sdDefaultOffloadMode === "auto" ? undefined : next.sdDefaultOffloadMode,
+          sdDefaultSize: next.sdDefaultSize.trim() || undefined,
+        });
+      } catch (err) {
+        toast.error(
+          t("runtimeDefaults.saveFailed"),
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    },
+    [t],
   );
+
+  const engineItems = useMemo(() => queue.filter((item) => item.queueKind === "sdcpp"), [queue]);
   const engineActive = engineItems.some(
     (item) => item.status === "queued" || item.status === "downloading",
   );
@@ -214,52 +232,54 @@ export function LocalRuntimeDefaultsPage() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <main className="flex-1 px-4 pb-24 pt-5">
-        <div className="mx-auto w-full max-w-3xl space-y-6">
-          <section className="rounded-[12px] border border-fg/10 bg-fg/5">
-            <div className="flex items-start gap-3 border-b border-fg/8 px-4 py-4">
-              <div className="rounded-[9px] border border-info/30 bg-info/10 p-1.5 text-info/80">
-                <ImageIcon className="h-4 w-4" />
-              </div>
-              <div>
+      <main className="flex-1 px-4 pb-24 pt-4">
+        <div className="mx-auto w-full max-w-5xl space-y-6">
+          <div className="space-y-4">
+            <SectionHeading label={t("runtimeDefaults.engineSection")} />
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="rounded-lg border border-info/30 bg-info/10 p-1.5">
+                  <Image className="h-4 w-4 text-info/80" />
+                </div>
                 <h3 className="text-sm font-semibold text-fg">
                   {t("runtimeDefaults.engineTitle")}
                 </h3>
-                <p className="mt-1 text-sm leading-6 text-fg/48">
-                  {status.binary
-                    ? t("imageGeneration.local.engineInstalledDescription")
-                    : t("imageGeneration.local.engineDescription")}
-                </p>
               </div>
-            </div>
-            <div className="space-y-3 px-4 py-4">
+
               {status.binary ? (
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0 text-sm text-fg/70">
-                    <span className="font-medium text-fg">{status.binary.variant}</span>
-                    <span className="ml-2 text-xs text-fg/45">{status.binary.releaseTag}</span>
-                    <p
-                      className="mt-0.5 truncate font-mono text-xs text-fg/40"
-                      title={status.binary.path}
+                <div className="rounded-xl border border-fg/10 bg-fg/5 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className="text-sm font-medium text-fg">
+                        {status.binary.variant}
+                        <span className="ml-2 text-xs font-normal text-fg/45">
+                          {status.binary.releaseTag}
+                        </span>
+                      </span>
+                      <p
+                        className="truncate font-mono text-[11px] text-fg/45"
+                        title={status.binary.path}
+                      >
+                        {status.binary.path}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void removeEngine()}
+                      className="shrink-0 rounded-lg p-2 text-fg/40 transition-colors hover:bg-danger/10 hover:text-danger/80"
                     >
-                      {status.binary.path}
-                    </p>
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void removeEngine()}
-                    className="rounded-[9px] border border-danger/25 px-3 py-1.5 text-xs font-medium text-danger/80 transition-colors hover:bg-danger/10"
-                  >
-                    {t("common.buttons.remove")}
-                  </button>
                 </div>
               ) : engineActive || installing ? (
-                <div className="space-y-2">
+                <div className="rounded-xl border border-fg/10 bg-fg/5 px-4 py-3">
                   <div className="flex items-center justify-between text-xs text-fg/55">
                     <span>{t("imageGeneration.local.engineDownloading")}</span>
                     <span>{engineProgress}%</span>
                   </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-fg/10">
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-fg/10">
                     <div
                       className="h-full rounded-full bg-accent transition-all"
                       style={{ width: `${engineProgress}%` }}
@@ -267,17 +287,21 @@ export function LocalRuntimeDefaultsPage() {
                   </div>
                 </div>
               ) : variantsError ? (
-                <p className="text-xs leading-5 text-danger/80">{variantsError}</p>
+                <div className="rounded-xl border border-danger/20 bg-danger/5 px-4 py-3">
+                  <p className="text-xs leading-relaxed text-danger/80">{variantsError}</p>
+                </div>
               ) : !variants ? (
-                <p className="text-xs text-fg/45">
-                  {t("imageGeneration.local.engineLoadingVariants")}
-                </p>
+                <div className="rounded-xl border border-fg/10 bg-surface-el/20 px-4 py-3">
+                  <p className="text-sm text-fg/50">
+                    {t("imageGeneration.local.engineLoadingVariants")}
+                  </p>
+                </div>
               ) : (
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={selectedVariant}
                     onChange={(event) => setSelectedVariant(event.target.value)}
-                    className={selectClassName}
+                    className={cn(controlClassName, "min-w-0 flex-1")}
                   >
                     {variants.map((variant) => (
                       <option key={variant.id} value={variant.id}>
@@ -292,141 +316,130 @@ export function LocalRuntimeDefaultsPage() {
                   <button
                     type="button"
                     onClick={() => void startEngineInstall()}
-                    className="inline-flex items-center gap-2 rounded-[9px] border border-accent/35 bg-accent/12 px-3.5 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/20"
+                    className="inline-flex items-center gap-2 rounded-xl border border-accent/30 bg-accent/10 px-3.5 py-2 text-sm font-medium text-accent transition hover:bg-accent/20"
                   >
                     <Download className="h-4 w-4" />
                     {t("imageGeneration.local.installEngine")}
                   </button>
                 </div>
               )}
+
               {!engineActive && !installing ? (
                 <button
                   type="button"
                   onClick={() => void pickCustomBinary()}
-                  className="inline-flex items-center gap-2 rounded-[9px] border border-fg/12 px-3.5 py-2 text-sm font-medium text-fg/70 transition-colors hover:bg-fg/8"
+                  className="flex w-full items-center justify-between rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-left transition hover:bg-surface-el/30"
                 >
-                  <FolderOpen className="h-4 w-4" />
-                  {t("runtimeDefaults.useExistingBinary")}
+                  <div className="flex items-center gap-2">
+                    <FolderOpen className="h-4 w-4 text-fg/45" />
+                    <span className="text-sm text-fg/85">
+                      {t("runtimeDefaults.useExistingBinary")}
+                    </span>
+                  </div>
                 </button>
               ) : null}
-              <p className="text-xs leading-5 text-fg/40">
-                {t("runtimeDefaults.customBinaryHint")}
-              </p>
+              <p className="px-1 text-xs text-fg/50">{t("runtimeDefaults.customBinaryHint")}</p>
             </div>
-          </section>
+          </div>
 
-          <section className="rounded-[12px] border border-fg/10 bg-fg/5">
-            <div className="flex items-start gap-3 border-b border-fg/8 px-4 py-4">
-              <div className="rounded-[9px] border border-warning/30 bg-warning/10 p-1.5 text-warning/80">
-                <Cpu className="h-4 w-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-fg">
-                  {t("runtimeDefaults.llamaTitle")}
-                </h3>
-                <p className="mt-1 text-sm leading-6 text-fg/48">
-                  {t("runtimeDefaults.llamaDescription")}
-                </p>
-              </div>
-            </div>
-            <div className="space-y-3 px-4 py-4">
-              <SettingRow
-                title={t("runtimeDefaults.llamaContextTitle")}
-                description={t("runtimeDefaults.llamaContextDescription")}
-              >
-                <div className="w-32">
-                  <NumberInput
-                    min={512}
-                    max={1048576}
-                    step={1024}
-                    value={defaults.llamaDefaultContextLength}
-                    onChange={(next) =>
-                      void persistDefaults({
-                        ...defaults,
-                        llamaDefaultContextLength: next === null ? null : Math.trunc(next),
-                      })
-                    }
-                    placeholder="8192"
-                    className="w-full rounded-[9px] border border-fg/12 bg-surface/60 px-3 py-2 text-center text-sm text-fg focus:border-fg/25 focus:outline-none"
-                  />
-                </div>
-              </SettingRow>
-              <SettingRow
-                title={t("runtimeDefaults.llamaKvTitle")}
-                description={t("runtimeDefaults.llamaKvDescription")}
-              >
-                <select
-                  value={defaults.llamaDefaultKvCacheType}
-                  onChange={(event) =>
+          <div className="space-y-4">
+            <SectionHeading label={t("runtimeDefaults.llamaSection")} />
+            <p className="px-1 text-xs text-fg/50">{t("runtimeDefaults.llamaDescription")}</p>
+
+            <SettingRow
+              icon={<Brain className="h-4 w-4 text-warning/80" />}
+              iconClassName="border-warning/30 bg-warning/10"
+              title={t("runtimeDefaults.llamaContextTitle")}
+              description={t("runtimeDefaults.llamaContextDescription")}
+            >
+              <div className="w-28">
+                <NumberInput
+                  min={512}
+                  max={1048576}
+                  step={1024}
+                  value={defaults.llamaDefaultContextLength}
+                  onChange={(next) =>
                     void persistDefaults({
                       ...defaults,
-                      llamaDefaultKvCacheType: event.target
-                        .value as RuntimeDefaults["llamaDefaultKvCacheType"],
+                      llamaDefaultContextLength: next === null ? null : Math.trunc(next),
                     })
                   }
-                  className={selectClassName}
-                >
-                  <option value="auto">{t("common.labels.auto")}</option>
-                  <option value="f16">F16</option>
-                  <option value="q8_0">Q8_0</option>
-                  <option value="q4_0">Q4_0</option>
-                </select>
-              </SettingRow>
-            </div>
-          </section>
-
-          <section className="rounded-[12px] border border-fg/10 bg-fg/5">
-            <div className="flex items-start gap-3 border-b border-fg/8 px-4 py-4">
-              <div className="rounded-[9px] border border-success/30 bg-success/10 p-1.5 text-success/80">
-                <ImageIcon className="h-4 w-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-fg">{t("runtimeDefaults.sdTitle")}</h3>
-                <p className="mt-1 text-sm leading-6 text-fg/48">
-                  {t("runtimeDefaults.sdDescription")}
-                </p>
-              </div>
-            </div>
-            <div className="space-y-3 px-4 py-4">
-              <SettingRow
-                title={t("runtimeDefaults.sdOffloadTitle")}
-                description={t("runtimeDefaults.sdOffloadDescription")}
-              >
-                <select
-                  value={defaults.sdDefaultOffloadMode}
-                  onChange={(event) =>
-                    void persistDefaults({
-                      ...defaults,
-                      sdDefaultOffloadMode: event.target
-                        .value as RuntimeDefaults["sdDefaultOffloadMode"],
-                    })
-                  }
-                  className={selectClassName}
-                >
-                  <option value="auto">{t("editModel.sdOffload.auto")}</option>
-                  <option value="gpu">{t("editModel.sdOffload.gpu")}</option>
-                  <option value="mixed">{t("editModel.sdOffload.mixed")}</option>
-                </select>
-              </SettingRow>
-              <SettingRow
-                title={t("runtimeDefaults.sdSizeTitle")}
-                description={t("runtimeDefaults.sdSizeDescription")}
-              >
-                <input
-                  type="text"
-                  value={defaults.sdDefaultSize}
-                  onChange={(event) =>
-                    setDefaults({ ...defaults, sdDefaultSize: event.target.value })
-                  }
-                  onBlur={(event) =>
-                    void persistDefaults({ ...defaults, sdDefaultSize: event.target.value })
-                  }
-                  placeholder="1024x1024"
-                  className="w-32 rounded-[9px] border border-fg/12 bg-surface/60 px-3 py-2 text-center text-sm text-fg placeholder:text-fg/35 focus:border-fg/25 focus:outline-none"
+                  placeholder="8192"
+                  className={cn(controlClassName, "w-full text-center")}
                 />
-              </SettingRow>
-            </div>
-          </section>
+              </div>
+            </SettingRow>
+
+            <SettingRow
+              icon={<Layers className="h-4 w-4 text-warning/80" />}
+              iconClassName="border-warning/30 bg-warning/10"
+              title={t("runtimeDefaults.llamaKvTitle")}
+              description={t("runtimeDefaults.llamaKvDescription")}
+            >
+              <select
+                value={defaults.llamaDefaultKvCacheType}
+                onChange={(event) =>
+                  void persistDefaults({
+                    ...defaults,
+                    llamaDefaultKvCacheType: event.target
+                      .value as RuntimeDefaults["llamaDefaultKvCacheType"],
+                  })
+                }
+                className={controlClassName}
+              >
+                <option value="auto">{t("common.labels.auto")}</option>
+                <option value="f16">F16</option>
+                <option value="q8_0">Q8_0</option>
+                <option value="q4_0">Q4_0</option>
+              </select>
+            </SettingRow>
+          </div>
+
+          <div className="space-y-4">
+            <SectionHeading label={t("runtimeDefaults.sdSection")} />
+            <p className="px-1 text-xs text-fg/50">{t("runtimeDefaults.sdDescription")}</p>
+
+            <SettingRow
+              icon={<Cpu className="h-4 w-4 text-accent/80" />}
+              iconClassName="border-accent/30 bg-accent/10"
+              title={t("runtimeDefaults.sdOffloadTitle")}
+              description={t("runtimeDefaults.sdOffloadDescription")}
+            >
+              <select
+                value={defaults.sdDefaultOffloadMode}
+                onChange={(event) =>
+                  void persistDefaults({
+                    ...defaults,
+                    sdDefaultOffloadMode: event.target
+                      .value as RuntimeDefaults["sdDefaultOffloadMode"],
+                  })
+                }
+                className={controlClassName}
+              >
+                <option value="auto">{t("editModel.sdOffload.auto")}</option>
+                <option value="gpu">{t("editModel.sdOffload.gpu")}</option>
+                <option value="mixed">{t("editModel.sdOffload.mixed")}</option>
+              </select>
+            </SettingRow>
+
+            <SettingRow
+              icon={<Ruler className="h-4 w-4 text-accent/80" />}
+              iconClassName="border-accent/30 bg-accent/10"
+              title={t("runtimeDefaults.sdSizeTitle")}
+              description={t("runtimeDefaults.sdSizeDescription")}
+            >
+              <input
+                type="text"
+                value={defaults.sdDefaultSize}
+                onChange={(event) => setDefaults({ ...defaults, sdDefaultSize: event.target.value })}
+                onBlur={(event) =>
+                  void persistDefaults({ ...defaults, sdDefaultSize: event.target.value })
+                }
+                placeholder="1024x1024"
+                className={cn(controlClassName, "w-28 text-center placeholder:text-fg/35")}
+              />
+            </SettingRow>
+          </div>
         </div>
       </main>
     </div>

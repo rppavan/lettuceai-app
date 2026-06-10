@@ -3580,6 +3580,9 @@ export const enMessages = {
     title: "Local Runtime Defaults",
     subtitle: "Engine setup and calculator baselines",
     saveFailed: "Failed to save runtime defaults",
+    engineSection: "Image Engine",
+    llamaSection: "llama.cpp Defaults",
+    sdSection: "sd.cpp Defaults",
     engineTitle: "Stable Diffusion Engine (sd.cpp)",
     useExistingBinary: "Use Existing Installation",
     customBinaryHint:
