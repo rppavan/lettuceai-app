@@ -11,6 +11,7 @@ import {
 import { AvatarPicker } from "../../components/AvatarPicker";
 import { Switch } from "../../components/Switch";
 import { DesignReferenceEditor } from "../../components/DesignReferenceEditor";
+import { LoraSelector } from "../../components/LoraSelector";
 import { ActiveLorebooksSelector } from "../characters/components/ActiveLorebooksSelector";
 import { useI18n } from "../../../core/i18n/context";
 import { typography, radius, spacing, interactive, cn } from "../../design-tokens";
@@ -38,6 +39,8 @@ export function EditPersonaPage() {
       avatarRoundPath,
       designDescription,
       designReferenceImageIds,
+      loraName,
+      loraStrength,
       activeLorebookIds,
     },
     setTitle,
@@ -49,6 +52,7 @@ export function EditPersonaPage() {
     setAvatarRoundPath,
     setDesignDescription,
     setDesignReferenceImageIds,
+    setLora,
     setActiveLorebookIds,
     handleSave,
     resetToInitial,
@@ -128,6 +132,7 @@ export function EditPersonaPage() {
                     onAvatarChange={handleAvatarChange}
                     promptSubjectName={title}
                     promptSubjectDescription={description}
+                    loraTag={loraName ? `<lora:${loraName}:${loraStrength ?? 0.8}>` : null}
                     avatarCrop={avatarCrop}
                     onAvatarCropChange={setAvatarCrop}
                     avatarRoundPath={avatarRoundPath}
@@ -335,6 +340,11 @@ export function EditPersonaPage() {
                 avatarImage={avatarPath}
                 title={t("personas.designReferences.title")}
                 description={t("personas.designReferences.description")}
+              />
+              <LoraSelector
+                loraName={loraName}
+                loraStrength={loraStrength}
+                onChange={setLora}
               />
             </div>
           </div>

@@ -3576,6 +3576,14 @@ export const enMessages = {
       roleplay: "Roleplay",
     },
   },
+  loraSelector: {
+    title: "Design LoRA",
+    none: "No LoRA selected",
+    hint: "Applied automatically when scenes are generated with a local diffusion model.",
+    importFile: "Import LoRA file",
+    importDescription: "Copy a .safetensors LoRA into the app library",
+    importFailed: "LoRA import failed",
+  },
   imageGeneration: {
     promptPlaceholder: "Describe the image you want to generate...",
     labels: {

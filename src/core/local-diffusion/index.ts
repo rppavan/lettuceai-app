@@ -114,6 +114,18 @@ export async function sdListLocalFiles(): Promise<SdLocalFile[]> {
   return invoke<SdLocalFile[]>("sd_list_local_files");
 }
 
+export async function sdListLoras(): Promise<SdLocalFile[]> {
+  return invoke<SdLocalFile[]>("sd_list_loras");
+}
+
+export async function sdImportLora(path: string): Promise<SdLocalFile> {
+  return invoke<SdLocalFile>("sd_import_lora", { path });
+}
+
+export async function sdDeleteLora(filename: string): Promise<boolean> {
+  return invoke<boolean>("sd_delete_lora", { filename });
+}
+
 export async function sdSetModelFile(
   modelId: string,
   role: SdModelRole,

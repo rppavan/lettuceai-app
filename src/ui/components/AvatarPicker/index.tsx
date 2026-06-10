@@ -28,6 +28,7 @@ interface AvatarPickerProps {
   onBeforeChooseFromLibrary?: () => void;
   promptSubjectName?: string;
   promptSubjectDescription?: string;
+  loraTag?: string | null;
   avatarCrop?: AvatarCrop | null;
   onAvatarCropChange?: (crop: AvatarCrop | null) => void;
   avatarRoundPath?: string | null;
@@ -47,6 +48,7 @@ export function AvatarPicker({
   onBeforeChooseFromLibrary,
   promptSubjectName,
   promptSubjectDescription,
+  loraTag,
   avatarCrop,
   onAvatarCropChange,
   avatarRoundPath,
@@ -503,6 +505,7 @@ export function AvatarPicker({
         onImageGenerated={handleGeneratedImage}
         subjectName={promptSubjectName}
         subjectDescription={promptSubjectDescription}
+        loraTag={loraTag}
         initialImageSrc={generationMode === "edit-current" ? currentAvatarPath : null}
         startInEditMode={generationMode === "edit-current"}
         hidePromptNavigation={generationMode === "edit-current"}

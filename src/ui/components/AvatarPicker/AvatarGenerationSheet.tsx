@@ -38,6 +38,7 @@ interface AvatarGenerationSheetProps {
   initialImageSrc?: string | null;
   startInEditMode?: boolean;
   hidePromptNavigation?: boolean;
+  loraTag?: string | null;
 }
 
 interface AvatarVariant {
@@ -76,6 +77,7 @@ export function AvatarGenerationSheet({
   initialImageSrc,
   startInEditMode = false,
   hidePromptNavigation = false,
+  loraTag = null,
 }: AvatarGenerationSheetProps) {
   const { t } = useI18n();
   const [prompt, setPrompt] = useState("");
@@ -233,7 +235,10 @@ export function AvatarGenerationSheet({
         avatarRequest: prompt.trim(),
       });
       const request: ImageGenerationRequest = {
-        prompt: renderedPrompt,
+        prompt:
+          loraTag && selectedModel.providerId === "localdiffusion"
+            ? `${loraTag} ${renderedPrompt}`
+            : renderedPrompt,
         model: selectedModel.name,
         providerId: selectedModel.providerId,
         credentialId: selectedProvider.id,
@@ -302,7 +307,10 @@ export function AvatarGenerationSheet({
       });
 
       const request: ImageGenerationRequest = {
-        prompt: renderedPrompt,
+        prompt:
+          loraTag && selectedModel.providerId === "localdiffusion"
+            ? `${loraTag} ${renderedPrompt}`
+            : renderedPrompt,
         model: selectedModel.name,
         providerId: selectedModel.providerId,
         credentialId: selectedProvider.id,

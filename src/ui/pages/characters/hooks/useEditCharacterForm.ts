@@ -58,6 +58,8 @@ type EditCharacterState = {
   cardType: CharacterCardType;
   designDescription: string;
   designReferenceImageIds: string[];
+  loraName: string | null;
+  loraStrength: number | null;
   backgroundImagePath: string;
   scenes: Scene[];
   chatTemplates: ChatTemplate[];
@@ -126,6 +128,8 @@ const initialState: EditCharacterState = {
   cardType: "circle",
   designDescription: "",
   designReferenceImageIds: [],
+  loraName: null,
+  loraStrength: null,
   backgroundImagePath: "",
   scenes: [],
   chatTemplates: [],
@@ -206,6 +210,8 @@ export function useEditCharacterForm(characterId: string | undefined) {
     cardType: CharacterCardType;
     designDescription: string;
     designReferenceImageIds: string;
+    loraName: string | null;
+    loraStrength: number | null;
     backgroundImagePath: string;
     scenes: string;
     chatTemplates: string;
@@ -359,6 +365,8 @@ export function useEditCharacterForm(characterId: string | undefined) {
         designReferenceImageIds: Array.isArray(character.designReferenceImageIds)
           ? character.designReferenceImageIds
           : [],
+        loraName: character.loraName ?? null,
+        loraStrength: character.loraStrength ?? null,
         backgroundImagePath: backgroundImage,
         scenes: character.scenes || [],
         chatTemplates: character.chatTemplates || [],
@@ -408,6 +416,8 @@ export function useEditCharacterForm(characterId: string | undefined) {
         cardType: character.cardType === "banner" ? "banner" : "circle",
         designDescription: character.designDescription || "",
         designReferenceImageIds: JSON.stringify(character.designReferenceImageIds || []),
+        loraName: character.loraName ?? null,
+        loraStrength: character.loraStrength ?? null,
         backgroundImagePath: backgroundImage,
         scenes: JSON.stringify(character.scenes || []),
         chatTemplates: JSON.stringify(character.chatTemplates || []),
@@ -604,6 +614,8 @@ export function useEditCharacterForm(characterId: string | undefined) {
         designDescription: state.designDescription.trim() || undefined,
         designReferenceImageIds:
           designReferenceImageIds.length > 0 ? designReferenceImageIds : undefined,
+        loraName: state.loraName ?? undefined,
+        loraStrength: state.loraName ? (state.loraStrength ?? undefined) : undefined,
         creator: state.creator.trim() || undefined,
         creatorNotes: state.creatorNotes.trim() || undefined,
         creatorNotesMultilingual,
@@ -675,6 +687,8 @@ export function useEditCharacterForm(characterId: string | undefined) {
         cardType: state.cardType,
         designDescription: state.designDescription.trim(),
         designReferenceImageIds: JSON.stringify(designReferenceImageIds),
+        loraName: state.loraName ?? null,
+        loraStrength: state.loraStrength ?? null,
         backgroundImagePath: state.backgroundImagePath,
         scenes: JSON.stringify(state.scenes),
         chatTemplates: JSON.stringify(state.chatTemplates),

@@ -32,6 +32,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useEditCharacterForm } from "./hooks/useEditCharacterForm";
 import { AvatarPicker } from "../../components/AvatarPicker";
 import { DesignReferenceEditor } from "../../components/DesignReferenceEditor";
+import { LoraSelector } from "../../components/LoraSelector";
 import { CompanionSoulEditor } from "./components/CompanionSoulEditor";
 import { CompanionScheduledNotesEditor } from "./components/CompanionScheduledNotesEditor";
 import { SoulGenerationReviewOverlay } from "./components/SoulGenerationReviewOverlay";
@@ -237,6 +238,8 @@ export function EditCharacterPage() {
     cardType,
     designDescription,
     designReferenceImageIds,
+    loraName,
+    loraStrength,
     backgroundImagePath,
     scenes,
     chatTemplates,
@@ -1097,6 +1100,7 @@ export function EditCharacterPage() {
                         }}
                         promptSubjectName={name}
                         promptSubjectDescription={definition}
+                        loraTag={loraName ? `<lora:${loraName}:${loraStrength ?? 0.8}>` : null}
                         avatarCrop={avatarCrop}
                         onAvatarCropChange={(crop) => setFields({ avatarCrop: crop })}
                         avatarRoundPath={avatarRoundPath}
@@ -1189,6 +1193,7 @@ export function EditCharacterPage() {
                           librarySelectionScope="character-banner"
                           promptSubjectName={name}
                           promptSubjectDescription={definition}
+                          loraTag={loraName ? `<lora:${loraName}:${loraStrength ?? 0.8}>` : null}
                           avatarCrop={bannerCrop}
                           onAvatarCropChange={(crop) => setFields({ bannerCrop: crop })}
                           shape="banner"
@@ -1525,6 +1530,13 @@ export function EditCharacterPage() {
                         avatarImage={avatarPath}
                         showHeader={false}
                         description="Attach a few stable image references and one concise visual note so scene generation keeps the same face, proportions, outfit cues, and style."
+                      />
+                      <LoraSelector
+                        loraName={loraName}
+                        loraStrength={loraStrength}
+                        onChange={(name, strength) =>
+                          setFields({ loraName: name, loraStrength: strength })
+                        }
                       />
                     </div>
                   </section>
