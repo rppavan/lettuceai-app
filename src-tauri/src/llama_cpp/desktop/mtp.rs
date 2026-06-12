@@ -8,6 +8,8 @@ use std::collections::VecDeque;
 
 pub(super) const MTP_DRAFT_DEFAULT: u32 = 4;
 pub(super) const MTP_DRAFT_MAX: u32 = 8;
+const MTP_DRAFT_TOP_K: usize = 10;
+const MTP_DRAFT_P_MIN: f32 = 0.75;
 
 pub(super) struct MtpRuntime<'m> {
     pub(super) draft: LlamaContext<'m>,
@@ -212,7 +214,10 @@ pub(super) fn mtp_round(
             .to_vec();
 
         for step in 0..steps {
-            let token = greedy_token(rt.draft.get_logits());
+            let (token, prob) = greedy_token_with_prob(rt.draft.get_logits());
+            if prob < MTP_DRAFT_P_MIN {
+                break;
+            }
             drafted.push(token);
             if model.is_eog_token(token) {
                 break;
@@ -314,7 +319,10 @@ fn mtp_round_shared(
             .decode(&mut batch)
             .map_err(|e| format!("MTP draft step decode failed: {e}"))?;
 
-        let token = greedy_token(rt.draft.get_logits());
+        let (token, prob) = greedy_token_with_prob(rt.draft.get_logits());
+        if prob < MTP_DRAFT_P_MIN {
+            break;
+        }
         drafted.push(token);
         if model.is_eog_token(token) {
             break;
@@ -426,12 +434,18 @@ fn rollback_and_advance(
     Ok(())
 }
 
-fn greedy_token(logits: &[f32]) -> LlamaToken {
-    let (idx, _) = logits
-        .iter()
-        .copied()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.total_cmp(b))
-        .expect("logits must not be empty");
-    LlamaToken::new(idx as i32)
+fn greedy_token_with_prob(logits: &[f32]) -> (LlamaToken, f32) {
+    let mut top: Vec<(usize, f32)> = Vec::with_capacity(MTP_DRAFT_TOP_K + 1);
+    for (i, &logit) in logits.iter().enumerate() {
+        if top.len() < MTP_DRAFT_TOP_K || logit > top.last().expect("top is non-empty").1 {
+            let insert_at = top.partition_point(|&(_, v)| v >= logit);
+            top.insert(insert_at, (i, logit));
+            if top.len() > MTP_DRAFT_TOP_K {
+                top.pop();
+            }
+        }
+    }
+    let (idx, max) = *top.first().expect("logits must not be empty");
+    let sum: f32 = top.iter().map(|&(_, logit)| (logit - max).exp()).sum();
+    (LlamaToken::new(idx as i32), 1.0 / sum)
 }
