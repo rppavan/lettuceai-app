@@ -406,6 +406,19 @@ Artifacts are generated under:
 - `src-tauri/target/release/bundle/macos/*.app`
 - `src-tauri/target/release/bundle/dmg/*.dmg`
 
+### Opening downloaded builds (Gatekeeper)
+
+Release builds are ad-hoc signed, not notarized (notarization requires a paid Apple Developer account). macOS quarantines apps downloaded from a browser, so the first launch is blocked:
+
+- On macOS 15 (Sequoia) and later: try to open the app once, then go to System Settings > Privacy & Security and click "Open Anyway".
+- On older macOS versions: right-click the app and choose Open.
+
+If Finder reports the app is "damaged and cannot be opened", clear the quarantine attribute from a terminal:
+
+```bash
+xattr -cr /Applications/lettuceai.app
+```
+
 ## Contributing
 
 We welcome contributions.
