@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, Minus, Plus, Square, X } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, PhysicalSize } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "../../design-tokens";
 import { useI18n } from "../../../core/i18n/context";
@@ -23,6 +23,7 @@ export type TitleBarDesign =
   | "hidden";
 export type TitleBarSide = "left" | "right";
 export type TitleBarSize = "small" | "medium" | "large";
+export type WindowCorners = "off" | "small" | "medium" | "large";
 
 const SELECTABLE_DESIGNS: TitleBarDesign[] = [
   "classic",
@@ -32,9 +33,17 @@ const SELECTABLE_DESIGNS: TitleBarDesign[] = [
   "native",
 ];
 const TITLE_BAR_SIZES: TitleBarSize[] = ["small", "medium", "large"];
+const WINDOW_CORNERS: WindowCorners[] = ["off", "small", "medium", "large"];
+const CORNER_RADII: Record<WindowCorners, string> = {
+  off: "0px",
+  small: "8px",
+  medium: "12px",
+  large: "16px",
+};
 const DESIGN_KEY = "lettuce.titleBarDesign";
 const SIDE_KEY = "lettuce.titleBarSide";
 const SIZE_KEY = "lettuce.titleBarSize";
+const CORNERS_KEY = "lettuce.windowCorners";
 const CHROME_EVENT = "lettuce:titleBarChrome";
 
 export function readTitleBarDesign(): TitleBarDesign {
@@ -61,6 +70,16 @@ export function readTitleBarSize(): TitleBarSize {
   try {
     const stored = localStorage.getItem(SIZE_KEY) as TitleBarSize | null;
     if (stored && TITLE_BAR_SIZES.includes(stored)) return stored;
+  } catch {
+    // localStorage unavailable; fall through to default
+  }
+  return "medium";
+}
+
+export function readWindowCorners(): WindowCorners {
+  try {
+    const stored = localStorage.getItem(CORNERS_KEY) as WindowCorners | null;
+    if (stored && WINDOW_CORNERS.includes(stored)) return stored;
   } catch {
     // localStorage unavailable; fall through to default
   }
@@ -98,6 +117,27 @@ export function setTitleBarSize(size: TitleBarSize) {
   persistChrome(SIZE_KEY, size);
 }
 
+export function setWindowCorners(corners: WindowCorners) {
+  persistChrome(CORNERS_KEY, corners);
+}
+
+// WebKitGTK keeps stale opaque surface pixels when clip-path or background
+// transparency changes at runtime; two spaced-out resizes force the surface to
+// rebuild (back-to-back setSize calls get coalesced by GTK into a no-op).
+async function nudgeWindowSurface() {
+  if (!isDesktop) return;
+  try {
+    const win = getCurrentWindow();
+    if (await win.isMaximized()) return;
+    const size = await win.innerSize();
+    await win.setSize(new PhysicalSize(size.width, size.height + 1));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await win.setSize(size);
+  } catch {
+    // window may be tearing down
+  }
+}
+
 // CLI overrides: --osdecorations forces the OS title bar, --nobuttons hides all chrome.
 let flagOverrideCache: TitleBarDesign | null = null;
 const flagOverridePromise: Promise<TitleBarDesign | null> = isDesktop
@@ -113,10 +153,12 @@ export function useTitleBarChrome(): {
   design: TitleBarDesign;
   side: TitleBarSide;
   size: TitleBarSize;
+  corners: WindowCorners;
 } {
   const [design, setDesign] = useState<TitleBarDesign>(readTitleBarDesign);
   const [side, setSide] = useState<TitleBarSide>(readTitleBarSide);
   const [size, setSize] = useState<TitleBarSize>(readTitleBarSize);
+  const [corners, setCorners] = useState<WindowCorners>(readWindowCorners);
   const [override, setOverride] = useState<TitleBarDesign | null>(flagOverrideCache);
 
   useEffect(() => {
@@ -124,13 +166,14 @@ export function useTitleBarChrome(): {
       setDesign(readTitleBarDesign());
       setSide(readTitleBarSide());
       setSize(readTitleBarSize());
+      setCorners(readWindowCorners());
     };
     window.addEventListener(CHROME_EVENT, sync);
     void flagOverridePromise.then(setOverride);
     return () => window.removeEventListener(CHROME_EVENT, sync);
   }, []);
 
-  return { design: override ?? design, side, size };
+  return { design: override ?? design, side, size, corners };
 }
 
 function useWindowState() {
@@ -357,10 +400,16 @@ function WindowButtons({
 }
 
 export function TitleBar() {
-  const { design, side, size } = useTitleBarChrome();
-  const { fullscreen } = useWindowState();
+  const { design, side, size, corners } = useTitleBarChrome();
+  const { maximized, fullscreen } = useWindowState();
 
   const showStrip = isDesktop && !fullscreen && design !== "native" && design !== "hidden";
+  const roundedActive =
+    appPlatform.os === "linux" &&
+    corners !== "off" &&
+    design !== "native" &&
+    !maximized &&
+    !fullscreen;
 
   useEffect(() => {
     document.documentElement.style.setProperty("--titlebar-h", showStrip ? "32px" : "0px");
@@ -372,6 +421,25 @@ export function TitleBar() {
   useEffect(() => {
     void applyDecorations(design);
   }, [design]);
+
+  const prevRoundedKey = useRef<string | null>(null);
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("window-rounded", roundedActive);
+    root.style.setProperty("--window-radius", CORNER_RADII[corners]);
+    document.body.style.clipPath = roundedActive
+      ? `inset(0 round ${CORNER_RADII[corners]})`
+      : "";
+    const key = `${roundedActive}:${corners}`;
+    if (prevRoundedKey.current !== null && prevRoundedKey.current !== key) {
+      void nudgeWindowSurface();
+    }
+    prevRoundedKey.current = key;
+    return () => {
+      root.classList.remove("window-rounded");
+      document.body.style.clipPath = "";
+    };
+  }, [roundedActive, corners]);
 
   if (!showStrip) return null;
 

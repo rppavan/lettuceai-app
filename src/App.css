@@ -160,6 +160,14 @@
   -webkit-text-size-adjust: 100%;
 }
 
+html.window-rounded {
+  background: transparent;
+}
+html.window-rounded body {
+  background: transparent;
+  clip-path: inset(0 round var(--window-radius, 12px));
+}
+
 html,
 body {
   height: 100%;

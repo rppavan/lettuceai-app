@@ -28,9 +28,12 @@ import {
   setTitleBarSide,
   readTitleBarSize,
   setTitleBarSize,
+  readWindowCorners,
+  setWindowCorners,
   type TitleBarDesign,
   type TitleBarSide,
   type TitleBarSize,
+  type WindowCorners,
 } from "../../components/App/TitleBar";
 
 const TITLE_BAR_OPTIONS = [
@@ -165,6 +168,13 @@ export function AccessibilityPage() {
   const handleTitleBarSizeChange = (size: TitleBarSize) => {
     setTitleBarSizeState(size);
     setTitleBarSize(size);
+  };
+
+  const [windowCorners, setWindowCornersState] = useState<WindowCorners>(readWindowCorners);
+
+  const handleWindowCornersChange = (corners: WindowCorners) => {
+    setWindowCornersState(corners);
+    setWindowCorners(corners);
   };
 
   useEffect(() => {
@@ -395,6 +405,38 @@ export function AccessibilityPage() {
                     ))}
                   </div>
                 </div>
+                {platform === "linux" && (
+                  <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-fg/10 bg-fg/5 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-fg">
+                        {t("accessibility.titleBar.corners")}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-fg/45">
+                        {t("accessibility.titleBar.cornersDesc")}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-1 rounded-lg border border-fg/10 bg-fg/5 p-1">
+                      {(["off", "small", "medium", "large"] as const).map((corners) => (
+                        <button
+                          key={corners}
+                          type="button"
+                          onClick={() => handleWindowCornersChange(corners)}
+                          className={cn(
+                            "rounded-md px-3 py-1 text-xs font-medium",
+                            interactive.transition.fast,
+                            windowCorners === corners
+                              ? "bg-accent/20 text-accent"
+                              : "text-fg/60 hover:text-fg",
+                          )}
+                        >
+                          {corners === "off"
+                            ? t("accessibility.titleBar.cornersOff")
+                            : t(`accessibility.titleBar.${corners}` as const)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </>
             )}
             <p className="mt-2 px-1 text-[11px] text-fg/40">

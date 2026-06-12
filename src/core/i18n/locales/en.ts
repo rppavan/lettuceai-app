@@ -259,6 +259,9 @@ export const enMessages = {
       small: "Small",
       medium: "Medium",
       large: "Large",
+      corners: "Rounded corners",
+      cornersDesc: "Round the window edges (square when maximized)",
+      cornersOff: "Off",
       flagsNote:
         "Launch flags --osdecorations (OS title bar) and --nobuttons (no controls) override this setting.",
     },
