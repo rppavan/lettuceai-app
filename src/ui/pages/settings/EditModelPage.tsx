@@ -97,9 +97,10 @@ type DownloadedGgufModel = {
   size: number;
   quantization: string;
   isMmproj?: boolean;
+  isMtp?: boolean;
 };
 
-type LocalLibraryPickerMode = "model" | "mmproj";
+type LocalLibraryPickerMode = "model" | "mmproj" | "mtp";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -570,6 +571,8 @@ export function EditModelPage() {
 
   const openLocalMmprojPicker = async () => openDownloadedLibraryPicker("mmproj");
 
+  const openLocalMtpPicker = async () => openDownloadedLibraryPicker("mtp");
+
   const syncImageInputScope = (mmprojPath: string | null) => {
     if (!editorModel) return;
     const currentScopes = (editorModel.inputScopes ?? ["text"]) as Array<
@@ -603,6 +606,8 @@ export function EditModelPage() {
     if (localLibraryPickerMode === "mmproj") {
       handleLlamaMmprojPathChange(model.path);
       syncImageInputScope(model.path);
+    } else if (localLibraryPickerMode === "mtp") {
+      handleLlamaMtpModelPathChange(model.path);
     } else {
       handleModelNameChange(model.path);
       if (!editorModel?.displayName?.trim()) {
@@ -1139,20 +1144,39 @@ export function EditModelPage() {
       ),
     [downloadedModels],
   );
+  const mtpLibraryModels = useMemo(
+    () =>
+      downloadedModels.filter((model) => {
+        if (model.isMtp !== undefined) return model.isMtp;
+        const base = model.filename.toLowerCase();
+        return base.startsWith("mtp-") || base.includes("-mtp.") || base.includes("_mtp.");
+      }),
+    [downloadedModels],
+  );
   const localLibraryModels =
-    localLibraryPickerMode === "mmproj" ? mmprojLibraryModels : downloadedModels;
+    localLibraryPickerMode === "mmproj"
+      ? mmprojLibraryModels
+      : localLibraryPickerMode === "mtp"
+        ? mtpLibraryModels
+        : downloadedModels;
   const localLibraryTitle =
     localLibraryPickerMode === "mmproj"
       ? t("editModel.localLibrary.mmprojTitle")
-      : t("hfBrowser.libraryTitle");
+      : localLibraryPickerMode === "mtp"
+        ? "Select MTP Draft File"
+        : t("hfBrowser.libraryTitle");
   const localLibraryEmptyLabel =
     localLibraryPickerMode === "mmproj"
       ? t("editModel.localLibrary.mmprojEmpty")
-      : t("hfBrowser.libraryEmpty");
+      : localLibraryPickerMode === "mtp"
+        ? "No MTP files downloaded"
+        : t("hfBrowser.libraryEmpty");
   const localLibraryEmptyHint =
     localLibraryPickerMode === "mmproj"
       ? t("editModel.localLibrary.mmprojEmptyHint")
-      : t("hfBrowser.libraryEmptyHint");
+      : localLibraryPickerMode === "mtp"
+        ? "Download the mtp-*.gguf sidecar from the model's repository in the model browser."
+        : t("hfBrowser.libraryEmptyHint");
   const isAutomatic1111Provider = editorModel?.providerId === "automatic1111";
   const isLocalDiffusionModel = editorModel?.providerId === "localdiffusion";
   const isFixedImageProvider = isAutomatic1111Provider || isLocalDiffusionModel;
@@ -1977,7 +2001,9 @@ export function EditModelPage() {
                                       (
                                         localLibraryPickerMode === "mmproj"
                                           ? modelAdvancedDraft.llamaMmprojPath === model.path
-                                          : editorModel.name === model.path
+                                          : localLibraryPickerMode === "mtp"
+                                            ? modelAdvancedDraft.llamaMtpModelPath === model.path
+                                            : editorModel.name === model.path
                                       ) ? (
                                         <Check className="h-4 w-4 text-accent" />
                                       ) : (
@@ -3681,6 +3707,111 @@ export function EditModelPage() {
                                       </select>
                                     </div>
                                   </div>
+
+                                  <div className="space-y-4 border-t border-fg/8 pt-4">
+                                    <div className="flex items-center justify-between gap-4">
+                                      <div className="space-y-0.5">
+                                        <span className="block text-[13px] font-medium text-fg/70">
+                                          Multi-Token Prediction
+                                        </span>
+                                        <span className="block text-[13px] text-fg/40">
+                                          Speculative decoding via bundled MTP layers or an
+                                          external draft file. Ignored when the model has neither.
+                                        </span>
+                                      </div>
+                                      <div className="flex shrink-0 items-center gap-3">
+                                        <span
+                                          className={cn(
+                                            "text-[12px] font-medium transition",
+                                            modelAdvancedDraft.llamaMtpEnabled === true
+                                              ? "text-accent/80"
+                                              : "text-fg/42",
+                                          )}
+                                        >
+                                          {modelAdvancedDraft.llamaMtpEnabled === true
+                                            ? "On"
+                                            : "Off"}
+                                        </span>
+                                        <Switch
+                                          id="llama-mtp-enabled"
+                                          checked={modelAdvancedDraft.llamaMtpEnabled === true}
+                                          onChange={(next) =>
+                                            handleLlamaMtpEnabledChange(next ? true : null)
+                                          }
+                                          aria-label="Toggle multi-token prediction"
+                                        />
+                                      </div>
+                                    </div>
+
+                                    {modelAdvancedDraft.llamaMtpEnabled === true && (
+                                      <div className="space-y-4">
+                                        <div className="flex items-center justify-between">
+                                          <div className="space-y-0.5">
+                                            <span className="block text-[13px] font-medium text-fg/70">
+                                              Draft Tokens
+                                            </span>
+                                            <span className="block text-[13px] text-fg/40">
+                                              Speculative tokens per step (1 to 8)
+                                            </span>
+                                          </div>
+                                          <span className="font-mono text-[13px] text-fg/55">
+                                            {modelAdvancedDraft.llamaMtpDraftTokens ?? "Auto"}
+                                          </span>
+                                        </div>
+                                        <NumberInput
+                                          min={1}
+                                          max={8}
+                                          step={1}
+                                          value={modelAdvancedDraft.llamaMtpDraftTokens ?? null}
+                                          onChange={(next) =>
+                                            handleLlamaMtpDraftTokensChange(
+                                              next === null || next <= 0
+                                                ? null
+                                                : Math.min(8, Math.trunc(next)),
+                                            )
+                                          }
+                                          placeholder="4"
+                                          className={numberInputClassName}
+                                        />
+                                      </div>
+                                    )}
+
+                                    {modelAdvancedDraft.llamaMtpEnabled === true && (
+                                      <div className="space-y-4">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="space-y-0.5">
+                                            <span className="block text-[13px] font-medium text-fg/70">
+                                              MTP Draft File
+                                            </span>
+                                            <span className="block text-[13px] text-fg/40">
+                                              Optional external draft GGUF. Auto-discovered from a
+                                              sibling mtp-*.gguf when empty.
+                                            </span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={openLocalMtpPicker}
+                                            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-fg/10 bg-fg/5 px-2.5 py-1.5 text-[12px] font-medium text-fg/68 transition hover:border-fg/20 hover:bg-fg/10 hover:text-fg"
+                                          >
+                                            <FolderOpen className="h-3.5 w-3.5 text-accent/70" />
+                                            {t("hfBrowser.selectFromLibrary")}
+                                          </button>
+                                        </div>
+                                        <input
+                                          type="text"
+                                          value={modelAdvancedDraft.llamaMtpModelPath ?? ""}
+                                          onChange={(e) =>
+                                            handleLlamaMtpModelPathChange(
+                                              e.target.value === "" ? null : e.target.value,
+                                            )
+                                          }
+                                          placeholder="Auto-discover"
+                                          className={selectInputClassName}
+                                          spellCheck={false}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
 
@@ -4871,104 +5002,6 @@ export function EditModelPage() {
                                     />
                                   </div>
                                 </div>
-                              </div>
-                            )}
-
-                            {editorModel?.providerId === "llamacpp" && (
-                              <div className="rounded-xl border border-fg/10 bg-fg/5 p-4">
-                                <div className="flex items-start justify-between gap-4">
-                                  <div className="min-w-0 space-y-1.5">
-                                    <div className="flex items-start gap-3">
-                                      <div className="mt-0.5 shrink-0 text-accent/80">
-                                        <Info className="h-4 w-4" />
-                                      </div>
-                                      <div className="min-w-0 space-y-1">
-                                        <span className="block text-[13px] font-medium text-fg/82">
-                                          Multi-Token Prediction
-                                        </span>
-                                        <span className="block text-[13px] leading-relaxed text-fg/48">
-                                          Speculative decoding using the model&apos;s bundled MTP
-                                          layers (GLM 4.x, Qwen MTP builds).
-                                        </span>
-                                      </div>
-                                    </div>
-                                    <span className="block text-[12px] text-fg/42">
-                                      Ignored automatically when the model has no MTP layers or
-                                      vision input is active.
-                                    </span>
-                                  </div>
-                                  <div className="flex shrink-0 items-center gap-3">
-                                    <span
-                                      className={cn(
-                                        "text-[12px] font-medium transition",
-                                        modelAdvancedDraft.llamaMtpEnabled === true
-                                          ? "text-accent/80"
-                                          : "text-fg/42",
-                                      )}
-                                    >
-                                      {modelAdvancedDraft.llamaMtpEnabled === true ? "On" : "Off"}
-                                    </span>
-                                    <Switch
-                                      id="llama-mtp-enabled"
-                                      checked={modelAdvancedDraft.llamaMtpEnabled === true}
-                                      onChange={(next) =>
-                                        handleLlamaMtpEnabledChange(next ? true : null)
-                                      }
-                                      aria-label="Toggle multi-token prediction"
-                                    />
-                                  </div>
-                                </div>
-                                {modelAdvancedDraft.llamaMtpEnabled === true && (
-                                  <div className="mt-4 flex items-center justify-between gap-4 border-t border-fg/10 pt-4">
-                                    <div className="space-y-0.5">
-                                      <span className="block text-[13px] font-medium text-fg/70">
-                                        Draft Tokens
-                                      </span>
-                                      <span className="block text-[13px] text-fg/40">
-                                        Speculative tokens per step (1 to 8)
-                                      </span>
-                                    </div>
-                                    <NumberInput
-                                      min={1}
-                                      max={8}
-                                      step={1}
-                                      value={modelAdvancedDraft.llamaMtpDraftTokens ?? null}
-                                      onChange={(next) =>
-                                        handleLlamaMtpDraftTokensChange(
-                                          next === null || next <= 0
-                                            ? null
-                                            : Math.min(8, Math.trunc(next)),
-                                        )
-                                      }
-                                      placeholder="4"
-                                      className={numberInputClassName}
-                                    />
-                                  </div>
-                                )}
-                                {modelAdvancedDraft.llamaMtpEnabled === true && (
-                                  <div className="mt-4 space-y-2 border-t border-fg/10 pt-4">
-                                    <div className="space-y-0.5">
-                                      <span className="block text-[13px] font-medium text-fg/70">
-                                        MTP Model Path
-                                      </span>
-                                      <span className="block text-[13px] text-fg/40">
-                                        Optional path to an external MTP draft GGUF (Gemma 4 style).
-                                        Auto-discovered from a sibling mtp-*.gguf when empty.
-                                      </span>
-                                    </div>
-                                    <input
-                                      type="text"
-                                      value={modelAdvancedDraft.llamaMtpModelPath ?? ""}
-                                      onChange={(e) =>
-                                        handleLlamaMtpModelPathChange(
-                                          e.target.value.trim().length > 0 ? e.target.value : null,
-                                        )
-                                      }
-                                      placeholder="/path/to/mtp-model.gguf"
-                                      className="w-full rounded-lg border border-fg/10 bg-fg/5 px-3 py-2 text-[13px] text-fg placeholder-fg/30 focus:border-fg/25 focus:outline-none"
-                                    />
-                                  </div>
-                                )}
                               </div>
                             )}
 
