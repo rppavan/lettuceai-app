@@ -323,16 +323,28 @@ fn create_base_session_builder() -> Result<ort::session::builder::SessionBuilder
         })
 }
 
+/// CoreML's MLProgram compiler mis-partitions the V4 model's rotary-embedding
+/// subgraph, producing a malformed tensor that crashes the CPU `Mul` fallback
+/// ("broadcast 2 by 64"). CPU is also faster than CoreML for these int8 models,
+/// so V4 runs CPU-only.
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+fn source_supports_coreml(source: super::EmbeddingSourceVersion) -> bool {
+    !matches!(source, super::EmbeddingSourceVersion::V4)
+}
+
 fn create_runtime(
     app: &AppHandle,
+    source: super::EmbeddingSourceVersion,
     model_path: &Path,
     tokenizer_path: &Path,
 ) -> Result<(Session, Tokenizer), String> {
     #[cfg(not(any(target_os = "ios", target_os = "macos")))]
-    let _ = app;
+    let _ = (app, source);
 
     #[cfg(any(target_os = "ios", target_os = "macos"))]
-    let session_builder =
+    let session_builder = if !source_supports_coreml(source) {
+        create_base_session_builder()?
+    } else {
         match configure_session_builder_for_target(create_base_session_builder()?, model_path) {
             Ok(builder) => builder,
             Err(err) => {
@@ -362,7 +374,8 @@ fn create_runtime(
                 }
                 create_base_session_builder()?
             }
-        };
+        }
+    };
 
     #[cfg(not(any(target_os = "ios", target_os = "macos")))]
     let session_builder = create_base_session_builder()?;
@@ -460,6 +473,7 @@ pub async fn compute_embedding(app: AppHandle, text: String) -> Result<Vec<f32>,
         if !reuse {
             let (session, tokenizer) = create_runtime(
                 &app,
+                active_config.source,
                 &active_config.model_path,
                 &active_config.tokenizer_path,
             )?;
@@ -515,6 +529,7 @@ pub async fn compute_embedding(app: AppHandle, text: String) -> Result<Vec<f32>,
 
         let (mut session, tokenizer) = create_runtime(
             &app,
+            active_config.source,
             &active_config.model_path,
             &active_config.tokenizer_path,
         )?;
@@ -603,6 +618,7 @@ pub async fn initialize_embedding_model(app: AppHandle) -> Result<(), String> {
         if !reuse {
             let (session, tokenizer) = create_runtime(
                 &app,
+                active_config.source,
                 &active_config.model_path,
                 &active_config.tokenizer_path,
             )?;
