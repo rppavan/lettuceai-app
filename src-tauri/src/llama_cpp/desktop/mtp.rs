@@ -60,7 +60,11 @@ pub(super) fn discover_external_mtp(model_path: &str) -> Option<String> {
             }
             let stem = lower
                 .strip_prefix("mtp-")
-                .or_else(|| lower.strip_suffix("-mtp.gguf").map(|_| &lower[..lower.len() - 9]))?
+                .or_else(|| {
+                    lower
+                        .strip_suffix("-mtp.gguf")
+                        .map(|_| &lower[..lower.len() - 9])
+                })?
                 .trim_end_matches(".gguf")
                 .to_string();
             if stem.is_empty() || !model_stem.contains(&stem) {
@@ -369,7 +373,9 @@ fn mtp_round_shared(
             .clear_kv_cache_seq(Some(0), Some(clear_from), None)
             .map_err(|e| format!("failed to roll back target KV cache: {e}"))?;
         if !rolled_back {
-            return Err(format!("target KV rollback failed at position {clear_from}"));
+            return Err(format!(
+                "target KV rollback failed at position {clear_from}"
+            ));
         }
     }
 
@@ -397,7 +403,9 @@ fn rollback_and_advance(
         .clear_kv_cache_seq(Some(0), Some(rollback_pos), None)
         .map_err(|e| format!("failed to roll back target KV cache: {e}"))?;
     if !target_rolled_back {
-        return Err(format!("target KV rollback failed at position {rollback_pos}"));
+        return Err(format!(
+            "target KV rollback failed at position {rollback_pos}"
+        ));
     }
 
     let draft_rolled_back = rt

@@ -35,7 +35,10 @@ pub fn persist_custom_dir(app: &AppHandle, key: &str, dir: Option<&str>) -> Resu
     })?;
     match dir {
         Some(value) if !value.trim().is_empty() => {
-            map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+            map.insert(
+                key.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
         }
         _ => {
             map.remove(key);
@@ -53,12 +56,7 @@ pub fn count_models_in_dir(dir: &Path) -> u32 {
     let mut count = 0u32;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir()
-            || path
-                .extension()
-                .map(|ext| !ext.is_empty())
-                .unwrap_or(false)
-        {
+        if path.is_dir() || path.extension().map(|ext| !ext.is_empty()).unwrap_or(false) {
             count += 1;
         }
     }
@@ -104,7 +102,8 @@ fn copy_recursive(src: &Path, dest: &Path) -> Result<(), String> {
         let entries = std::fs::read_dir(src)
             .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
         for entry in entries {
-            let entry = entry.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+            let entry =
+                entry.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
             copy_recursive(&entry.path(), &dest.join(entry.file_name()))?;
         }
     } else {

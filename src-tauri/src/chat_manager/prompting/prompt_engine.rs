@@ -687,6 +687,20 @@ pub fn default_dynamic_memory_entries() -> Vec<SystemPromptEntry> {
             }),
             prompt_entry_payload: None,
         },
+        SystemPromptEntry {
+            id: "memory_companion_supersede".to_string(),
+            name: "Companion Memory Supersession".to_string(),
+            role: PromptEntryRole::System,
+            content: "Companion memory supersession:\n- When a new fact replaces or corrects an existing memory (for example the user moved, changed a preference, or an earlier fact is now wrong), call create_memory for the corrected fact and list the outdated memory's 6-digit IDs (shown in brackets) in supersedes.\n- Prefer supersedes over delete_memory for corrections, so the older fact is kept as history but is no longer recalled.\n- Only supersede memories that the new fact genuinely makes outdated; never supersede unrelated memories.".to_string(),
+            enabled: true,
+            injection_position: PromptEntryPosition::Relative,
+            injection_depth: 0,
+            conditional_min_messages: None,
+            interval_turns: None,
+            system_prompt: true,
+            conditions: Some(PromptEntryCondition::IsCompanionMode { value: true }),
+            prompt_entry_payload: None,
+        },
     ]
 }
 
@@ -822,6 +836,20 @@ pub fn default_dynamic_memory_local_entries() -> Vec<SystemPromptEntry> {
                     PromptEntryCondition::IsTimeAwarenessEnabled { value: true },
                 ],
             }),
+            prompt_entry_payload: None,
+        },
+        SystemPromptEntry {
+            id: "memory_companion_supersede".to_string(),
+            name: "Companion Memory Supersession".to_string(),
+            role: PromptEntryRole::System,
+            content: "Companion memory supersession:\n- When a new fact replaces or corrects an existing memory (for example the user moved, changed a preference, or an earlier fact is now wrong), call create_memory for the corrected fact and list the outdated memory's 6-digit IDs (shown in brackets) in supersedes.\n- Prefer supersedes over delete_memory for corrections, so the older fact is kept as history but is no longer recalled.\n- Only supersede memories that the new fact genuinely makes outdated; never supersede unrelated memories.".to_string(),
+            enabled: true,
+            injection_position: PromptEntryPosition::Relative,
+            injection_depth: 0,
+            conditional_min_messages: None,
+            interval_turns: None,
+            system_prompt: true,
+            conditions: Some(PromptEntryCondition::IsCompanionMode { value: true }),
             prompt_entry_payload: None,
         },
     ]
@@ -2751,7 +2779,7 @@ pub fn default_companion_entries() -> Vec<SystemPromptEntry> {
             id: "companion_time_awareness".to_string(),
             name: "Current Time".to_string(),
             role: PromptEntryRole::System,
-            content: "# Current Local Time\nThese values are live system-time context for this turn. Use them only to ground chronology, recency, scheduling, and temporal references.\n\n- Date: {{date_full}} ({{date}})\n- Weekday: {{weekday}}\n- Time: {{time_12hour_format}} / {{time_full}}\n- Timezone: {{time_timezone_name}} (UTC{{time_timezone}})\n- ISO Timestamp: {{datetime_iso}}".to_string(),
+            content: "# Current Local Time\nThese values are live system-time context for this turn. Use them only to ground chronology, recency, scheduling, and temporal references.\n\n- Date: {{date_full}} ({{date}})\n- Weekday: {{weekday}}\n- Time: {{time_12hour_format}} / {{time_full}}\n- Timezone: {{time_timezone_name}} (UTC{{time_timezone}})\n- ISO Timestamp: {{datetime_iso}}\n\nThese values are live context, provided automatically each turn. Draw on them freely to reason about time and weave it into the scene — greet by time of day, judge how long it has been since you last spoke, track schedules, recency, and the passage of time. Express any of this naturally in your character's own voice rather than reciting the raw values. Every message is already stamped with its time by the app, so do not begin with or insert a machine timestamp such as `[Tue 6:50 PM, 2026-03-12]`; the system adds that for you.".to_string(),
             enabled: true,
             injection_position: PromptEntryPosition::Relative,
             injection_depth: 0,
@@ -3089,7 +3117,8 @@ fn identity_placeholder_patterns() -> &'static [(regex::Regex, IdentityValue)] {
     static PATTERNS: std::sync::OnceLock<Vec<(regex::Regex, IdentityValue)>> =
         std::sync::OnceLock::new();
     PATTERNS.get_or_init(|| {
-        let compile = |body: &str| regex::Regex::new(&format!(r"\{{\{{\s*{}\s*\}}\}}", body)).unwrap();
+        let compile =
+            |body: &str| regex::Regex::new(&format!(r"\{{\{{\s*{}\s*\}}\}}", body)).unwrap();
         vec![
             (compile(r"char\.name"), IdentityValue::CharName),
             (compile(r"char\.desc"), IdentityValue::CharDesc),
@@ -3127,7 +3156,9 @@ fn apply_identity_placeholders(
                 IdentityValue::PersonaDesc => persona_desc,
             };
             out = std::borrow::Cow::Owned(
-                pattern.replace_all(&out, regex::NoExpand(replacement)).into_owned(),
+                pattern
+                    .replace_all(&out, regex::NoExpand(replacement))
+                    .into_owned(),
             );
         }
     }
@@ -3346,7 +3377,7 @@ pub fn build_system_prompt_entries(
         session
             .memory_embeddings
             .iter()
-            .any(|memory| !memory.is_cold || memory.is_pinned)
+            .any(|memory| (!memory.is_cold || memory.is_pinned) && memory.superseded_by.is_none())
     } else {
         has_manual_memories(&session.memories)
     };
@@ -3449,7 +3480,7 @@ pub fn build_system_prompt_entries(
         session
             .memory_embeddings
             .iter()
-            .filter(|mem| !mem.is_cold || mem.is_pinned)
+            .filter(|mem| (!mem.is_cold || mem.is_pinned) && mem.superseded_by.is_none())
             .map(|mem| format_memory_for_prompt(mem, memory_now))
             .collect::<Vec<_>>()
     } else if has_manual_memories(&session.memories) {
@@ -4087,7 +4118,9 @@ pub fn render_with_context_internal(
         session
             .memory_embeddings
             .iter()
-            .filter(|memory| !memory.is_cold || memory.is_pinned)
+            .filter(|memory| {
+                (!memory.is_cold || memory.is_pinned) && memory.superseded_by.is_none()
+            })
             .map(|memory| format!("- {}", memory.text))
             .collect::<Vec<_>>()
             .join("\n")
@@ -4136,7 +4169,8 @@ pub fn render_with_context_internal(
 
     result = result.replace("{{ai_rules}}", "");
 
-    result = apply_identity_placeholders(&result, char_name, &char_desc, persona_name, persona_desc);
+    result =
+        apply_identity_placeholders(&result, char_name, &char_desc, persona_name, persona_desc);
 
     result
 }

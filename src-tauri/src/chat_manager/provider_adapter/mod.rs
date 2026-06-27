@@ -260,7 +260,10 @@ pub(crate) fn extract_input_audio(value: Option<&Value>) -> Vec<(String, String)
             }
 
             let input_audio = obj.get("input_audio").and_then(|v| v.as_object())?;
-            let data = input_audio.get("data").and_then(|v| v.as_str())?.to_string();
+            let data = input_audio
+                .get("data")
+                .and_then(|v| v.as_str())?
+                .to_string();
             let format = input_audio
                 .get("format")
                 .and_then(|v| v.as_str())

@@ -840,32 +840,54 @@ async fn migrate_session_memory_embeddings_if_needed(
         0.0,
     );
 
-    let migration_result: Result<(), String> = async {
+    let migration_result: Result<(bool, usize), String> = async {
+        let mut migrated_any = false;
+        let mut failures = 0usize;
         for (idx, memory) in session.memory_embeddings.iter_mut().enumerate() {
             if memory_embedding_requires_migration(
                 memory,
                 &target_source_version,
                 target_dimensions,
             ) {
-                memory.embedding = tokio::time::timeout(
+                match tokio::time::timeout(
                     Duration::from_secs(MEMORY_MIGRATION_EMBED_TIMEOUT_SECS),
                     embedding::compute_embedding(app.clone(), memory.text.clone()),
                 )
                 .await
-                .map_err(|_| {
-                    crate::utils::err_msg(
-                        module_path!(),
-                        line!(),
-                        format!(
-                            "Timed out after {}s while re-embedding saved memory {}/{}",
-                            MEMORY_MIGRATION_EMBED_TIMEOUT_SECS,
-                            idx + 1,
-                            total
-                        ),
-                    )
-                })??;
-                memory.embedding_source_version = Some(target_source_version.clone());
-                memory.embedding_dimensions = Some(target_dimensions);
+                {
+                    Ok(Ok(vector)) => {
+                        memory.embedding = vector;
+                        memory.embedding_source_version = Some(target_source_version.clone());
+                        memory.embedding_dimensions = Some(target_dimensions);
+                        migrated_any = true;
+                    }
+                    Ok(Err(err)) => {
+                        failures += 1;
+                        log_warn(
+                            app,
+                            "memory_retrieval",
+                            format!(
+                                "failed to re-embed saved memory {}/{}: {}",
+                                idx + 1,
+                                total,
+                                err
+                            ),
+                        );
+                    }
+                    Err(_) => {
+                        failures += 1;
+                        log_warn(
+                            app,
+                            "memory_retrieval",
+                            format!(
+                                "timed out after {}s while re-embedding saved memory {}/{}",
+                                MEMORY_MIGRATION_EMBED_TIMEOUT_SECS,
+                                idx + 1,
+                                total
+                            ),
+                        );
+                    }
+                }
             }
 
             let progress = (idx + 1) as f32 / total as f32;
@@ -878,33 +900,40 @@ async fn migrate_session_memory_embeddings_if_needed(
             );
         }
 
-        save_session(app, session)?;
-        Ok(())
+        if migrated_any {
+            save_session(app, session)?;
+        }
+        Ok((migrated_any, failures))
     }
     .await;
 
     dismiss_memory_vector_migration_toast(app, &toast_id);
 
-    if let Err(err) = migration_result {
+    let (migrated_any, failures) = match migration_result {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            let _ = app.emit(
+                "app://toast",
+                json!({
+                    "variant": "error",
+                    "title": "Memory migration failed",
+                    "description": err.clone(),
+                }),
+            );
+            return Err(err);
+        }
+    };
+
+    if migrated_any && failures == 0 {
         let _ = app.emit(
             "app://toast",
             json!({
-                "variant": "error",
-                "title": "Memory migration failed",
-                "description": err.clone(),
+                "variant": "success",
+                "title": "Memory migration complete",
+                "description": "Saved memory vectors are now using the current memory model.",
             }),
         );
-        return Err(err);
     }
-
-    let _ = app.emit(
-        "app://toast",
-        json!({
-            "variant": "success",
-            "title": "Memory migration complete",
-            "description": "Saved memory vectors are now using the current memory model.",
-        }),
-    );
     Ok(())
 }
 
@@ -1146,8 +1175,37 @@ fn format_memories_with_ids(session: &Session) -> Vec<String> {
     session
         .memory_embeddings
         .iter()
+        .filter(|m| m.superseded_by.is_none())
         .map(|m| format!("[{}] {}", m.id, m.text))
         .collect()
+}
+
+const MAX_SUPERSEDED_MEMORIES: usize = 40;
+
+fn enforce_superseded_cap(memories: &mut Vec<MemoryEmbedding>, cap: usize) {
+    let superseded_count = memories
+        .iter()
+        .filter(|m| m.superseded_by.is_some())
+        .count();
+    if superseded_count <= cap {
+        return;
+    }
+    let to_drop = superseded_count - cap;
+    let mut order: Vec<(usize, u64)> = memories
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.superseded_by.is_some())
+        .map(|(i, m)| (i, m.superseded_at.unwrap_or(0)))
+        .collect();
+    order.sort_by_key(|(_, at)| *at);
+    let drop_set: std::collections::HashSet<usize> =
+        order.into_iter().take(to_drop).map(|(i, _)| i).collect();
+    let mut idx = 0usize;
+    memories.retain(|_| {
+        let keep = !drop_set.contains(&idx);
+        idx += 1;
+        keep
+    });
 }
 
 fn normalized_tokens(text: &str) -> Vec<String> {
@@ -1213,13 +1271,12 @@ pub(crate) async fn select_relevant_memories(
     }
 
     let reference_ms = companion_effective_now(session);
-    let temporal_range = if temporal_query_features_enabled
-        && companion_time_awareness_enabled(session)
-    {
-        detect_temporal_query_range(query, reference_ms)
-    } else {
-        None
-    };
+    let temporal_range =
+        if temporal_query_features_enabled && companion_time_awareness_enabled(session) {
+            detect_temporal_query_range(query, reference_ms)
+        } else {
+            None
+        };
     let filtered_candidates: Option<Vec<(usize, MemoryEmbedding)>> =
         temporal_range.as_ref().map(|range| {
             session
@@ -1227,7 +1284,9 @@ pub(crate) async fn select_relevant_memories(
                 .iter()
                 .cloned()
                 .enumerate()
-                .filter(|(_, memory)| memory_matches_temporal_range(memory, range))
+                .filter(|(_, memory)| {
+                    memory.superseded_by.is_none() && memory_matches_temporal_range(memory, range)
+                })
                 .collect()
         });
     let (candidate_index_map, candidate_memories): (Vec<usize>, Vec<MemoryEmbedding>) =
@@ -1237,10 +1296,13 @@ pub(crate) async fn select_relevant_memories(
             }
             candidates.into_iter().unzip()
         } else {
-            (
-                (0..session.memory_embeddings.len()).collect(),
-                session.memory_embeddings.clone(),
-            )
+            session
+                .memory_embeddings
+                .iter()
+                .cloned()
+                .enumerate()
+                .filter(|(_, memory)| memory.superseded_by.is_none())
+                .unzip()
         };
     let temporal_query_active = temporal_range.is_some();
     let effective_min_similarity = if temporal_query_active {
@@ -2162,8 +2224,8 @@ async fn process_dynamic_memory_cycle_with_model(
                 return Ok(());
             }
             "askFirst" => {
-                let approval = app
-                    .state::<crate::dynamic_memory_approval::DynamicMemoryApprovalManager>();
+                let approval =
+                    app.state::<crate::dynamic_memory_approval::DynamicMemoryApprovalManager>();
                 if let Some(pending_count) = approval.should_prompt(
                     &session.id,
                     total_convo_at_start,
@@ -3292,7 +3354,8 @@ async fn run_memory_tool_update(
     cancel_token: Option<&DynamicMemoryCancellationToken>,
 ) -> Result<Vec<Value>, String> {
     let overwrite_llama_sampler_config = dynamic_memory_llama_sampler_overwrite_enabled(settings);
-    let tool_config = build_memory_tool_config();
+    let memory_supersede_enabled = companion::is_companion_mode(session, character);
+    let tool_config = build_memory_tool_config(memory_supersede_enabled);
     let max_entries = dynamic_max_entries(settings);
 
     let mut messages_for_api = Vec::new();
@@ -3629,6 +3692,26 @@ async fn run_memory_tool_update(
                         let (embedding_source_version, embedding_dimensions) =
                             embedding::resolve_active_embedding_signature(app)
                                 .unwrap_or_else(|_| ("v3".to_string(), 512));
+                        let supersede_ids: Vec<String> = if memory_supersede_enabled {
+                            call.arguments
+                                .get("supersedes")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str())
+                                        .map(sanitize_memory_id)
+                                        .filter(|id| {
+                                            id != &mem_id
+                                                && session.memory_embeddings.iter().any(|m| {
+                                                    m.id == *id && m.superseded_by.is_none()
+                                                })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        };
                         session.memory_embeddings.push(MemoryEmbedding {
                             id: mem_id.clone(),
                             text,
@@ -3656,8 +3739,24 @@ async fn run_memory_tool_update(
                             source_message_id,
                             superseded_by: None,
                             superseded_at: None,
-                            supersedes: Vec::new(),
+                            supersedes: supersede_ids.clone(),
                         });
+                        if !supersede_ids.is_empty() {
+                            let superseded_at = now_millis().unwrap_or_default();
+                            for old in session.memory_embeddings.iter_mut() {
+                                if old.id != mem_id
+                                    && old.superseded_by.is_none()
+                                    && supersede_ids.iter().any(|id| id == &old.id)
+                                {
+                                    old.superseded_by = Some(mem_id.clone());
+                                    old.superseded_at = Some(superseded_at);
+                                }
+                            }
+                            enforce_superseded_cap(
+                                &mut session.memory_embeddings,
+                                MAX_SUPERSEDED_MEMORIES,
+                            );
+                        }
                         let action = json!({
                             "name": "create_memory",
                             "arguments": call.arguments,
@@ -4439,7 +4538,35 @@ async fn run_memory_tag_repair(
     Ok(repaired)
 }
 
-fn build_memory_tool_config() -> ToolConfig {
+fn build_memory_tool_config(is_companion: bool) -> ToolConfig {
+    let mut create_memory_params = json!({
+        "type": "object",
+        "properties": {
+            "text": { "type": "string", "description": "Concise memory to store" },
+            "important": { "type": "boolean", "description": "If true, memory will be pinned (never decays)" },
+            "category": {
+                "type": "string",
+                "enum": ["character_trait", "relationship", "plot_event", "world_detail", "preference", "other"],
+                "description": "Category of this memory for organization"
+            }
+        },
+        "required": ["text", "category"]
+    });
+    if is_companion {
+        if let Some(props) = create_memory_params
+            .get_mut("properties")
+            .and_then(|value| value.as_object_mut())
+        {
+            props.insert(
+                "supersedes".to_string(),
+                json!({
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "6-digit IDs (shown in brackets) of older memories this entry replaces. Use this to correct an outdated fact instead of deleting it."
+                }),
+            );
+        }
+    }
     ToolConfig {
         tools: vec![
             ToolDefinition {
@@ -4447,19 +4574,7 @@ fn build_memory_tool_config() -> ToolConfig {
                 description: Some(
                     "Create a concise memory entry capturing important facts.".to_string(),
                 ),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "text": { "type": "string", "description": "Concise memory to store" },
-                        "important": { "type": "boolean", "description": "If true, memory will be pinned (never decays)" },
-                        "category": {
-                            "type": "string",
-                            "enum": ["character_trait", "relationship", "plot_event", "world_detail", "preference", "other"],
-                            "description": "Category of this memory for organization"
-                        }
-                    },
-                    "required": ["text", "category"]
-                }),
+                parameters: create_memory_params,
             },
             ToolDefinition {
                 name: "delete_memory".to_string(),

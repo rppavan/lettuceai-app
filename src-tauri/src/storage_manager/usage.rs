@@ -123,6 +123,10 @@ pub async fn storage_reset_database(app: tauri::AppHandle) -> Result<(), String>
     let model_dir = lettuce_dir.join("models").join("embedding");
     delete_dir_if_exists(&model_dir);
     delete_dir_if_exists(&whisper_models_dir);
+
+    delete_dir_if_exists(&lettuce_dir.join("diffusion"));
+    delete_dir_if_exists(&lettuce_dir.join("models").join("diffusion"));
+    delete_dir_if_exists(&lettuce_dir.join("models").join("loras"));
     for asset_root in kokoro_asset_roots {
         if is_within_root(&asset_root, &lettuce_dir) || is_within_root(&asset_root, &app_data_dir) {
             delete_dir_if_exists(&asset_root);

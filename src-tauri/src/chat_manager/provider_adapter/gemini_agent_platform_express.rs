@@ -140,10 +140,11 @@ impl ProviderAdapter for GeminiAgentPlatformExpressAdapter {
         );
         // image models need responseModalities to actually emit images
         if is_image_model(model_name) {
-            if let Some(cfg) = body
-                .as_object_mut()
-                .and_then(|b| b.entry("generationConfig").or_insert_with(|| json!({})).as_object_mut())
-            {
+            if let Some(cfg) = body.as_object_mut().and_then(|b| {
+                b.entry("generationConfig")
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+            }) {
                 cfg.insert("responseModalities".into(), json!(["TEXT", "IMAGE"]));
             }
         }

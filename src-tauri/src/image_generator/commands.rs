@@ -16,6 +16,18 @@ use super::provider_adapter::{get_adapter, ImageRequestPayload, ImageResponseDat
 use super::storage::save_image;
 use super::types::{GeneratedImage, ImageGenerationRequest, ImageGenerationResponse};
 
+fn gemini_image_endpoint(base_url: &str, model: &str, api_key: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let base = base
+        .strip_suffix("/v1beta")
+        .or_else(|| base.strip_suffix("/v1"))
+        .unwrap_or(base);
+    format!(
+        "{}/v1beta/models/{}:generateContent?key={}",
+        base, model, api_key
+    )
+}
+
 fn record_image_generation_usage(
     app: &AppHandle,
     request: &ImageGenerationRequest,
@@ -116,31 +128,6 @@ pub async fn generate_image(
         };
     }
 
-    if request.provider_id == crate::local_diffusion::PROVIDER_ID {
-        let result = crate::local_diffusion::generate::generate(&app, &request).await;
-        match &result {
-            Ok(response) => record_image_generation_usage(
-                &app,
-                &request,
-                crate::local_diffusion::PROVIDER_LABEL,
-                None,
-                true,
-                None,
-                response.images.len(),
-            ),
-            Err(err) => record_image_generation_usage(
-                &app,
-                &request,
-                crate::local_diffusion::PROVIDER_LABEL,
-                None,
-                false,
-                Some(err.clone()),
-                0,
-            ),
-        }
-        return result;
-    }
-
     let mut provider_label = request.provider_id.clone();
 
     if request.output_modalities.is_none() {
@@ -166,6 +153,49 @@ pub async fn generate_image(
         )?;
         provider_label = provider_cred.label.clone();
 
+        if request.provider_id == "comfyui" {
+            let api_key = provider_cred.api_key.clone().unwrap_or_default();
+            let base_url = resolve_base_url(
+                &ProviderId(request.provider_id.clone()),
+                provider_cred.base_url.as_deref(),
+            );
+            let image_data = super::comfyui::generate(
+                &app,
+                &request,
+                &base_url,
+                &api_key,
+                provider_cred.config.as_ref(),
+            )
+            .await?;
+
+            let mut generated_images = Vec::new();
+            for img_data in image_data {
+                let image_source = match img_data.url.as_ref().or(img_data.b64_json.as_ref()) {
+                    Some(source) => source,
+                    None => return Err("No image data in ComfyUI response.".to_string()),
+                };
+                let saved = save_image(&app, image_source).await?;
+                generated_images.push(GeneratedImage {
+                    asset_id: saved.asset_id,
+                    file_path: saved.file_path,
+                    mime_type: saved.mime_type,
+                    url: img_data.url,
+                    width: saved.width,
+                    height: saved.height,
+                    text: img_data.text,
+                });
+            }
+
+            return Ok((
+                ImageGenerationResponse {
+                    images: generated_images,
+                    model: request.model.clone(),
+                    provider_id: request.provider_id.clone(),
+                },
+                None,
+            ));
+        }
+
         let adapter = get_adapter(&request.provider_id)?;
 
         let api_key = if !adapter.requires_api_key() {
@@ -182,10 +212,7 @@ pub async fn generate_image(
         let base_url = resolve_base_url(&ProviderId(request.provider_id.clone()), base_url_opt);
 
         let url = if request.provider_id == "gemini" {
-            format!(
-                "{}/v1beta/models/{}:generateContent?key={}",
-                base_url, request.model, api_key
-            )
+            gemini_image_endpoint(&base_url, &request.model, &api_key)
         } else {
             adapter.endpoint(&base_url, &request)
         };

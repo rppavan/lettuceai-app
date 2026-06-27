@@ -14,7 +14,6 @@ import {
   APP_AVATAR_EDIT_TEMPLATE_ID,
   APP_AVATAR_GENERATION_TEMPLATE_ID,
 } from "../prompts/constants";
-import { LOCAL_DIFFUSION_CREDENTIAL, LOCAL_DIFFUSION_PROVIDER_ID } from "../local-diffusion";
 
 /**
  * Image generation request parameters
@@ -330,9 +329,6 @@ export function resolveProviderCredential(
   providerId: string,
   providerLabel?: string | null,
 ): ProviderCredential | null {
-  if (providerId === LOCAL_DIFFUSION_PROVIDER_ID) {
-    return LOCAL_DIFFUSION_CREDENTIAL;
-  }
   return (
     providers.find(
       (provider) => provider.providerId === providerId && provider.label === providerLabel,
@@ -380,15 +376,12 @@ export function getModelSizes(providerId: string, modelId: string): readonly str
     return ["512x512", "768x768", "1024x1024", "1152x896", "896x1152"];
   }
 
-  if (providerId === "stability") {
+  if (providerId === "comfyui" || providerId === "diffusers") {
     return ["512x512", "768x768", "1024x1024", "1152x896", "896x1152"];
   }
 
-  if (providerId === LOCAL_DIFFUSION_PROVIDER_ID) {
-    if (modelId.startsWith("sd15-")) {
-      return ["512x512", "512x768", "768x512", "768x768"];
-    }
-    return ["1024x1024", "896x1152", "1152x896", "768x1344", "1344x768", "512x512", "768x768"];
+  if (providerId === "stability") {
+    return ["512x512", "768x768", "1024x1024", "1152x896", "896x1152"];
   }
 
   return ["1024x1024"];

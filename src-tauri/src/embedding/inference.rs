@@ -247,9 +247,13 @@ pub(super) fn compute_embedding_with_session(
             }
             Ok(sliced)
         }
-        len => Err(format!(
-            "Unexpected embedding dimension: {} (expected at least {})",
-            len, embedding_dimensions
+        len => Err(crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            format!(
+                "Unexpected embedding dimension: {} (expected at least {})",
+                len, embedding_dimensions
+            ),
         )),
     }
 }
@@ -585,9 +589,13 @@ pub async fn initialize_embedding_model(app: AppHandle) -> Result<(), String> {
         ));
     }
     if !active_config.tokenizer_path.exists() {
-        return Err(format!(
-            "Tokenizer file missing: {}",
-            active_config.tokenizer_path.display()
+        return Err(crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            format!(
+                "Tokenizer file missing: {}",
+                active_config.tokenizer_path.display()
+            ),
         ));
     }
 
@@ -598,9 +606,13 @@ pub async fn initialize_embedding_model(app: AppHandle) -> Result<(), String> {
         .map(|m| m.len())
         .unwrap_or(0);
     if model_size == 0 || tokenizer_size == 0 {
-        return Err(format!(
-            "Model files look invalid (sizes: model={} bytes, tokenizer={} bytes)",
-            model_size, tokenizer_size
+        return Err(crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            format!(
+                "Model files look invalid (sizes: model={} bytes, tokenizer={} bytes)",
+                model_size, tokenizer_size
+            ),
         ));
     }
 
@@ -671,10 +683,14 @@ pub async fn initialize_embedding_model(app: AppHandle) -> Result<(), String> {
             )
         })?;
     let _tokenizer = Tokenizer::from_file(&active_config.tokenizer_path).map_err(|e| {
-        format!(
-            "Failed to load tokenizer from {}: {}",
-            active_config.tokenizer_path.display(),
-            e
+        crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            format!(
+                "Failed to load tokenizer from {}: {}",
+                active_config.tokenizer_path.display(),
+                e
+            ),
         )
     })?;
 

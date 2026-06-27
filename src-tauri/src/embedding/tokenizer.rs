@@ -19,9 +19,14 @@ fn get_tokenizer(app: &AppHandle) -> Result<Tokenizer, String> {
         let tokenizer_path = model_dir.join("tokenizer.json");
 
         if !tokenizer_path.exists() {
-            return Err(
-                "Tokenizer not found. Please download the embedding model first.".to_string(),
-            );
+            return Err(crate::utils::err_msg(
+                module_path!(),
+                line!(),
+                format!(
+                    "Tokenizer not found at {:?}. Please download the embedding model first.",
+                    tokenizer_path
+                ),
+            ));
         }
 
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|e| {

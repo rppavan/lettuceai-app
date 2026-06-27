@@ -12,6 +12,7 @@ import {
   Copy,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { Routes } from "../../navigation";
 import { typography, radius, interactive, cn } from "../../design-tokens";
 import { useI18n } from "../../../core/i18n/context";
 import {
@@ -20,6 +21,7 @@ import {
   savePersona,
   createSession,
   cloneCharacterDeep,
+  createBranchedSession,
   listCharacters,
   saveSession,
   saveLorebook,
@@ -84,6 +86,185 @@ export function DeveloperPage() {
       showError(`Clone failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setCloning(false);
+    }
+  };
+
+  const generateBranchingDemo = async () => {
+    try {
+      setStatus("Creating branching demo character and conversation tree...");
+
+      const minute = 60_000;
+      const sceneId = crypto.randomUUID();
+      const character = await saveCharacter({
+        name: "Inspector Adrian Vale",
+        mode: "roleplay",
+        memoryType: "manual",
+        description:
+          "A weathered noir detective working the Hadley case. Built to show off the branch tree: one investigation that forks at every decision.",
+        definition:
+          "Inspector Adrian Vale is dry, patient, and allergic to easy answers. He thinks out loud, weighs every move, and treats each choice as a fork he can't take back.",
+        tags: ["developer", "branching", "demo"],
+        scenes: [
+          {
+            id: sceneId,
+            content:
+              "Rain on the precinct windows. The Hadley case file lands on Vale's desk, and every lead is a different door.",
+            direction: "A single case that branches into many investigations for testing the branch tree.",
+            createdAt: Date.now(),
+            variants: [],
+          },
+        ],
+        defaultSceneId: sceneId,
+      });
+
+      const makeMessages = (exchanges: Array<[string, string]>, startTs: number): StoredMessage[] =>
+        exchanges.flatMap(([userLine, assistantLine], i) => {
+          const at = startTs + i * 2 * minute;
+          return [
+            {
+              id: crypto.randomUUID(),
+              role: "user" as const,
+              content: userLine,
+              createdAt: at,
+              memoryRefs: [],
+            },
+            {
+              id: crypto.randomUUID(),
+              role: "assistant" as const,
+              content: assistantLine,
+              createdAt: at + minute,
+              memoryRefs: [],
+            },
+          ];
+        });
+
+      const lastUserId = (s: Session): string => {
+        const found = [...s.messages].reverse().find((m) => m.role === "user");
+        if (!found) throw new Error("Branch parent has no user message to fork from.");
+        return found.id;
+      };
+
+      const branch = async (
+        parent: Session,
+        branchAtMessageId: string,
+        title: string,
+        createdAt: number,
+        exchanges: Array<[string, string]>,
+      ): Promise<Session> => {
+        const created = await createBranchedSession(parent, branchAtMessageId);
+        const continuation = makeMessages(exchanges, createdAt);
+        const updated: Session = {
+          ...created,
+          title,
+          messages: [...created.messages, ...continuation],
+          createdAt,
+          updatedAt: createdAt + exchanges.length * 2 * minute,
+        };
+        await saveSession(updated, { preserveDynamicMemory: false });
+        return updated;
+      };
+
+      const rootCreatedAt = daysAgo(9, 21, 0);
+      const rootExchanges: Array<[string, string]> = [
+        [
+          "The Hadley case file just landed on your desk, Inspector. Where do we start?",
+          "Where everyone else stops looking. Get me the coroner's report and the doorman's statement, in that order.",
+        ],
+        [
+          "The doorman swears nobody came in after nine.",
+          "Then either he's lying or our killer was already inside before nine. Both are interesting. Pull the building's guest log.",
+        ],
+        [
+          "The log shows an 'L. Hart' signed in at 8:40 and never signed back out.",
+          "Lena Hart. Now we've got a name and a problem. She's either the last person to see Hadley alive, or the first who should have left and didn't.",
+        ],
+        [
+          "So what's the move, Inspector? Bring her in, or watch her?",
+          "Careful here. Whatever we choose, we don't get to un-choose it. Let me think.",
+        ],
+      ];
+      const rootMessages = makeMessages(rootExchanges, rootCreatedAt);
+
+      const root = await createSession(character.id, "The Hadley Case", sceneId);
+      const rootSession: Session = {
+        ...root,
+        title: "The Hadley Case",
+        messages: rootMessages,
+        createdAt: rootCreatedAt,
+        updatedAt: rootCreatedAt + rootExchanges.length * 2 * minute,
+      };
+      await saveSession(rootSession, { preserveDynamicMemory: false });
+
+      const decisionId = rootMessages[rootMessages.length - 1].id;
+      const coronerId = rootMessages[1].id;
+
+      const bringIn = await branch(rootSession, decisionId, "Bring Hart in", daysAgo(7, 10, 0), [
+        [
+          "Then we bring her in. Uniforms are already at her door.",
+          "Good. Interview two, not holding. Make it feel like a conversation, not a cage. People confess to conversations.",
+        ],
+        [
+          "She's here. Her lawyer is ten minutes out. We've got a window.",
+          "Ten minutes is a lifetime if you ask the right thing. Don't mention Hadley. Ask her about the weather that night, and watch her hands.",
+        ],
+      ]);
+
+      const tail = await branch(rootSession, decisionId, "Tail Hart", daysAgo(7, 16, 0), [
+        [
+          "We hold off and tail her instead. She left her flat twenty minutes ago.",
+          "Then she's nervous, and nervous people lead you somewhere. Stay back two cars. Wherever she's going in this weather, it matters.",
+        ],
+        [
+          "She's gone into the old Hadley print works. The one that's supposed to be shut.",
+          "Supposed to be. Nobody visits a dead man's empty factory at midnight to reminisce. Call it in, quietly. We watch the door.",
+        ],
+      ]);
+
+      await branch(rootSession, coronerId, "Re-open the coroner's report", daysAgo(8, 9, 0), [
+        [
+          "Before we chase anyone, you want the coroner's report re-read.",
+          "Everyone built this case on a 9 PM death. If the coroner's even an hour off, every alibi we have is pointing at the wrong window. Wake him up.",
+        ],
+        [
+          "He admits the body could have been moved after death. The lividity's wrong.",
+          "Then Hadley didn't die where we found him. We're not investigating a murder, we're investigating a delivery. Start over, trust nothing in the first file.",
+        ],
+      ]);
+
+      await branch(bringIn, lastUserId(bringIn), "She lawyers up", daysAgo(5, 11, 0), [
+        [
+          "The lawyer walked in early. She's done talking.",
+          "Then she already told us everything that mattered with her timing. Innocent people don't bring counsel to a weather conversation. Let her go, put a car on her.",
+        ],
+      ]);
+
+      const slip = await branch(bringIn, lastUserId(bringIn), "She slips on the timeline", daysAgo(5, 15, 0), [
+        [
+          "She said it was raining at nine. It wasn't. The rain started at eleven.",
+          "There it is. She just put herself on that street two hours before she admits being there. Don't smile. Pour her more coffee and let her keep talking.",
+        ],
+      ]);
+
+      await branch(slip, lastUserId(slip), "The partial confession", daysAgo(3, 13, 0), [
+        [
+          "She's crying now. Says she was there, but Hadley was already gone when she arrived.",
+          "Maybe. A body and a grieving liar look identical for the first hour. Get me the time of death, and we'll see whose story the corpse agrees with.",
+        ],
+      ]);
+
+      await branch(tail, lastUserId(tail), "The second figure", daysAgo(4, 23, 30), [
+        [
+          "There's someone else inside. A second figure, already waiting for her.",
+          "So Hart isn't the end of the thread, she's the middle of it. Get me a long lens and a name for that silhouette. This case just grew a partner.",
+        ],
+      ]);
+
+      showStatus(`✓ Branching demo ready: ${character.name} (8 linked sessions)`);
+      navigate(Routes.chatTree(character.id, rootSession.id));
+    } catch (err) {
+      showError(
+        `Failed to create branching demo: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   };
 
@@ -1961,6 +2142,14 @@ export function DeveloperPage() {
             title="Create seeded benchmark group chat"
             description="Creates a dynamic-memory group chat with three benchmark characters and 30 seeded messages, then opens it."
             onClick={generateSeededBenchmarkGroupSession}
+            variant="primary"
+          />
+
+          <ActionButton
+            icon={<FlaskConical />}
+            title="Create branching demo"
+            description="Creates Inspector Adrian Vale and one investigation that forks into 8 linked sessions (depth 4) with diverging paths, then opens the branch tree."
+            onClick={generateBranchingDemo}
             variant="primary"
           />
 

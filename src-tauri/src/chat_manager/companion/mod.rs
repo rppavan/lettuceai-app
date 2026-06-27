@@ -309,7 +309,10 @@ pub fn soul_category_is_changeable(category: &str) -> bool {
 }
 
 pub fn soul_category_is_consolidatable(category: &str) -> bool {
-    !matches!(soul_category_mutability(category), SoulMutability::Immutable)
+    !matches!(
+        soul_category_mutability(category),
+        SoulMutability::Immutable
+    )
 }
 
 pub const CHANGEABLE_SOUL_CATEGORIES: &[&str] = &[
@@ -861,7 +864,10 @@ pub fn core_soul_authored(character: &Character) -> Vec<(String, String)> {
         .collect()
 }
 
-pub fn active_soul_growth_entries(character: &Character, session: &Session) -> Vec<SoulGrowthEntry> {
+pub fn active_soul_growth_entries(
+    character: &Character,
+    session: &Session,
+) -> Vec<SoulGrowthEntry> {
     let config = companion_config(character);
     let state = current_state(session, &config);
     state
@@ -1409,7 +1415,11 @@ fn apply_bipolar_delta(current: f64, raw_delta: f64, baseline: f64, cfg: &AxisDy
     } else {
         raw_delta
     };
-    let headroom = if d >= 0.0 { 1.0 - current } else { 1.0 + current };
+    let headroom = if d >= 0.0 {
+        1.0 - current
+    } else {
+        1.0 + current
+    };
     let v = current + d * headroom.max(0.0);
     let gap = v - baseline;
     let leak = if gap < 0.0 {

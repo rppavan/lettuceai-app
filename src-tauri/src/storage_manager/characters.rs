@@ -323,12 +323,7 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
     if let Ok((lora_name, lora_strength)) = conn.query_row(
         "SELECT lora_name, lora_strength FROM characters WHERE id = ?",
         params![id],
-        |r| {
-            Ok((
-                r.get::<_, Option<String>>(0)?,
-                r.get::<_, Option<f64>>(1)?,
-            ))
-        },
+        |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<f64>>(1)?)),
     ) {
         if let Some(value) = lora_name {
             root.insert("loraName".into(), JsonValue::String(value));
@@ -896,7 +891,9 @@ fn upsert_character_value(app: &tauri::AppHandle, c: &JsonValue) -> Result<JsonV
     tx.execute(
         "UPDATE characters SET lora_name = ?, lora_strength = ? WHERE id = ?",
         params![
-            c.get("loraName").and_then(|v| v.as_str()).map(str::to_string),
+            c.get("loraName")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
             c.get("loraStrength").and_then(|v| v.as_f64()),
             &id
         ],
@@ -1146,7 +1143,10 @@ fn clone_copy_rows(
             continue;
         }
         insert_cols.push(format!("\"{}\"", col));
-        if let Some((_, value)) = overrides.iter().find(|(name, _)| name.eq_ignore_ascii_case(col)) {
+        if let Some((_, value)) = overrides
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(col))
+        {
             binds.push(value.clone());
             select_exprs.push(format!("?{}", binds.len()));
         } else {
@@ -1202,9 +1202,11 @@ pub fn character_clone_deep(app: tauri::AppHandle, id: String) -> Result<String,
     let new_char_id = uuid::Uuid::new_v4().to_string();
 
     let orig_name: String = conn
-        .query_row("SELECT name FROM characters WHERE id = ?", params![&id], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT name FROM characters WHERE id = ?",
+            params![&id],
+            |r| r.get(0),
+        )
         .optional()
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
         .ok_or_else(|| crate::utils::err_msg(module_path!(), line!(), "Character not found"))?;
@@ -1266,9 +1268,11 @@ pub fn character_clone_deep(app: tauri::AppHandle, id: String) -> Result<String,
     // 5. scene variants
     let mut scene_variant_map: HashMap<String, String> = HashMap::new();
     for (old_scene, new_scene) in &scene_map {
-        for ov in
-            clone_collect_ids(&tx, "SELECT id FROM scene_variants WHERE scene_id = ?", old_scene)?
-        {
+        for ov in clone_collect_ids(
+            &tx,
+            "SELECT id FROM scene_variants WHERE scene_id = ?",
+            old_scene,
+        )? {
             let nv = uuid::Uuid::new_v4().to_string();
             clone_copy_rows(
                 &tx,
@@ -1306,7 +1310,11 @@ pub fn character_clone_deep(app: tauri::AppHandle, id: String) -> Result<String,
 
     // 7. chat templates (remap scene_id)
     let mut template_map: HashMap<String, String> = HashMap::new();
-    for old in clone_collect_ids(&tx, "SELECT id FROM chat_templates WHERE character_id = ?", &id)? {
+    for old in clone_collect_ids(
+        &tx,
+        "SELECT id FROM chat_templates WHERE character_id = ?",
+        &id,
+    )? {
         let new = uuid::Uuid::new_v4().to_string();
         let old_scene: Option<String> = tx
             .query_row(
@@ -1464,9 +1472,11 @@ pub fn character_clone_deep(app: tauri::AppHandle, id: String) -> Result<String,
 
         let mut variant_map: HashMap<String, String> = HashMap::new();
         for (om, nm) in &msg_map {
-            for ov in
-                clone_collect_ids(&tx, "SELECT id FROM message_variants WHERE message_id = ?", om)?
-            {
+            for ov in clone_collect_ids(
+                &tx,
+                "SELECT id FROM message_variants WHERE message_id = ?",
+                om,
+            )? {
                 let nv = uuid::Uuid::new_v4().to_string();
                 clone_copy_rows(
                     &tx,
@@ -1556,7 +1566,8 @@ pub fn character_clone_deep(app: tauri::AppHandle, id: String) -> Result<String,
 
     let conn2 = open_db(&app)?;
     let json = read_character(&conn2, &new_char_id)?;
-    serde_json::to_string(&json).map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+    serde_json::to_string(&json)
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
 }
 
 #[cfg(test)]

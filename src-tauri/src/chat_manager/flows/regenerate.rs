@@ -8,9 +8,7 @@ use crate::chat_manager::attachments::{
 };
 use crate::chat_manager::commands::take_aborted_request;
 use crate::chat_manager::companion;
-use crate::chat_manager::execution::{
-    build_provider_extra_fields, RequestSettings,
-};
+use crate::chat_manager::execution::{build_provider_extra_fields, RequestSettings};
 use crate::chat_manager::memory::dynamic::{
     context_enrichment_enabled, dynamic_min_similarity, dynamic_retrieval_limit,
     dynamic_retrieval_strategy, dynamic_window_size, ensure_pinned_hot, mark_memories_accessed,
@@ -648,7 +646,7 @@ impl RegenerateFlow {
         let text = if companion_mode_enabled
             && crate::chat_manager::temporal::companion_time_awareness_enabled(&session)
         {
-            crate::chat_manager::temporal::strip_leading_time_stamp(&text)
+            crate::chat_manager::temporal::strip_echoed_time_stamps(&text)
         } else {
             text
         };

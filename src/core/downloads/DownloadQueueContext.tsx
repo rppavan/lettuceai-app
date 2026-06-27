@@ -138,42 +138,8 @@ export function groupQueueDownloads(queue: QueuedDownload[]): {
   return { groups, singles };
 }
 
-const registeredSdDownloads = new Set<string>();
-
 async function registerCompletedSdDownload(item: QueuedDownload): Promise<void> {
-  if (item.queueKind !== "sd" || !item.resultPath || registeredSdDownloads.has(item.id)) {
-    return;
-  }
-  registeredSdDownloads.add(item.id);
-  const [family, role] = (item.variant ?? "").split(":");
-  if (!family || !role) return;
-  try {
-    const { sdEnsureModelRow, sdRegisterHfModel } = await import("../local-diffusion");
-    type SdRegisterArgs = Parameters<typeof sdRegisterHfModel>;
-    const entry = await sdRegisterHfModel(
-      item.modelId,
-      item.resultPath,
-      role as SdRegisterArgs[2],
-      family as SdRegisterArgs[3],
-      item.displayName,
-    );
-    if (entry.complete) {
-      await sdEnsureModelRow(entry);
-      toast.success("Image model ready", `${entry.name} is available for image generation.`);
-    } else {
-      toast.success(
-        "Model file registered",
-        `${entry.name} has no main model file yet. Download the diffusion model from the same repo or attach files in Settings.`,
-        { duration: 10000 },
-      );
-    }
-  } catch (err: any) {
-    registeredSdDownloads.delete(item.id);
-    toast.error(
-      "Model registration failed",
-      typeof err === "string" ? err : err?.message || "Unknown error",
-    );
-  }
+  void item;
 }
 
 export function DownloadQueueProvider({ children }: { children: ReactNode }) {

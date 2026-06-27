@@ -136,7 +136,8 @@ fn android_read_backup_index(app: &tauri::AppHandle) -> Result<Vec<JsonValue>, S
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let bytes = fs::read(&path).map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let bytes =
+        fs::read(&path).map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     match serde_json::from_slice::<JsonValue>(&bytes) {
         Ok(JsonValue::Array(items)) => Ok(items),
         _ => Ok(Vec::new()),
@@ -1704,7 +1705,9 @@ pub async fn backup_export(
             obj.insert("filename".to_string(), JsonValue::String(filename.clone()));
         }
         let mut index = android_read_backup_index(&app).unwrap_or_default();
-        index.retain(|entry| entry.get("path").and_then(|p| p.as_str()) != Some(saved_path.as_str()));
+        index.retain(|entry| {
+            entry.get("path").and_then(|p| p.as_str()) != Some(saved_path.as_str())
+        });
         index.push(info);
         android_write_backup_index(&app, &index)?;
 
@@ -4159,79 +4162,84 @@ pub fn backup_list(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, Stri
 
     #[cfg(not(target_os = "android"))]
     {
-    let downloads = get_downloads_dir()?;
-    let mut backups = Vec::new();
+        let downloads = get_downloads_dir()?;
+        let mut backups = Vec::new();
 
-    log_info(
-        &app,
-        "backup",
-        format!("Looking for backups in: {:?}", downloads),
-    );
-
-    if !downloads.exists() {
         log_info(
             &app,
             "backup",
-            format!("Downloads directory does not exist: {:?}", downloads),
+            format!("Looking for backups in: {:?}", downloads),
         );
-        return Ok(backups);
-    }
 
-    let read_result = fs::read_dir(&downloads);
-    match &read_result {
-        Ok(_) => log_info(&app, "backup", "Successfully opened downloads directory"),
-        Err(e) => log_info(
-            &app,
-            "backup",
-            format!("Failed to read downloads directory: {}", e),
-        ),
-    }
+        if !downloads.exists() {
+            log_info(
+                &app,
+                "backup",
+                format!("Downloads directory does not exist: {:?}", downloads),
+            );
+            return Ok(backups);
+        }
 
-    for entry in read_result.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))? {
-        let entry = entry.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
-        let path = entry.path();
+        let read_result = fs::read_dir(&downloads);
+        match &read_result {
+            Ok(_) => log_info(&app, "backup", "Successfully opened downloads directory"),
+            Err(e) => log_info(
+                &app,
+                "backup",
+                format!("Failed to read downloads directory: {}", e),
+            ),
+        }
 
-        log_info(&app, "backup", format!("Found file: {:?}", path));
+        for entry in
+            read_result.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
+        {
+            let entry =
+                entry.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+            let path = entry.path();
 
-        if let Some(ext) = path.extension() {
-            if ext == "lettuce" {
-                log_info(&app, "backup", format!("Found .lettuce backup: {:?}", path));
-                if let Ok(info) = backup_get_info(app.clone(), path.to_string_lossy().to_string()) {
-                    let mut info_obj = info;
-                    if let Some(obj) = info_obj.as_object_mut() {
-                        obj.insert(
-                            "path".to_string(),
-                            serde_json::Value::String(path.to_string_lossy().to_string()),
-                        );
-                        obj.insert(
-                            "filename".to_string(),
-                            serde_json::Value::String(
-                                path.file_name()
-                                    .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_default(),
-                            ),
-                        );
+            log_info(&app, "backup", format!("Found file: {:?}", path));
+
+            if let Some(ext) = path.extension() {
+                if ext == "lettuce" {
+                    log_info(&app, "backup", format!("Found .lettuce backup: {:?}", path));
+                    if let Ok(info) =
+                        backup_get_info(app.clone(), path.to_string_lossy().to_string())
+                    {
+                        let mut info_obj = info;
+                        if let Some(obj) = info_obj.as_object_mut() {
+                            obj.insert(
+                                "path".to_string(),
+                                serde_json::Value::String(path.to_string_lossy().to_string()),
+                            );
+                            obj.insert(
+                                "filename".to_string(),
+                                serde_json::Value::String(
+                                    path.file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_default(),
+                                ),
+                            );
+                        }
+                        backups.push(info_obj);
                     }
-                    backups.push(info_obj);
                 }
             }
         }
-    }
 
-    log_info(
-        &app,
-        "backup",
-        format!("Found {} backups total", backups.len()),
-    );
+        log_info(
+            &app,
+            "backup",
+            format!("Found {} backups total", backups.len()),
+        );
 
-    // Sort by creation date descending
-    backups.sort_by(|a, b| {
-        let a_time = a.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(0);
-        let b_time = b.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(0);
-        b_time.cmp(&a_time)
-    });
+        // Sort by creation date descending
+        backups.sort_by(|a, b| {
+            let a_time = a.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(0);
+            let b_time = b.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(0);
+            b_time.cmp(&a_time)
+        });
 
-    Ok(backups)
+        Ok(backups)
     }
 }
 
@@ -4255,7 +4263,9 @@ pub fn backup_delete(app: tauri::AppHandle, backup_path: String) -> Result<(), S
             );
         }
         let mut index = android_read_backup_index(&app)?;
-        index.retain(|entry| entry.get("path").and_then(|p| p.as_str()) != Some(backup_path.as_str()));
+        index.retain(|entry| {
+            entry.get("path").and_then(|p| p.as_str()) != Some(backup_path.as_str())
+        });
         android_write_backup_index(&app, &index)?;
         return Ok(());
     }

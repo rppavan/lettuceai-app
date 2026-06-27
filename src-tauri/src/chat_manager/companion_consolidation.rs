@@ -6,7 +6,9 @@ use crate::api::{api_request, ApiRequest, ApiResponse};
 use crate::chat_manager::companion::{
     self, soul_category_is_changeable, SoulGrowthEntry, CORE_SOUL_CATEGORIES,
 };
-use crate::chat_manager::execution::{find_model_with_credential, prepare_default_sampling_request};
+use crate::chat_manager::execution::{
+    find_model_with_credential, prepare_default_sampling_request,
+};
 use crate::chat_manager::memory::flow::resolve_dynamic_memory_summarisation_model_id;
 use crate::chat_manager::prompts;
 use crate::chat_manager::request::{extract_error_message, extract_text, extract_usage};
@@ -69,7 +71,14 @@ pub async fn maybe_run_consolidation(
         None,
     );
 
-    let messages = render_messages(app, credential, character, &authored, &core_overlay, &accumulated);
+    let messages = render_messages(
+        app,
+        credential,
+        character,
+        &authored,
+        &core_overlay,
+        &accumulated,
+    );
     if messages.is_empty() {
         return Err("Consolidation template rendered no prompt content".to_string());
     }

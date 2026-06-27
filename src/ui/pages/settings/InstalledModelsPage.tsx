@@ -25,7 +25,6 @@ import {
   readSettingsCached,
   SETTINGS_UPDATED_EVENT,
 } from "../../../core/storage/repo";
-import { sdDeleteImageFile, sdListImageFiles } from "../../../core/local-diffusion";
 import type { ProviderCredential } from "../../../core/storage/schemas";
 
 type InstalledGgufModel = {
@@ -164,10 +163,9 @@ export function InstalledModelsPage() {
     if (mode === "initial") setLoading(true);
     else setRefreshing(true);
     try {
-      const [dir, downloaded, imageFiles] = await Promise.all([
+      const [dir, downloaded] = await Promise.all([
         invoke<string>("hf_get_gguf_models_dir"),
         invoke<InstalledGgufModel[]>("hf_list_downloaded_models"),
-        sdListImageFiles().catch(() => []),
       ]);
       setModelsDir(dir);
       setModels(
@@ -177,24 +175,7 @@ export function InstalledModelsPage() {
             : l.filename.localeCompare(r.filename),
         ),
       );
-      setImageModels(
-        imageFiles.map((file) => {
-          const segments = file.path.split(/[\/]/);
-          const parent = segments.length > 1 ? segments[segments.length - 2] : "";
-          const extension = file.filename.split(".").pop()?.toUpperCase() ?? "";
-          return {
-            modelId: parent,
-            filename: file.filename,
-            path: file.path,
-            size: file.size,
-            quantization: extension,
-            isMmproj: false,
-            architecture: null,
-            contextLength: null,
-            imageRole: file.role,
-          };
-        }),
-      );
+      setImageModels([]);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -372,11 +353,7 @@ export function InstalledModelsPage() {
       if (!confirmed) return;
       try {
         setDeletingPath(model.path);
-        if (model.imageRole) {
-          await sdDeleteImageFile(model.path);
-        } else {
-          await invoke("hf_delete_downloaded_model", { filePath: model.path });
-        }
+        await invoke("hf_delete_downloaded_model", { filePath: model.path });
         toast.success(t("installedModels.toasts.modelDeleted"), model.filename);
         await loadModels("refresh");
       } catch (err) {

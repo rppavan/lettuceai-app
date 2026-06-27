@@ -4109,7 +4109,8 @@ fn migrate_v71_to_v72(app: &AppHandle) -> Result<(), String> {
             .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
         let mut collected = Vec::new();
         for row in rows {
-            collected.push(row.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?);
+            collected
+                .push(row.map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?);
         }
         collected
     };

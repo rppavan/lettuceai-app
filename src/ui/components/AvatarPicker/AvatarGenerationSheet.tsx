@@ -79,6 +79,7 @@ export function AvatarGenerationSheet({
   hidePromptNavigation = false,
   loraTag = null,
 }: AvatarGenerationSheetProps) {
+  void loraTag;
   const { t } = useI18n();
   const [prompt, setPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -235,10 +236,7 @@ export function AvatarGenerationSheet({
         avatarRequest: prompt.trim(),
       });
       const request: ImageGenerationRequest = {
-        prompt:
-          loraTag && selectedModel.providerId === "localdiffusion"
-            ? `${loraTag} ${renderedPrompt}`
-            : renderedPrompt,
+        prompt: renderedPrompt,
         model: selectedModel.name,
         providerId: selectedModel.providerId,
         credentialId: selectedProvider.id,
@@ -308,10 +306,7 @@ export function AvatarGenerationSheet({
       });
 
       const request: ImageGenerationRequest = {
-        prompt:
-          loraTag && selectedModel.providerId === "localdiffusion"
-            ? `${loraTag} ${renderedPrompt}`
-            : renderedPrompt,
+        prompt: renderedPrompt,
         model: selectedModel.name,
         providerId: selectedModel.providerId,
         credentialId: selectedProvider.id,

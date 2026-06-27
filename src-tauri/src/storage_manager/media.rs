@@ -616,8 +616,18 @@ fn is_supported_audio_file(path: &Path) -> bool {
         .map(|ext| {
             matches!(
                 ext.to_ascii_lowercase().as_str(),
-                "mp3" | "wav" | "wave" | "ogg" | "oga" | "flac" | "aac" | "aiff" | "aif" | "m4a"
-                    | "webm" | "opus"
+                "mp3"
+                    | "wav"
+                    | "wave"
+                    | "ogg"
+                    | "oga"
+                    | "flac"
+                    | "aac"
+                    | "aiff"
+                    | "aif"
+                    | "m4a"
+                    | "webm"
+                    | "opus"
             )
         })
         .unwrap_or(false)

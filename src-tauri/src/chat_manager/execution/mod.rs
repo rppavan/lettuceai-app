@@ -530,7 +530,12 @@ pub(super) fn resolve_llama_mtp_model_path(
                 .as_ref()
                 .and_then(|cfg| cfg.llama_mtp_model_path.clone())
         })
-        .or_else(|| settings.advanced_model_settings.llama_mtp_model_path.clone())
+        .or_else(|| {
+            settings
+                .advanced_model_settings
+                .llama_mtp_model_path
+                .clone()
+        })
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
 }

@@ -71,16 +71,6 @@ interface HfModelFile {
   role?: string | null;
 }
 
-interface SdRunabilityScore {
-  filename: string;
-  score: number;
-  label: "excellent" | "good" | "marginal" | "poor" | "unrunnable";
-  familyGuess: string;
-  fitsInVram: boolean;
-  fitsInRam: boolean;
-  maxComfortableResolution: number;
-}
-
 interface RunabilityScore {
   filename: string;
   score: number;
@@ -1280,7 +1270,7 @@ export function HuggingFaceBrowserPage() {
   }, []);
 
   const sdModeParam = searchParams.get("mode");
-  const isSdMode = sdModeParam === "sd";
+  const isSdMode = false;
   const HF_MODE_STORAGE_KEY = "hfBrowser:mode";
 
   useEffect(() => {
@@ -1452,16 +1442,6 @@ export function HuggingFaceBrowserPage() {
   const [readme, setReadme] = useState<string | null>(null);
   const [readmeLoading, setReadmeLoading] = useState(false);
   const [runabilityScores, setRunabilityScores] = useState<Record<string, RunabilityScore>>({});
-  const [sdScores, setSdScores] = useState<Record<string, SdRunabilityScore>>({});
-  const [sdModelsDir, setSdModelsDir] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isSdMode || sdModelsDir) return;
-    import("../../../core/local-diffusion")
-      .then(({ sdGetStatus }) => sdGetStatus())
-      .then((status) => setSdModelsDir(status.modelsDir))
-      .catch(() => {});
-  }, [isSdMode, sdModelsDir]);
 
   // Recommendation panel state
   const [recData, setRecData] = useState<RecommendationData | null>(null);
@@ -1650,7 +1630,6 @@ export function HuggingFaceBrowserPage() {
       setReadme(null);
       setReadmeLoading(true);
       setRunabilityScores({});
-      setSdScores({});
       setRecData(null);
       setRecLoading(!isOllamaMode && !isSdMode);
       setFilesPanelTab(isOllamaMode || isSdMode ? "files" : "recommended");
@@ -1667,33 +1646,7 @@ export function HuggingFaceBrowserPage() {
           setModelInfo(info);
           // Fetch runability scores in background (skipped in Ollama mode — host hardware unknown)
           const runnableFiles = info.files.filter((f) => f.size > 0 && !f.isMmproj && !f.isMtp);
-          if (runnableFiles.length > 0 && isSdMode) {
-            invoke<SdRunabilityScore[]>("hf_compute_sd_runability", {
-              files: runnableFiles.map((f) => ({
-                filename: f.filename,
-                size: f.size,
-                quantization: f.quantization,
-              })),
-            })
-              .then((scores) => {
-                const sdMap: Record<string, SdRunabilityScore> = {};
-                const map: Record<string, RunabilityScore> = {};
-                for (const s of scores) {
-                  sdMap[s.filename] = s;
-                  map[s.filename] = {
-                    filename: s.filename,
-                    score: s.score,
-                    label: s.label,
-                    fitsInRam: s.fitsInRam,
-                    fitsInVram: s.fitsInVram,
-                    gpuMode: s.fitsInVram ? "full" : s.fitsInRam ? "cpu" : "cpu",
-                  };
-                }
-                setSdScores(sdMap);
-                setRunabilityScores(map);
-              })
-              .catch(() => {});
-          } else if (runnableFiles.length > 0 && !isOllamaMode) {
+          if (runnableFiles.length > 0 && !isOllamaMode) {
             invoke<RunabilityScore[]>("hf_compute_runability", {
               modelId: info.modelId,
               files: runnableFiles.map((f) => ({
@@ -2248,23 +2201,6 @@ export function HuggingFaceBrowserPage() {
     async (file: HfModelFile) => {
       if (!modelInfo) return;
 
-      if (isSdMode) {
-        const family = sdScores[file.filename]?.familyGuess ?? "sd15";
-        const role = file.role ?? "checkpoint";
-        const repoSlug = modelInfo.modelId.replace(/[^A-Za-z0-9._-]+/g, "_");
-        const destinationPath = sdModelsDir
-          ? `${sdModelsDir}/${repoSlug}/${file.filename}`
-          : null;
-        await queueTrackedDownload(modelInfo.modelId, file.filename, {
-          queueKind: "sd",
-          destinationPath,
-          variant: `${family}:${role}`,
-          displayName: extractModelShortName(modelInfo.modelId),
-          installId: crypto.randomUUID(),
-        });
-        return;
-      }
-
       const fileRecommendation = recData?.files.find((item) => item.filename === file.filename) ?? null;
       const requestedModelOffload = gpuOptionsEnabled ? recModelOffload : "auto";
       const requestedGpuLayers = fileRecommendation
@@ -2310,8 +2246,6 @@ export function HuggingFaceBrowserPage() {
       recModelOffload,
       recommendedMixedGpuLayers,
       returnTo,
-      sdModelsDir,
-      sdScores,
       selectedOllamaProviderId,
     ],
   );
@@ -3767,19 +3701,6 @@ export function HuggingFaceBrowserPage() {
                                     {file.isMtp && (
                                       <span className="rounded-md border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold text-accent/80">
                                         MTP
-                                      </span>
-                                    )}
-                                    {isSdMode && file.role && (
-                                      <span className="rounded-md border border-violet-400/20 bg-violet-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-violet-300">
-                                        {file.role}
-                                      </span>
-                                    )}
-                                    {isSdMode && sdScores[file.filename] && (
-                                      <span className="rounded-md border border-fg/15 bg-fg/5 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-fg/55">
-                                        {sdScores[file.filename].familyGuess}
-                                        {sdScores[file.filename].maxComfortableResolution > 0
-                                          ? ` · ${sdScores[file.filename].maxComfortableResolution}px`
-                                          : ""}
                                       </span>
                                     )}
                                     {rs && (

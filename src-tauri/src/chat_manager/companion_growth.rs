@@ -7,7 +7,9 @@ use crate::chat_manager::companion::{
     self, soul_category_is_changeable, soul_category_label, SoulGrowthEntry,
     CHANGEABLE_SOUL_CATEGORIES,
 };
-use crate::chat_manager::execution::{find_model_with_credential, prepare_default_sampling_request};
+use crate::chat_manager::execution::{
+    find_model_with_credential, prepare_default_sampling_request,
+};
 use crate::chat_manager::memory::flow::resolve_dynamic_memory_summarisation_model_id;
 use crate::chat_manager::prompts;
 use crate::chat_manager::request::{extract_error_message, extract_text, extract_usage};
@@ -65,7 +67,14 @@ pub async fn run_growthcycle(
         None,
     );
 
-    let messages = render_messages(app, credential, character, &snapshot, &existing_growth, &fresh);
+    let messages = render_messages(
+        app,
+        credential,
+        character,
+        &snapshot,
+        &existing_growth,
+        &fresh,
+    );
     if messages.is_empty() {
         return Err("Growthcycle template rendered no prompt content".to_string());
     }
@@ -149,8 +158,13 @@ fn render_messages(
             PromptEntryRole::User => "user",
             PromptEntryRole::Assistant => "assistant",
         };
-        let rendered =
-            render_growth_content(&entry.content, character, &categories, &current_growth, &memories);
+        let rendered = render_growth_content(
+            &entry.content,
+            character,
+            &categories,
+            &current_growth,
+            &memories,
+        );
         let trimmed = rendered.trim();
         if trimmed.is_empty() {
             continue;

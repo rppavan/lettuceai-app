@@ -1550,8 +1550,8 @@ mod desktop {
                                 )
                             })?
                         }
-                        InlineMedia::Audio(bytes) => {
-                            MtmdBitmap::from_buffer(mtmd_ctx, bytes).map_err(|e| {
+                        InlineMedia::Audio(bytes) => MtmdBitmap::from_buffer(mtmd_ctx, bytes)
+                            .map_err(|e| {
                                 crate::utils::err_msg(
                                     module_path!(),
                                     line!(),
@@ -1560,8 +1560,7 @@ mod desktop {
                                         index, e
                                     ),
                                 )
-                            })?
-                        }
+                            })?,
                     };
                     bitmaps.push(bitmap);
                 }
@@ -1886,7 +1885,9 @@ mod desktop {
                         log_warn(
                             &app,
                             "llama_cpp",
-                            format!("MTP draft context creation failed, continuing without MTP: {err}"),
+                            format!(
+                                "MTP draft context creation failed, continuing without MTP: {err}"
+                            ),
                         );
                         None
                     }
@@ -2095,9 +2096,7 @@ mod desktop {
                                 global_pos,
                                 chunk_end == tokens_len,
                             )
-                            .map_err(|e| {
-                                crate::utils::err_msg(module_path!(), line!(), e)
-                            })?;
+                            .map_err(|e| crate::utils::err_msg(module_path!(), line!(), e))?;
                         }
                         check_abort_signal(abort_rx.as_mut())?;
                         global_pos += (chunk_end - chunk_start) as i32;
@@ -2242,11 +2241,15 @@ mod desktop {
 
                 let token = if let Some(runtime) = mtp_runtime.as_mut() {
                     if runtime.pending.is_empty() {
-                        let accepted =
-                            mtp::mtp_round(&mut ctx, runtime, &mut sampler, model, n_cur, target_len)
-                                .map_err(|e| {
-                                    crate::utils::err_msg(module_path!(), line!(), e)
-                                })?;
+                        let accepted = mtp::mtp_round(
+                            &mut ctx,
+                            runtime,
+                            &mut sampler,
+                            model,
+                            n_cur,
+                            target_len,
+                        )
+                        .map_err(|e| crate::utils::err_msg(module_path!(), line!(), e))?;
                         runtime.pending.extend(accepted);
                     }
                     match runtime.pending.pop_front() {
@@ -2493,8 +2496,7 @@ mod desktop {
                     0.0
                 };
                 let draft_acceptance = if runtime.drafted > 0 {
-                    runtime.accepted.saturating_sub(runtime.rounds) as f64
-                        / runtime.drafted as f64
+                    runtime.accepted.saturating_sub(runtime.rounds) as f64 / runtime.drafted as f64
                 } else {
                     0.0
                 };

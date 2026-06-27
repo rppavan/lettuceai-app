@@ -11,8 +11,6 @@ use tokio::sync::Mutex as TokioMutex;
 
 use crate::utils::{log_info, log_info_global, log_warn_global};
 
-pub mod sd;
-
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct HfModelEntry {
@@ -1501,8 +1499,11 @@ pub struct BestRecommendation {
     pub viable: bool,
 }
 
+// Capped at q8_0: q8_0 is the highest-quality KV type we recommend. (Higher
+// options like q8_1/f16/f32 remain manually selectable but are never auto-picked;
+// q8_1 also has no matching UI dropdown option, which made the select fall back
+// to displaying "F32".)
 const RECOMMENDATION_KV_TYPES: &[(&str, f64)] = &[
-    ("q8_1", 1.0625),
     ("q8_0", 1.0),
     ("q5_1", 0.75),
     ("q5_0", 0.6875),
@@ -2044,11 +2045,7 @@ pub async fn hf_get_model_files(
             let lower = s.rfilename.to_lowercase();
             let size = size_map.get(&s.rfilename).copied().unwrap_or(0);
             let quantization = extract_quantization(&s.rfilename);
-            let role = if sd_mode {
-                Some(sd::guess_role(&s.rfilename, size).to_string())
-            } else {
-                None
-            };
+            let role = None;
             HfModelFile {
                 filename: s.rfilename.clone(),
                 size,

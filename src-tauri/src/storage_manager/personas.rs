@@ -53,12 +53,7 @@ where
         if let Ok((lora_name, lora_strength)) = conn.query_row(
             "SELECT lora_name, lora_strength FROM personas WHERE id = ?",
             params![&id],
-            |r| {
-                Ok((
-                    r.get::<_, Option<String>>(0)?,
-                    r.get::<_, Option<f64>>(1)?,
-                ))
-            },
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<f64>>(1)?)),
         ) {
             if let Some(value) = lora_name {
                 obj.insert("loraName".into(), JsonValue::String(value));
@@ -193,12 +188,7 @@ pub fn personas_list(app: tauri::AppHandle) -> Result<String, String> {
         if let Ok((lora_name, lora_strength)) = conn.query_row(
             "SELECT lora_name, lora_strength FROM personas WHERE id = ?",
             params![&id],
-            |r| {
-                Ok((
-                    r.get::<_, Option<String>>(0)?,
-                    r.get::<_, Option<f64>>(1)?,
-                ))
-            },
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<f64>>(1)?)),
         ) {
             if let Some(value) = lora_name {
                 obj.insert("loraName".into(), JsonValue::String(value));
@@ -447,12 +437,7 @@ pub fn persona_default_get(app: tauri::AppHandle) -> Result<Option<String>, Stri
         if let Ok((lora_name, lora_strength)) = conn.query_row(
             "SELECT lora_name, lora_strength FROM personas WHERE id = ?",
             params![&id],
-            |r| {
-                Ok((
-                    r.get::<_, Option<String>>(0)?,
-                    r.get::<_, Option<f64>>(1)?,
-                ))
-            },
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<f64>>(1)?)),
         ) {
             if let Some(value) = lora_name {
                 obj.insert("loraName".into(), JsonValue::String(value));

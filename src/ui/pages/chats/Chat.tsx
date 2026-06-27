@@ -1,5 +1,6 @@
 import {
   CSSProperties,
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -54,6 +55,7 @@ import {
   generateUserReply,
   getSession,
   getSessionMeta,
+  listBranchTree,
   listCharacters,
   listPersonas,
   readSettings,
@@ -81,6 +83,7 @@ import {
   useAuthorNoteInlineEditor,
 } from "./components";
 import { ChatAppearanceDrawer } from "./components/appearance/ChatAppearanceDrawer";
+import { CompanionTimeOverrideCard } from "./components/CompanionTimeOverrideCard";
 import { getChatColumnLayout } from "./utils/chatColumnLayout";
 import { getChatWidgetLayout, useViewportWidth } from "./utils/chatWidgetLayout";
 import { ChatWidgetArea } from "./components/ChatWidgetArea";
@@ -101,8 +104,8 @@ import { BottomMenu, GuidedTour, MenuButton, useGuidedTour } from "../../compone
 import { AvatarImage } from "../../components/AvatarImage";
 import { DynamicMemoryApprovalGate } from "../../components/DynamicMemoryApprovalGate";
 import { useAvatar } from "../../hooks/useAvatar";
-import { Image, RefreshCw, Sparkles, Check, PenLine, Lock, FileAudio } from "lucide-react";
-import { radius, cn } from "../../design-tokens";
+import { Image, RefreshCw, Sparkles, Check, PenLine, Lock, FileAudio, GitBranch, History } from "lucide-react";
+import { radius, cn, typography } from "../../design-tokens";
 import { useI18n } from "../../../core/i18n/context";
 import { PersonaSelector } from "../group-chats/components/settings";
 import { sanitizeAssistantSceneDirective } from "./hooks/sceneImageProtocol";
@@ -270,6 +273,12 @@ export function ChatConversationPage() {
 
   // Help Me Reply states
   const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [showTimeOverrideMenu, setShowTimeOverrideMenu] = useState(false);
+  const [showBranchNavMenu, setShowBranchNavMenu] = useState(false);
+  const [childForks, setChildForks] = useState<
+    Map<string, Array<{ id: string; title: string; characterId: string }>>
+  >(new Map());
+  const [branchPickerMessageId, setBranchPickerMessageId] = useState<string | null>(null);
   const [showDiceMenu, setShowDiceMenu] = useState(false);
   const [diceNotation, setDiceNotation] = useState("1d20");
   const [diceEditing, setDiceEditing] = useState(false);
@@ -485,6 +494,33 @@ export function ChatConversationPage() {
     setSessionForHeader(chatController.session);
   }, [chatController.session]);
 
+  const branchedFromMessageId = chatController.session?.branchedFromMessageId ?? null;
+  const parentSessionId = chatController.session?.parentSessionId ?? null;
+  const [parentBranchMeta, setParentBranchMeta] = useState<{
+    title: string;
+    characterId: string;
+  } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!parentSessionId || !branchedFromMessageId) {
+      setParentBranchMeta(null);
+      return;
+    }
+    void getSessionMeta(parentSessionId)
+      .then((parent) => {
+        if (cancelled) return;
+        setParentBranchMeta(
+          parent ? { title: parent.title, characterId: parent.characterId } : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setParentBranchMeta(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [parentSessionId, branchedFromMessageId]);
+
   useEffect(() => {
     void asrWhisperListInstalledModels()
       .then(setInstalledWhisperModels)
@@ -572,6 +608,58 @@ export function ChatConversationPage() {
     generateAiScenePrompt,
     applySceneImagePrompt,
   } = chatController;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!sessionId || messages.length === 0) {
+      setChildForks(new Map());
+      return;
+    }
+    const parentMessages = messages;
+    void (async () => {
+      try {
+        const tree = await listBranchTree(sessionId);
+        const children = tree.filter((preview) => preview.parentSessionId === sessionId);
+        if (children.length === 0) {
+          if (!cancelled) setChildForks(new Map());
+          return;
+        }
+        const map = new Map<string, Array<{ id: string; title: string; characterId: string }>>();
+        for (const child of children) {
+          const full = await getSession(child.id);
+          if (!full?.branchedFromMessageId) continue;
+          const childForkIdx = full.messages.findIndex(
+            (message) => message.id === full.branchedFromMessageId,
+          );
+          if (childForkIdx < 0) continue;
+          const childForkMessage = full.messages[childForkIdx];
+          let forkMessage: (typeof parentMessages)[number] | undefined =
+            parentMessages[childForkIdx];
+          if (
+            !forkMessage ||
+            forkMessage.content !== childForkMessage.content ||
+            forkMessage.role !== childForkMessage.role
+          ) {
+            forkMessage = parentMessages.find(
+              (message) =>
+                message.role === childForkMessage.role &&
+                message.content === childForkMessage.content,
+            );
+          }
+          if (!forkMessage) continue;
+          const list = map.get(forkMessage.id) ?? [];
+          list.push({ id: child.id, title: child.title, characterId: child.characterId });
+          map.set(forkMessage.id, list);
+        }
+        if (!cancelled) setChildForks(map);
+      } catch {
+        if (!cancelled) setChildForks(new Map());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, messages.length]);
 
   const [widgetPersonas, setWidgetPersonas] = useState<Persona[]>([]);
   const [widgetModels, setWidgetModels] = useState<Model[]>([]);
@@ -1747,6 +1835,29 @@ export function ChatConversationPage() {
     }
   }, [draft, handleHelpMeReply]);
 
+  const handleApplyCompanionTimeOverride = useCallback(
+    async (override: CompanionTimeOverride | null) => {
+      const current = chatController.session;
+      if (!current) return;
+      const nextCompanionState = CompanionSessionStateSchema.parse({
+        ...(current.companionState ?? {}),
+        preferences: {
+          ...(current.companionState?.preferences ?? {}),
+          timeOverride: override ?? undefined,
+        },
+        updatedAt: Date.now(),
+      });
+      const next = {
+        ...current,
+        companionState: nextCompanionState,
+        updatedAt: Date.now(),
+      };
+      await saveSession(next);
+      setSessionForHeader(next);
+    },
+    [chatController, saveSession],
+  );
+
   const resetScenePromptFlow = useCallback(() => {
     setShowScenePromptModeMenu(false);
     setShowScenePromptEditorMenu(false);
@@ -2744,9 +2855,36 @@ export function ChatConversationPage() {
                   }
                 : {};
 
+              const showBranchMarker =
+                !!branchedFromMessageId && message.id === branchedFromMessageId;
+
               return (
-                <motion.div
-                  key={message.id}
+                <Fragment key={message.id}>
+                  {showBranchMarker ? (
+                    <div className="my-3 flex items-center gap-2 px-2">
+                      <span className="h-px flex-1 bg-fg/10" />
+                      <button
+                        type="button"
+                        disabled={!parentBranchMeta}
+                        onClick={() => {
+                          if (!parentBranchMeta) return;
+                          setShowBranchNavMenu(true);
+                        }}
+                        className={cn(
+                          "inline-flex shrink-0 items-center gap-1.5 rounded-full border border-fg/10 bg-fg/4 px-3 py-1",
+                          typography.caption.size,
+                          "text-fg/55 transition-colors hover:bg-fg/8 hover:text-fg/80 disabled:pointer-events-none",
+                        )}
+                      >
+                        <GitBranch size={12} />
+                        {t("chats.branchTree.branchedFrom", {
+                          title: parentBranchMeta?.title ?? "",
+                        })}
+                      </button>
+                      <span className="h-px flex-1 bg-fg/10" />
+                    </div>
+                  ) : null}
+                  <motion.div
                   id={`message-${message.id}`}
                   className="scroll-mt-24 transition-colors duration-500"
                   layout="position"
@@ -2787,7 +2925,28 @@ export function ChatConversationPage() {
                       index === visibleMessages.length - 1
                     }
                   />
-                </motion.div>
+                  </motion.div>
+                  {childForks.has(message.id) ? (
+                    <div className="my-3 flex items-center gap-2 px-2">
+                      <span className="h-px flex-1 bg-fg/10" />
+                      <button
+                        type="button"
+                        onClick={() => setBranchPickerMessageId(message.id)}
+                        className={cn(
+                          "inline-flex shrink-0 items-center gap-1.5 rounded-full border border-fg/10 bg-fg/4 px-3 py-1",
+                          typography.caption.size,
+                          "text-fg/55 transition-colors hover:bg-fg/8 hover:text-fg/80",
+                        )}
+                      >
+                        <GitBranch size={12} />
+                        {t("chats.branchTree.branchesFromHere", {
+                          count: childForks.get(message.id)?.length ?? 0,
+                        })}
+                      </button>
+                      <span className="h-px flex-1 bg-fg/10" />
+                    </div>
+                  ) : null}
+                </Fragment>
               );
             })}
           </LayoutGroup>
@@ -3175,6 +3334,92 @@ export function ChatConversationPage() {
                   }
                 : handleEnableSwapPlaces
             }
+          />
+          {(session?.mode ?? character?.mode) === "companion" &&
+            (session?.companionState?.preferences?.timeAwarenessEnabled ?? false) && (
+              <MenuButton
+                icon={History}
+                title={t("chats.timeOverride.title")}
+                description={
+                  session?.companionState?.preferences?.timeOverride?.mode === "frozen"
+                    ? t("chats.timeOverride.badgeFrozen")
+                    : session?.companionState?.preferences?.timeOverride
+                      ? t("chats.timeOverride.badgeCustom")
+                      : t("chats.timeOverride.badgeLive")
+                }
+                onClick={() => {
+                  setShowPlusMenu(false);
+                  setShowTimeOverrideMenu(true);
+                }}
+              />
+            )}
+        </div>
+      </BottomMenu>
+
+      <BottomMenu
+        isOpen={showTimeOverrideMenu}
+        onClose={() => setShowTimeOverrideMenu(false)}
+        title={t("chats.timeOverride.title")}
+      >
+        <CompanionTimeOverrideCard
+          session={sessionForHeader ?? session ?? null}
+          onApply={handleApplyCompanionTimeOverride}
+        />
+      </BottomMenu>
+
+      <BottomMenu
+        isOpen={showBranchNavMenu}
+        onClose={() => setShowBranchNavMenu(false)}
+        title={t("chats.branchTree.goToParentTitle")}
+      >
+        <div className="space-y-2">
+          {parentBranchMeta ? (
+            <p className="px-1 pb-1 text-xs text-fg/55">
+              {t("chats.branchTree.goToParentDesc", { title: parentBranchMeta.title })}
+            </p>
+          ) : null}
+          <MenuButton
+            icon={GitBranch}
+            title={t("chats.branchTree.goToParentConfirm", {
+              title: parentBranchMeta?.title ?? "",
+            })}
+            onClick={() => {
+              if (!parentBranchMeta || !parentSessionId) return;
+              setShowBranchNavMenu(false);
+              navigate(Routes.chatSession(parentBranchMeta.characterId, parentSessionId));
+            }}
+          />
+          <MenuButton
+            icon={X}
+            title={t("chats.branchTree.goToParentCancel")}
+            onClick={() => setShowBranchNavMenu(false)}
+          />
+        </div>
+      </BottomMenu>
+
+      <BottomMenu
+        isOpen={branchPickerMessageId !== null}
+        onClose={() => setBranchPickerMessageId(null)}
+        title={t("chats.branchTree.branchesFromHereTitle")}
+      >
+        <div className="space-y-2">
+          {(branchPickerMessageId ? childForks.get(branchPickerMessageId) : undefined)?.map(
+            (child) => (
+              <MenuButton
+                key={child.id}
+                icon={GitBranch}
+                title={t("chats.branchTree.goToParentConfirm", { title: child.title })}
+                onClick={() => {
+                  setBranchPickerMessageId(null);
+                  navigate(Routes.chatSession(child.characterId, child.id));
+                }}
+              />
+            ),
+          )}
+          <MenuButton
+            icon={X}
+            title={t("chats.branchTree.goToParentCancel")}
+            onClick={() => setBranchPickerMessageId(null)}
           />
         </div>
       </BottomMenu>

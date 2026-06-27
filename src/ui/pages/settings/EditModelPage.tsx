@@ -77,15 +77,6 @@ import {
   isGeminiFamilyProvider,
 } from "../../../core/storage/schemas";
 import { getProviderIcon } from "../../../core/utils/providerIcons";
-import {
-  sdImportModel,
-  sdListLocalFiles,
-  sdListModels,
-  sdSetModelFile,
-  type SdLocalFile,
-  type SdModelEntry,
-  type SdModelRole,
-} from "../../../core/local-diffusion";
 import { cn } from "../../design-tokens";
 import { openDocs } from "../../../core/utils/docs";
 import { useI18n, type TranslationKey } from "../../../core/i18n/context";
@@ -102,6 +93,61 @@ type DownloadedGgufModel = {
 };
 
 type LocalLibraryPickerMode = "model" | "mmproj" | "mtp";
+
+type SdModelRole =
+  | "checkpoint"
+  | "diffusionModel"
+  | "clipL"
+  | "clipG"
+  | "t5xxl"
+  | "llm"
+  | "llmVision"
+  | "vae";
+
+type SdLocalFile = {
+  filename: string;
+  path: string;
+  size: number;
+};
+
+type SdModelEntry = {
+  id: string;
+  name: string;
+  family: string;
+  files: Partial<Record<SdModelRole, string | null>>;
+  complete: boolean;
+  totalBytes: number;
+};
+
+async function sdListModels(): Promise<SdModelEntry[]> {
+  return [];
+}
+
+async function sdListLocalFiles(): Promise<SdLocalFile[]> {
+  return [];
+}
+
+async function sdImportModel(
+  name: string,
+  files: Partial<Record<SdModelRole, string | null>>,
+): Promise<SdModelEntry> {
+  return { id: name, name, family: "unsupported", files, complete: false, totalBytes: 0 };
+}
+
+async function sdSetModelFile(
+  modelId: string,
+  role: SdModelRole,
+  path: string | null,
+): Promise<SdModelEntry> {
+  return {
+    id: modelId,
+    name: modelId,
+    family: "unsupported",
+    files: { [role]: path },
+    complete: false,
+    totalBytes: 0,
+  };
+}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -960,7 +1006,6 @@ export function EditModelPage() {
     if (!selectedProviderCredential) return false;
     if (
       selectedProviderCredential.providerId === "llamacpp" ||
-      selectedProviderCredential.providerId === "localdiffusion" ||
       selectedProviderCredential.providerId === "intenserp" ||
       selectedProviderCredential.providerId === "stability"
     ) {
@@ -1224,7 +1269,7 @@ export function EditModelPage() {
         ? "Download the mtp-*.gguf sidecar from the model's repository in the model browser."
         : t("hfBrowser.libraryEmptyHint");
   const isAutomatic1111Provider = editorModel?.providerId === "automatic1111";
-  const isLocalDiffusionModel = editorModel?.providerId === "localdiffusion";
+  const isLocalDiffusionModel = false;
   const isFixedImageProvider = isAutomatic1111Provider || isLocalDiffusionModel;
 
   useEffect(() => {

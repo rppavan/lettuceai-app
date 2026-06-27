@@ -938,6 +938,11 @@ pub fn reset_companion_soul_writer_template(
 }
 
 #[tauri::command]
+pub fn reset_all_protected_templates(app: AppHandle) -> Result<Vec<SystemPromptTemplate>, String> {
+    prompts::reset_all_protected_templates(&app)
+}
+
+#[tauri::command]
 pub fn get_required_template_variables(app: AppHandle, template_id: String) -> Vec<String> {
     prompts::get_template(&app, &template_id)
         .ok()
@@ -1006,6 +1011,9 @@ pub fn render_prompt_preview(
             id: "preview".to_string(),
             character_id: character.id.clone(),
             title: "Preview".to_string(),
+            parent_session_id: None,
+            branched_from_message_id: None,
+            root_session_id: None,
             background_image_path: None,
             system_prompt: None,
             mode: character.mode.clone(),
@@ -1185,6 +1193,11 @@ pub async fn chat_generate_companion_soul(
     args: ChatGenerateCompanionSoulArgs,
 ) -> Result<Value, String> {
     super::companion_soul_writer::chat_generate_companion_soul(app, args).await
+}
+
+#[tauri::command]
+pub fn abort_companion_soul(app: AppHandle, request_id: String) -> Result<(), String> {
+    super::companion_soul_writer::abort_companion_soul(app, request_id)
 }
 
 #[tauri::command]
