@@ -33,6 +33,7 @@ export const LLAMA_SAMPLER_ORDER_STAGE_VALUES = [
   "min_p",
   "dry",
   "typical",
+  "xtc",
   "temp",
 ] as const;
 
@@ -50,6 +51,7 @@ export const DEFAULT_LLAMA_SAMPLER_ORDER: readonly LlamaSamplerOrderStage[] = [
   "min_p",
   "dry",
   "typical",
+  "xtc",
   "temp",
 ];
 
@@ -417,6 +419,8 @@ export const AdvancedModelSettingsSchema = z.object({
   llamaDryAllowedLength: z.number().int().min(0).max(128).nullable().optional(),
   llamaDryPenaltyLastN: z.number().int().min(-1).max(262_144).nullable().optional(),
   llamaDrySequenceBreakers: z.array(z.string()).nullable().optional(),
+  llamaXtcProbability: z.number().min(0).max(1).nullable().optional(),
+  llamaXtcThreshold: z.number().min(0).max(1).nullable().optional(),
   llamaLastRuntimeReport: LlamaLastRuntimeReportSchema.nullish().optional(),
   // Ollama specific settings
   ollamaNumCtx: z.number().int().min(0).max(262_144).nullable().optional(),
@@ -1947,6 +1951,8 @@ export const PROVIDER_PARAMETER_SUPPORT = {
       llamaDryAllowedLength: true,
       llamaDryPenaltyLastN: true,
       llamaDrySequenceBreakers: true,
+      llamaXtcProbability: true,
+      llamaXtcThreshold: true,
       reasoningEnabled: true,
       reasoningEffort: true,
       reasoningBudgetTokens: true,

@@ -493,6 +493,8 @@ export function EditModelPage() {
     handleLlamaSamplerOrderChange,
     handleLlamaMinPChange,
     handleLlamaTypicalPChange,
+    handleLlamaXtcProbabilityChange,
+    handleLlamaXtcThresholdChange,
     handleLlamaDryMultiplierChange,
     handleLlamaDryBaseChange,
     handleLlamaDryAllowedLengthChange,
@@ -4069,6 +4071,48 @@ export function EditModelPage() {
                                       step={0.01}
                                       value={modelAdvancedDraft.llamaTypicalP ?? null}
                                       onChange={(next) => handleLlamaTypicalPChange(next)}
+                                      placeholder={t("editModel.placeholders.default")}
+                                      className={numberInputClassName}
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-6">
+                                  <div className="space-y-4">
+                                    <div className="space-y-0.5">
+                                      <span className="block text-[13px] font-medium text-fg/70">
+                                        {t("editModel.llamaSampler.xtcProbability")}
+                                      </span>
+                                      <span className="block text-[13px] text-fg/40">
+                                        {t("editModel.llamaSampler.localOverride")}
+                                      </span>
+                                    </div>
+                                    <NumberInput
+                                      min={0}
+                                      max={1}
+                                      step={0.01}
+                                      value={modelAdvancedDraft.llamaXtcProbability ?? null}
+                                      onChange={(next) => handleLlamaXtcProbabilityChange(next)}
+                                      placeholder={t("editModel.placeholders.default")}
+                                      className={numberInputClassName}
+                                    />
+                                  </div>
+
+                                  <div className="space-y-4">
+                                    <div className="space-y-0.5">
+                                      <span className="block text-[13px] font-medium text-fg/70">
+                                        {t("editModel.llamaSampler.xtcThreshold")}
+                                      </span>
+                                      <span className="block text-[13px] text-fg/40">
+                                        {t("editModel.llamaSampler.localOverride")}
+                                      </span>
+                                    </div>
+                                    <NumberInput
+                                      min={0}
+                                      max={1}
+                                      step={0.01}
+                                      value={modelAdvancedDraft.llamaXtcThreshold ?? null}
+                                      onChange={(next) => handleLlamaXtcThresholdChange(next)}
                                       placeholder={t("editModel.placeholders.default")}
                                       className={numberInputClassName}
                                     />

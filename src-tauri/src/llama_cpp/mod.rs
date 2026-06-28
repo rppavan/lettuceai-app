@@ -792,6 +792,18 @@ mod desktop {
                     .collect::<Vec<_>>()
             })
             .filter(|items| !items.is_empty());
+        let xtc_probability = body
+            .get("xtc_probability")
+            .or_else(|| body.get("xtcProbability"))
+            .or_else(|| body.get("llamaXtcProbability"))
+            .or_else(|| body.get("llama_xtc_probability"))
+            .and_then(|v| v.as_f64());
+        let xtc_threshold = body
+            .get("xtc_threshold")
+            .or_else(|| body.get("xtcThreshold"))
+            .or_else(|| body.get("llamaXtcThreshold"))
+            .or_else(|| body.get("llama_xtc_threshold"))
+            .and_then(|v| v.as_f64());
         let max_tokens = body
             .get("max_tokens")
             .or_else(|| body.get("max_completion_tokens"))
@@ -2158,6 +2170,8 @@ mod desktop {
                 dry_allowed_length,
                 dry_penalty_last_n,
                 dry_sequence_breakers,
+                xtc_probability,
+                xtc_threshold,
                 frequency_penalty,
                 presence_penalty,
                 seed: llama_seed,

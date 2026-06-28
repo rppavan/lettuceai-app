@@ -4402,6 +4402,8 @@ export const enMessages = {
       samplerProfileDescription: "Tuned local defaults for stability or reasoning",
       minP: "Min P",
       typicalP: "Typical P",
+      xtcProbability: "XTC Probability",
+      xtcThreshold: "XTC Threshold",
       localOverride: "Local override",
       dryMultiplier: "DRY Multiplier",
       dryMultiplierDescription: "`0` disables sequence repetition control",
@@ -7966,6 +7968,10 @@ export const enMessages = {
       minPDesc: "Minimum probability threshold.",
       typicalP: "Typical P",
       typicalPDesc: "Typical sampling threshold.",
+      xtcProbability: "XTC Probability",
+      xtcProbabilityDesc: "Chance of excluding top tokens (0 = off). Boosts variety.",
+      xtcThreshold: "XTC Threshold",
+      xtcThresholdDesc: "Min probability a token needs to be eligible for XTC removal.",
       seed: "Seed",
       seedDesc: "Random seed. Leave blank for random.",
       ropeBase: "RoPE Base",
@@ -8109,6 +8115,10 @@ export const enMessages = {
       typical: {
         label: "Typical P",
         desc: "Prefer statistically typical tokens in the current distribution.",
+      },
+      xtc: {
+        label: "XTC",
+        desc: "Exclude Top Choices — drop high-probability tokens for variety.",
       },
       temp: {
         label: "Temperature",

@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) const DEFAULT_LLAMA_SAMPLER_PROFILE: &str = "balanced";
-pub(super) const DEFAULT_LLAMA_SAMPLER_ORDER: [&str; 8] = [
+pub(super) const DEFAULT_LLAMA_SAMPLER_ORDER: [&str; 9] = [
     "penalties",
     "grammar",
     "top_k",
@@ -9,6 +9,7 @@ pub(super) const DEFAULT_LLAMA_SAMPLER_ORDER: [&str; 8] = [
     "min_p",
     "dry",
     "typical",
+    "xtc",
     "temp",
 ];
 
@@ -37,6 +38,8 @@ pub(super) struct ResolvedSamplerConfig {
     pub(super) dry_allowed_length: Option<u32>,
     pub(super) dry_penalty_last_n: Option<i32>,
     pub(super) dry_sequence_breakers: Option<Vec<String>>,
+    pub(super) xtc_probability: Option<f64>,
+    pub(super) xtc_threshold: Option<f64>,
     pub(super) frequency_penalty: Option<f64>,
     pub(super) presence_penalty: Option<f64>,
     pub(super) seed: Option<u32>,
@@ -166,6 +169,7 @@ fn normalize_sampler_stage(value: &str) -> Option<&'static str> {
         "min_p" | "minp" => Some("min_p"),
         "dry" => Some("dry"),
         "typical" | "typ_p" | "typical_p" => Some("typical"),
+        "xtc" => Some("xtc"),
         "temp" | "temperature" => Some("temp"),
         _ => None,
     }
@@ -386,6 +390,20 @@ pub(super) fn build_sampler(
         .typical_p
         .filter(|tp| *tp > 0.0 && *tp < 1.0)
         .map(|tp| LlamaSampler::typical(tp as f32, 1));
+    let mut xtc_sampler = config
+        .xtc_probability
+        .filter(|probability| *probability > 0.0)
+        .map(|probability| {
+            let threshold = config.xtc_threshold.unwrap_or(0.1);
+            active_params.insert("xtc_probability".to_string(), json!(probability));
+            active_params.insert("xtc_threshold".to_string(), json!(threshold));
+            LlamaSampler::xtc(
+                probability as f32,
+                threshold as f32,
+                1,
+                config.seed.unwrap_or_else(rand::random::<u32>),
+            )
+        });
 
     for stage in requested_order {
         match stage {
@@ -428,6 +446,12 @@ pub(super) fn build_sampler(
             "typical" => {
                 if let Some(sampler) = typical_sampler.take() {
                     order.push("typical");
+                    samplers.push(sampler);
+                }
+            }
+            "xtc" => {
+                if let Some(sampler) = xtc_sampler.take() {
+                    order.push("xtc");
                     samplers.push(sampler);
                 }
             }

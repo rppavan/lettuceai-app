@@ -821,6 +821,22 @@ fn build_llama_extra_fields(model: &Model, settings: &Settings) -> Option<HashMa
     if let Some(v) = resolve_llama_dry_sequence_breakers(model, settings) {
         extra.insert("llamaDrySequenceBreakers".to_string(), json!(v));
     }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_xtc_probability)
+        .or(settings.advanced_model_settings.llama_xtc_probability)
+    {
+        extra.insert("llamaXtcProbability".to_string(), json!(v));
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_xtc_threshold)
+        .or(settings.advanced_model_settings.llama_xtc_threshold)
+    {
+        extra.insert("llamaXtcThreshold".to_string(), json!(v));
+    }
 
     if extra.is_empty() {
         None

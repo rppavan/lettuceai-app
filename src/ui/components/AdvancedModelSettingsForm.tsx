@@ -32,6 +32,8 @@ export const ADVANCED_LLAMA_DRY_MULTIPLIER_RANGE = { min: 0, max: 10 };
 export const ADVANCED_LLAMA_DRY_BASE_RANGE = { min: 0, max: 10 };
 export const ADVANCED_LLAMA_DRY_ALLOWED_LENGTH_RANGE = { min: 0, max: 128 };
 export const ADVANCED_LLAMA_DRY_PENALTY_LAST_N_RANGE = { min: -1, max: 262_144 };
+export const ADVANCED_LLAMA_XTC_PROBABILITY_RANGE = { min: 0, max: 1 };
+export const ADVANCED_LLAMA_XTC_THRESHOLD_RANGE = { min: 0, max: 1 };
 export const ADVANCED_OLLAMA_NUM_CTX_RANGE = { min: 0, max: 262_144 };
 export const ADVANCED_OLLAMA_NUM_PREDICT_RANGE = { min: 0, max: 131_072 };
 export const ADVANCED_OLLAMA_NUM_KEEP_RANGE = { min: 0, max: 32_768 };
@@ -160,6 +162,12 @@ export function sanitizeAdvancedModelSettings(input: AdvancedModelSettings): Adv
       true,
     ),
     llamaDrySequenceBreakers: normalizeStringList(input.llamaDrySequenceBreakers),
+    llamaXtcProbability: sanitize(
+      input.llamaXtcProbability,
+      ADVANCED_LLAMA_XTC_PROBABILITY_RANGE,
+      false,
+    ),
+    llamaXtcThreshold: sanitize(input.llamaXtcThreshold, ADVANCED_LLAMA_XTC_THRESHOLD_RANGE, false),
     llamaLastRuntimeReport: input.llamaLastRuntimeReport ?? null,
     ollamaNumCtx: sanitize(input.ollamaNumCtx, ADVANCED_OLLAMA_NUM_CTX_RANGE, true),
     ollamaNumPredict: sanitize(input.ollamaNumPredict, ADVANCED_OLLAMA_NUM_PREDICT_RANGE, true),

@@ -783,6 +783,42 @@ pub(super) fn resolve_llama_dry_base(
         .or(settings.advanced_model_settings.llama_dry_base)
 }
 
+pub(super) fn resolve_llama_xtc_probability(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<f64> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_xtc_probability)
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_xtc_probability)
+        })
+        .or(settings.advanced_model_settings.llama_xtc_probability)
+}
+
+pub(super) fn resolve_llama_xtc_threshold(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<f64> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_xtc_threshold)
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_xtc_threshold)
+        })
+        .or(settings.advanced_model_settings.llama_xtc_threshold)
+}
+
 pub(super) fn resolve_llama_dry_allowed_length(
     session: &Session,
     model: &Model,

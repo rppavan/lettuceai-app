@@ -19,6 +19,8 @@ import {
   ADVANCED_LLAMA_DRY_BASE_RANGE,
   ADVANCED_LLAMA_DRY_MULTIPLIER_RANGE,
   ADVANCED_LLAMA_DRY_PENALTY_LAST_N_RANGE,
+  ADVANCED_LLAMA_XTC_PROBABILITY_RANGE,
+  ADVANCED_LLAMA_XTC_THRESHOLD_RANGE,
 } from "../../../components/AdvancedModelSettingsForm";
 
 interface ParameterFieldProps {
@@ -623,6 +625,28 @@ export function SessionAdvancedSettings({
                                 step={1}
                                 onChange={(v) => update({ llamaDryPenaltyLastN: v })}
                                 inputMode="numeric"
+                              />
+
+                              <ParameterField
+                                label={t("sessionAdvanced.samplingMemory.xtcProbability")}
+                                description={t("sessionAdvanced.samplingMemory.xtcProbabilityDesc")}
+                                value={draft.llamaXtcProbability}
+                                placeholder={t("sessionAdvanced.defaultPlaceholder")}
+                                min={ADVANCED_LLAMA_XTC_PROBABILITY_RANGE.min}
+                                max={ADVANCED_LLAMA_XTC_PROBABILITY_RANGE.max}
+                                step={0.01}
+                                onChange={(v) => update({ llamaXtcProbability: v })}
+                              />
+
+                              <ParameterField
+                                label={t("sessionAdvanced.samplingMemory.xtcThreshold")}
+                                description={t("sessionAdvanced.samplingMemory.xtcThresholdDesc")}
+                                value={draft.llamaXtcThreshold}
+                                placeholder="0.10"
+                                min={ADVANCED_LLAMA_XTC_THRESHOLD_RANGE.min}
+                                max={ADVANCED_LLAMA_XTC_THRESHOLD_RANGE.max}
+                                step={0.01}
+                                onChange={(v) => update({ llamaXtcThreshold: v })}
                               />
 
                               <ParameterField
