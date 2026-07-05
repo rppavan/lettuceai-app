@@ -30,6 +30,15 @@ const PARAMETER_LABELS: Record<keyof AdvancedModelSettings, string> = {
   sdExtraPrompt: "Extra Prompt",
   sdPromptWriterInstructions: "Prompt Writer Instructions",
   llamaGpuLayers: "llama.cpp GPU Layers",
+  llamaMultiGpuEnabled: "llama.cpp Multi-GPU",
+  llamaGpuDeviceIds: "llama.cpp GPU Devices",
+  llamaGpuDistributionMode: "llama.cpp GPU Distribution",
+  llamaGpuManualLayers: "llama.cpp Manual GPU Layers",
+  llamaCpuLayers: "llama.cpp CPU Layers",
+  llamaKvPlacement: "llama.cpp KV Cache Placement",
+  llamaMainGpu: "llama.cpp Main GPU",
+  llamaSingleGpuDeviceId: "llama.cpp GPU Device",
+  llamaPriorityVramLimitBytes: "llama.cpp Priority VRAM Limit",
   llamaThreads: "llama.cpp Threads",
   llamaThreadsBatch: "llama.cpp Batch Threads",
   llamaSeed: "llama.cpp Seed",
@@ -82,6 +91,7 @@ const PARAMETER_LABELS: Record<keyof AdvancedModelSettings, string> = {
   forceSendThinkingState: "Force Send Thinking State",
   promptCachingEnabled: "Prompt Caching",
   promptCachingTtl: "Prompt Caching TTL",
+  openRouterProvider: "Pinned OpenRouter Provider",
 };
 
 const PARAMETER_DESCRIPTIONS: Record<keyof AdvancedModelSettings, string> = {
@@ -103,6 +113,15 @@ const PARAMETER_DESCRIPTIONS: Record<keyof AdvancedModelSettings, string> = {
   sdExtraPrompt: "Always prepended to the prompt (quality tags, style boilerplate)",
   sdPromptWriterInstructions: "Format guidance given to the scene writer for this model",
   llamaGpuLayers: "Number of layers to offload to GPU (0 = CPU)",
+  llamaMultiGpuEnabled: "Allow llama.cpp to split model loading across selected GPUs",
+  llamaGpuDeviceIds: "GPU backend device indices used when multi-GPU is enabled",
+  llamaGpuDistributionMode: "How layers are spread across GPUs (balanced, by VRAM, priority fill, manual)",
+  llamaGpuManualLayers: "Per-GPU layer counts used in manual distribution mode",
+  llamaCpuLayers: "Layers kept on CPU in manual multi-GPU distribution",
+  llamaKvPlacement: "Where the KV cache lives across GPUs and system RAM",
+  llamaMainGpu: "Primary GPU for KV pinning and priority fill",
+  llamaSingleGpuDeviceId: "Run on one specific GPU instead of the default device",
+  llamaPriorityVramLimitBytes: "VRAM cap on the primary GPU before overflowing to the next (priority fill)",
   llamaThreads: "CPU threads for generation",
   llamaThreadsBatch: "CPU threads for batch processing",
   llamaSeed: "Random seed (leave blank for random)",
@@ -158,6 +177,7 @@ const PARAMETER_DESCRIPTIONS: Record<keyof AdvancedModelSettings, string> = {
   forceSendThinkingState: "Explicitly send enable_thinking instead of omitting it",
   promptCachingEnabled: "Enable prompt caching",
   promptCachingTtl: "How long a cached prompt prefix stays reusable",
+  openRouterProvider: "Route this model through one OpenRouter endpoint",
 };
 
 /**

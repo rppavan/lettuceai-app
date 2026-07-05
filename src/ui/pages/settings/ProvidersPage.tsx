@@ -12,8 +12,10 @@ import {
   AlertTriangle,
   Loader2,
   Download,
+  ExternalLink,
 } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { openExternalUrl } from "../../../core/utils/openExternal";
 import { useSearchParams, useNavigate } from "react-router-dom";
 
 import { useProvidersPageController } from "./hooks/useProvidersPageController";
@@ -66,6 +68,41 @@ const AUDIO_PROVIDER_TYPE_TRANSLATION_KEY: Record<
 };
 
 type ProviderTab = "llm" | "audio";
+
+function ResolvedEndpointPreview({
+  baseUrl,
+  endpoint,
+  duplicateWarning,
+}: {
+  baseUrl: string;
+  endpoint: string;
+  duplicateWarning: (segment: string) => string;
+}) {
+  const { t } = useI18n();
+  const base = baseUrl.trim().replace(/\/+$/, "");
+  const rawEndpoint = endpoint.trim();
+  const isAbsolute = /^https?:\/\//.test(rawEndpoint);
+  if (!rawEndpoint || (!base && !isAbsolute)) return null;
+  const resolved = isAbsolute
+    ? rawEndpoint
+    : `${base}${rawEndpoint.startsWith("/") ? "" : "/"}${rawEndpoint}`;
+  const baseTail = base.split("/").filter(Boolean).pop();
+  const endpointHead = rawEndpoint
+    .replace(/^https?:\/\/[^/]+/, "")
+    .split("/")
+    .filter(Boolean)[0];
+  const duplicated = !!baseTail && !!endpointHead && baseTail === endpointHead && !isAbsolute;
+  return (
+    <div className="-mt-2 space-y-1 px-1">
+      <p className="break-all font-mono text-[11px] text-fg/40">
+        {t("providers.editor.resolvedChatUrl")}: {resolved}
+      </p>
+      {duplicated && baseTail && (
+        <p className="text-[11px] text-amber-400/90">{duplicateWarning(baseTail)}</p>
+      )}
+    </div>
+  );
+}
 
 export function ProvidersPage() {
   const { t } = useI18n();
@@ -140,10 +177,12 @@ export function ProvidersPage() {
   const allowsTlsException = !!editorProvider && (isLocalProvider || isCustomProvider);
   const showBaseUrl =
     !!editorProvider && (isLocalProvider || isCustomProvider || isEngineProvider || isHostProvider);
+  const isOllamaProvider = !!editorProvider && editorProvider.providerId === "ollama";
   const customConfig = (editorProvider?.config ?? {}) as Record<string, any>;
   const customFetchModelsEnabled = customConfig.fetchModelsEnabled === true;
   const providerStreamingEnabled = customConfig.streamingEnabled !== false;
   const providerAllowInvalidTls = customConfig.allowInvalidTls === true;
+  const sproutEnabled = customConfig.sproutEnabled === true;
   const customAuthMode = (customConfig.authMode ?? "header") as
     | "bearer"
     | "header"
@@ -736,6 +775,60 @@ export function ProvidersPage() {
                     variant="warning"
                   />
                 )}
+                {isOllamaProvider && (
+                  <>
+                    <ToggleRow
+                      id="providerSproutEnabled"
+                      title={t("providers.editor.sprout")}
+                      description={t("providers.editor.sproutDesc")}
+                      checked={sproutEnabled}
+                      onChange={(next) =>
+                        updateEditorProvider({
+                          config: { ...editorProvider.config, sproutEnabled: next },
+                        })
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void openExternalUrl("https://github.com/LettuceAI/Sprout")
+                      }
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
+                    >
+                      <ExternalLink size={12} />
+                      {t("providers.editor.sproutGet")}
+                    </button>
+                    {sproutEnabled && (
+                      <>
+                        <TextField
+                          label={t("providers.editor.sproutUrl")}
+                          type="url"
+                          value={(customConfig.sproutUrl as string) || ""}
+                          onChange={(value) =>
+                            updateEditorProvider({
+                              config: { ...editorProvider.config, sproutUrl: value || undefined },
+                            })
+                          }
+                          placeholder="http://192.168.1.10:8477"
+                        />
+                        <TextField
+                          label={t("providers.editor.sproutApiKey")}
+                          type="password"
+                          value={(customConfig.sproutApiKey as string) || ""}
+                          onChange={(value) =>
+                            updateEditorProvider({
+                              config: {
+                                ...editorProvider.config,
+                                sproutApiKey: value || undefined,
+                              },
+                            })
+                          }
+                          placeholder={t("providers.editor.sproutApiKeyPlaceholder")}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
                 {isCustomProvider && (
                   <>
                     <TextField
@@ -749,6 +842,15 @@ export function ProvidersPage() {
                         })
                       }
                       placeholder="/v1/chat/completions"
+                    />
+                    <ResolvedEndpointPreview
+                      baseUrl={editorProvider.baseUrl || ""}
+                      endpoint={
+                        (customConfig.chatEndpoint as string | undefined) ?? "/v1/chat/completions"
+                      }
+                      duplicateWarning={(segment) =>
+                        t("providers.editor.resolvedChatUrlDuplicate", { segment })
+                      }
                     />
                     <ToggleRow
                       id="fetchModelsEnabled"
@@ -847,6 +949,13 @@ export function ProvidersPage() {
                             })
                           }
                           placeholder="/v1/models"
+                        />
+                        <ResolvedEndpointPreview
+                          baseUrl={editorProvider.baseUrl || ""}
+                          endpoint={(customConfig.modelsEndpoint as string | undefined) ?? ""}
+                          duplicateWarning={(segment) =>
+                            t("providers.editor.resolvedModelsUrlDuplicate", { segment })
+                          }
                         />
                         <div className="grid grid-cols-2 gap-3">
                           <TextField

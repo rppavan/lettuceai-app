@@ -332,6 +332,7 @@ jobs:
                 "./feedback_sounds/fail.mp3",
                 "./feedback_sounds/send.mp3",
                 "./feedback_sounds/success.mp3",
+                "./onnxruntime"
               ]
             }
           }
@@ -667,7 +668,8 @@ jobs:
               "resources": [
                 "./feedback_sounds/fail.mp3",
                 "./feedback_sounds/send.mp3",
-                "./feedback_sounds/success.mp3"
+                "./feedback_sounds/success.mp3",
+                "./onnxruntime"
               ]
             }
           }
@@ -843,7 +845,8 @@ jobs:
               "resources": [
                 "./feedback_sounds/fail.mp3",
                 "./feedback_sounds/send.mp3",
-                "./feedback_sounds/success.mp3"
+                "./feedback_sounds/success.mp3",
+                "./onnxruntime"
               ]
             }
           }
@@ -1032,7 +1035,8 @@ jobs:
               "resources": [
                 "./feedback_sounds/fail.mp3",
                 "./feedback_sounds/send.mp3",
-                "./feedback_sounds/success.mp3"
+                "./feedback_sounds/success.mp3",
+                "./onnxruntime"
               ]
             }
           }
@@ -1292,7 +1296,8 @@ jobs:
               "resources": [
                 "./feedback_sounds/fail.mp3",
                 "./feedback_sounds/send.mp3",
-                "./feedback_sounds/success.mp3"
+                "./feedback_sounds/success.mp3",
+                "./onnxruntime"
               ]
             }
           }

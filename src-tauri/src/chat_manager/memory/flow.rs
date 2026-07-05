@@ -1,3 +1,4 @@
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -271,18 +272,20 @@ fn render_active_prompt_entries(
     session: &Session,
     settings: &Settings,
 ) -> String {
+    let lorebook_text = prompt_engine::resolve_lorebook_content(app, character, persona, session);
     entries
         .iter()
         .filter(|entry| entry_is_active(entry, condition_context))
         .filter_map(|entry| {
-            let rendered = prompt_engine::render_with_context(
-                app,
+            let rendered = prompt_engine::render_with_context_internal(
+                Some(app),
                 &entry.content,
                 character,
                 persona,
                 session,
                 settings,
                 None,
+                Some(&lorebook_text),
             );
             let trimmed = rendered.trim();
             if trimmed.is_empty() {
@@ -794,23 +797,37 @@ fn dismiss_memory_vector_migration_toast(app: &AppHandle, toast_id: &str) {
     );
 }
 
-fn memory_embedding_requires_migration(
+fn memory_embedding_is_pending(memory: &MemoryEmbedding) -> bool {
+    memory.embedding.is_empty()
+}
+
+fn memory_embedding_is_stale(
     memory: &MemoryEmbedding,
     target_source_version: &str,
     target_dimensions: usize,
 ) -> bool {
-    if memory.embedding.is_empty() || memory.embedding.len() != target_dimensions {
+    if memory.embedding.is_empty() {
+        return false;
+    }
+    if memory.embedding.len() != target_dimensions {
         return true;
     }
-
     if memory.embedding_dimensions != Some(target_dimensions) {
         return true;
     }
-
     match memory.embedding_source_version.as_deref() {
         Some(version) => version != target_source_version,
         None => !(target_source_version == "v3" && target_dimensions == 512),
     }
+}
+
+fn memory_embedding_requires_embedding(
+    memory: &MemoryEmbedding,
+    target_source_version: &str,
+    target_dimensions: usize,
+) -> bool {
+    memory_embedding_is_pending(memory)
+        || memory_embedding_is_stale(memory, target_source_version, target_dimensions)
 }
 
 async fn migrate_session_memory_embeddings_if_needed(
@@ -823,28 +840,38 @@ async fn migrate_session_memory_embeddings_if_needed(
 
     let (target_source_version, target_dimensions) =
         embedding::resolve_active_embedding_signature(app)?;
-    let needs_migration = session.memory_embeddings.iter().any(|memory| {
-        memory_embedding_requires_migration(memory, &target_source_version, target_dimensions)
-    });
-    if !needs_migration {
+    let needs_stale_migration = session
+        .memory_embeddings
+        .iter()
+        .any(|memory| memory_embedding_is_stale(memory, &target_source_version, target_dimensions));
+    let needs_pending_embed = session
+        .memory_embeddings
+        .iter()
+        .any(memory_embedding_is_pending);
+    if !needs_stale_migration && !needs_pending_embed {
         return Ok(());
     }
+    let show_toast = needs_stale_migration;
 
     let toast_id = format!("memory-vector-migration:{}", session.id);
     let total = session.memory_embeddings.len().max(1);
-    emit_memory_vector_migration_toast(
-        app,
-        &toast_id,
-        "Migrating memory vectors",
-        "Updating saved memories for the current memory model. Messages may be delayed briefly.",
-        0.0,
-    );
+    if show_toast {
+        emit_memory_vector_migration_toast(
+            app,
+            &toast_id,
+            "Migrating memory vectors",
+            "Updating saved memories for the current memory model. Messages may be delayed briefly.",
+            0.0,
+        );
+    }
 
     let migration_result: Result<(bool, usize), String> = async {
         let mut migrated_any = false;
         let mut failures = 0usize;
         for (idx, memory) in session.memory_embeddings.iter_mut().enumerate() {
-            if memory_embedding_requires_migration(
+            let was_stale =
+                memory_embedding_is_stale(memory, &target_source_version, target_dimensions);
+            if memory_embedding_requires_embedding(
                 memory,
                 &target_source_version,
                 target_dimensions,
@@ -862,42 +889,70 @@ async fn migrate_session_memory_embeddings_if_needed(
                         migrated_any = true;
                     }
                     Ok(Err(err)) => {
-                        failures += 1;
-                        log_warn(
-                            app,
-                            "memory_retrieval",
-                            format!(
-                                "failed to re-embed saved memory {}/{}: {}",
-                                idx + 1,
-                                total,
-                                err
-                            ),
-                        );
+                        if was_stale {
+                            failures += 1;
+                            log_warn(
+                                app,
+                                "memory_retrieval",
+                                format!(
+                                    "failed to re-embed saved memory {}/{}: {}",
+                                    idx + 1,
+                                    total,
+                                    err
+                                ),
+                            );
+                        } else {
+                            log_info(
+                                app,
+                                "memory_retrieval",
+                                format!(
+                                    "deferred pending embedding for memory {}/{} (will retry): {}",
+                                    idx + 1,
+                                    total,
+                                    err
+                                ),
+                            );
+                        }
                     }
                     Err(_) => {
-                        failures += 1;
-                        log_warn(
-                            app,
-                            "memory_retrieval",
-                            format!(
-                                "timed out after {}s while re-embedding saved memory {}/{}",
-                                MEMORY_MIGRATION_EMBED_TIMEOUT_SECS,
-                                idx + 1,
-                                total
-                            ),
-                        );
+                        if was_stale {
+                            failures += 1;
+                            log_warn(
+                                app,
+                                "memory_retrieval",
+                                format!(
+                                    "timed out after {}s while re-embedding saved memory {}/{}",
+                                    MEMORY_MIGRATION_EMBED_TIMEOUT_SECS,
+                                    idx + 1,
+                                    total
+                                ),
+                            );
+                        } else {
+                            log_info(
+                                app,
+                                "memory_retrieval",
+                                format!(
+                                    "timed out after {}s while embedding pending memory {}/{} (will retry)",
+                                    MEMORY_MIGRATION_EMBED_TIMEOUT_SECS,
+                                    idx + 1,
+                                    total
+                                ),
+                            );
+                        }
                     }
                 }
             }
 
-            let progress = (idx + 1) as f32 / total as f32;
-            emit_memory_vector_migration_toast(
-                app,
-                &toast_id,
-                "Migrating memory vectors",
-                &format!("Re-embedded {}/{} saved memories.", idx + 1, total),
-                progress,
-            );
+            if show_toast {
+                let progress = (idx + 1) as f32 / total as f32;
+                emit_memory_vector_migration_toast(
+                    app,
+                    &toast_id,
+                    "Migrating memory vectors",
+                    &format!("Re-embedded {}/{} saved memories.", idx + 1, total),
+                    progress,
+                );
+            }
         }
 
         if migrated_any {
@@ -907,7 +962,9 @@ async fn migrate_session_memory_embeddings_if_needed(
     }
     .await;
 
-    dismiss_memory_vector_migration_toast(app, &toast_id);
+    if show_toast {
+        dismiss_memory_vector_migration_toast(app, &toast_id);
+    }
 
     let (migrated_any, failures) = match migration_result {
         Ok(outcome) => outcome,
@@ -924,7 +981,7 @@ async fn migrate_session_memory_embeddings_if_needed(
         }
     };
 
-    if migrated_any && failures == 0 {
+    if show_toast && migrated_any && failures == 0 {
         let _ = app.emit(
             "app://toast",
             json!({
@@ -1057,6 +1114,10 @@ fn resolve_conversation_index_by_message_id(
 /// Resolve the last valid cursor (windowEnd) from memory tool events by anchoring on message IDs.
 /// This self-heals when messages are deleted (counts shrink) or the conversation is rewound.
 /// Returns (window_end_index, cursor_rewound).
+fn memory_event_advances_cursor(event: &Value) -> bool {
+    !matches!(event.get("status").and_then(Value::as_str), Some("error"))
+}
+
 fn resolve_last_valid_window_end(
     app: &AppHandle,
     session: &Session,
@@ -1066,7 +1127,13 @@ fn resolve_last_valid_window_end(
     }
 
     // Walk backwards to find the newest event whose last summarized message still exists.
-    for (rev_idx, event) in session.memory_tool_events.iter().rev().enumerate() {
+    for (rev_idx, event) in session
+        .memory_tool_events
+        .iter()
+        .rev()
+        .filter(|event| memory_event_advances_cursor(event))
+        .enumerate()
+    {
         let end_id = event
             .get("windowMessageIds")
             .and_then(|v| v.as_array())
@@ -1087,6 +1154,27 @@ fn resolve_last_valid_window_end(
 
     // No event could be anchored; treat as rewind (cursor reset).
     Ok((0, true))
+}
+
+#[cfg(test)]
+mod memory_cursor_tests {
+    use super::memory_event_advances_cursor;
+    use serde_json::json;
+
+    #[test]
+    fn failed_memory_event_does_not_advance_cursor() {
+        assert!(!memory_event_advances_cursor(&json!({
+            "status": "error",
+            "windowEnd": 346
+        })));
+    }
+
+    #[test]
+    fn successful_legacy_memory_event_advances_cursor() {
+        assert!(memory_event_advances_cursor(&json!({
+            "windowEnd": 288
+        })));
+    }
 }
 
 fn cancel_dynamic_memory_cycle(
@@ -1575,6 +1663,55 @@ pub fn dynamic_memory_pending_approval(app: AppHandle, session_id: String) -> Op
     app.state::<crate::dynamic_memory_approval::DynamicMemoryApprovalManager>()
         .pending(&session_id)
         .map(|count| count as u32)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DynamicMemoryCycleStatus {
+    pub run_mode: String,
+    pub interval: usize,
+    pub messages_since_last_cycle: usize,
+    pub messages_until_next_cycle: usize,
+    pub total_conversation_messages: usize,
+    pub pending_approval_count: Option<usize>,
+    pub skipped: bool,
+    pub latest_cycle_status: Option<String>,
+}
+
+pub fn dynamic_memory_cycle_status(
+    app: AppHandle,
+    session_id: String,
+) -> Result<DynamicMemoryCycleStatus, String> {
+    let context = ChatContext::initialize(app.clone())?;
+    let session = context
+        .load_session(&session_id)?
+        .ok_or_else(|| "Session not found".to_string())?;
+    let dynamic = context
+        .settings
+        .advanced_settings
+        .as_ref()
+        .and_then(|advanced| advanced.dynamic_memory.as_ref())
+        .ok_or_else(|| "Dynamic memory is not configured".to_string())?;
+    let interval = dynamic.summary_message_interval.max(1) as usize;
+    let total = session_conversation_count(app.clone(), session.id.clone())?.max(0) as usize;
+    let (last_window_end, _) = resolve_last_valid_window_end(&app, &session)?;
+    let since = total.saturating_sub(last_window_end);
+    let approval = app.state::<crate::dynamic_memory_approval::DynamicMemoryApprovalManager>();
+
+    Ok(DynamicMemoryCycleStatus {
+        run_mode: dynamic.run_mode.clone(),
+        interval,
+        messages_since_last_cycle: since,
+        messages_until_next_cycle: interval.saturating_sub(since),
+        total_conversation_messages: total,
+        pending_approval_count: approval.pending(&session_id),
+        skipped: approval.was_skipped(&session_id),
+        latest_cycle_status: session
+            .memory_tool_events
+            .last()
+            .and_then(|event| event.get("status").and_then(Value::as_str))
+            .map(str::to_string),
+    })
 }
 
 pub fn enqueue_post_turn_dynamic_memory(
@@ -3689,9 +3826,16 @@ async fn run_memory_tool_update(
                             } else {
                                 (None, None, None)
                             };
-                        let (embedding_source_version, embedding_dimensions) =
-                            embedding::resolve_active_embedding_signature(app)
-                                .unwrap_or_else(|_| ("v3".to_string(), 512));
+                        let (embedding_source_version, embedding_dimensions) = match embedding
+                            .as_ref()
+                        {
+                            Some(vector) if !vector.is_empty() => {
+                                let (version, dimensions) =
+                                    embedding::embedding_signature_for_result(app, Some(vector));
+                                (Some(version), Some(dimensions))
+                            }
+                            _ => (None, None),
+                        };
                         let supersede_ids: Vec<String> = if memory_supersede_enabled {
                             call.arguments
                                 .get("supersedes")
@@ -3726,8 +3870,8 @@ async fn run_memory_tool_update(
                             volatility: 0.4,
                             is_pinned,
                             access_count: 0,
-                            embedding_source_version: Some(embedding_source_version),
-                            embedding_dimensions: Some(embedding_dimensions),
+                            embedding_source_version,
+                            embedding_dimensions,
                             match_score: None,
                             category: Some(category),
                             observed_at,
@@ -4190,9 +4334,15 @@ async fn run_memory_tool_update(
                         } else {
                             (None, None, None)
                         };
-                    let (embedding_source_version, embedding_dimensions) =
-                        embedding::resolve_active_embedding_signature(app)
-                            .unwrap_or_else(|_| ("v3".to_string(), 512));
+                    let (embedding_source_version, embedding_dimensions) = match embedding.as_ref()
+                    {
+                        Some(vector) if !vector.is_empty() => {
+                            let (version, dimensions) =
+                                embedding::embedding_signature_for_result(app, Some(vector));
+                            (Some(version), Some(dimensions))
+                        }
+                        _ => (None, None),
+                    };
                     session.memory_embeddings.push(MemoryEmbedding {
                         id: mem_id.clone(),
                         text: text.clone(),
@@ -4207,8 +4357,8 @@ async fn run_memory_tool_update(
                         volatility: 0.4,
                         is_pinned,
                         access_count: 0,
-                        embedding_source_version: Some(embedding_source_version),
-                        embedding_dimensions: Some(embedding_dimensions),
+                        embedding_source_version,
+                        embedding_dimensions,
                         match_score: None,
                         category: Some(category.clone()),
                         observed_at,

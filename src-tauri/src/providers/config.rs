@@ -24,6 +24,14 @@ fn supported_extra_body_keys(provider_id: &str) -> &'static [&'static str] {
     match provider_id {
         "llamacpp" => &[
             "llamaGpuLayers",
+            "llamaMultiGpuEnabled",
+            "llamaGpuDeviceIds",
+            "llamaGpuDistributionMode",
+            "llamaGpuManualLayers",
+            "llamaKvPlacement",
+            "llamaMainGpu",
+            "llamaSingleGpuDeviceId",
+            "llamaPriorityVramLimitBytes",
             "llamaThreads",
             "llamaThreadsBatch",
             "llamaSeed",
@@ -52,6 +60,8 @@ fn supported_extra_body_keys(provider_id: &str) -> &'static [&'static str] {
             "llamaDryAllowedLength",
             "llamaDryPenaltyLastN",
             "llamaDrySequenceBreakers",
+            "llamaXtcProbability",
+            "llamaXtcThreshold",
             "llamaDisableSamplerProfileDefaults",
             "min_p",
             "typical_p",
@@ -64,8 +74,10 @@ fn supported_extra_body_keys(provider_id: &str) -> &'static [&'static str] {
         ],
         "ollama" => &["options"],
         // express omitted on purpose — it uses Gemini's implicit caching, no explicit toggle
-        "anthropic" | "custom-anthropic" | "openrouter" | "openai" | "gemini" | "google"
-        | "google-gemini" => &["promptCachingTtl"],
+        "openrouter" => &["promptCachingTtl", "provider"],
+        "anthropic" | "custom-anthropic" | "openai" | "gemini" | "google" | "google-gemini" => {
+            &["promptCachingTtl"]
+        }
         _ => &[],
     }
 }
@@ -114,7 +126,7 @@ fn get_all_provider_configs_internal() -> Vec<ProviderConfig> {
             "Gemini Agent Platform (Express)",
             "https://aiplatform.googleapis.com",
         ),
-        ("zai", "zAI (GLM)", "https://api.z.ai/api/coding/paas/v4"),
+        ("zai", "zAI (GLM)", "https://api.z.ai/api/paas/v4"),
         (
             "moonshot",
             "Moonshot AI (Kimi)",
@@ -230,19 +242,6 @@ pub fn resolve_base_url(provider_id: &ProviderId, custom_base_url: Option<&str>)
     get_provider_config(provider_id)
         .map(|cfg| cfg.default_base_url)
         .unwrap_or_else(|| "https://api.openai.com".to_string())
-}
-
-#[allow(dead_code)]
-pub fn build_endpoint_url(provider_id: &ProviderId, custom_base_url: Option<&str>) -> String {
-    let base_url = resolve_base_url(provider_id, custom_base_url);
-    let trimmed = base_url.trim_end_matches('/');
-
-    // If base_url already contains /v1, don't add it again
-    if trimmed.ends_with("/v1") {
-        format!("{}/chat/completions", trimmed)
-    } else {
-        format!("{}/v1/chat/completions", trimmed)
-    }
 }
 
 #[allow(dead_code)]

@@ -3,21 +3,22 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tauri::Manager;
 
-use crate::chat_manager::types::MemoryEmbedding;
 use crate::storage_manager::db::DbConnection;
 use crate::storage_manager::memory_embeddings::SessionKind;
 use crate::sync::models::{
     AudioProvider, Character, CharacterRule, ChatTemplate, ChatTemplateMessage,
-    CompanionSharedMemory, GroupMessage, GroupMessageVariant, GroupParticipation, GroupSession,
-    Message, MessageVariant, MetaEntry, Model, Persona, PromptTemplate, ProviderCredential, Scene,
-    SceneVariant, Secret, Session, Settings, SyncLorebook, SyncLorebookEntry,
-    SyncedMemoryEmbedding, UsageMetadata, UsageRecord, UserVoice,
+    CompanionSharedMemory, CreationHelperSession, GroupMessage, GroupMessageVariant,
+    GroupParticipation, GroupSession, Message, MessageVariant, MetaEntry, Model, Persona,
+    PromptTemplate, ProviderCredential, Scene, SceneVariant, Secret, Session, Settings,
+    SyncAsrCorrection, SyncAsrIgnoredSuggestion, SyncAsrVocabularyTerm,
+    SyncCompanionScheduledNote, SyncCompanionTurnEffect, SyncLorebook, SyncLorebookEntry,
+    SyncMemoryEmbeddingRecord, SyncedMemoryEmbedding, UsageMetadata, UsageRecord, UserVoice,
 };
 use crate::sync::protocol::{ChangeOp, ChangeRecord, CursorSet, DomainCursor, SyncDomain};
 use crate::utils::{log_error_global, log_info_global};
 
-pub const CHANGE_SCHEMA_VERSION: u16 = 6;
-pub const LOCAL_SYNC_STATE_VERSION: u16 = 7;
+pub const CHANGE_SCHEMA_VERSION: u16 = 8;
+pub const LOCAL_SYNC_STATE_VERSION: u16 = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct EntityKey {
@@ -108,12 +109,16 @@ struct CoreSnapshot {
     secrets: Vec<Secret>,
     provider_credentials: Vec<ProviderCredential>,
     prompt_templates: Vec<PromptTemplate>,
+    creation_helper_sessions: Vec<CreationHelperSession>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TtsSnapshot {
     audio_providers: Vec<AudioProvider>,
     user_voices: Vec<UserVoice>,
+    asr_vocabulary_terms: Vec<SyncAsrVocabularyTerm>,
+    asr_corrections: Vec<SyncAsrCorrection>,
+    asr_ignored_suggestions: Vec<SyncAsrIgnoredSuggestion>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -147,6 +152,8 @@ struct SyncGroupConfigRecord {
     background_image_path: Option<String>,
     lorebook_ids: String,
     disable_character_lorebooks: i64,
+    #[serde(default)]
+    chat_appearance: Option<String>,
     speaker_selection_method: String,
     memory_type: String,
 }
@@ -179,6 +186,8 @@ struct SyncGroupSessionRecord {
     background_image_path: Option<String>,
     lorebook_ids: String,
     disable_character_lorebooks: i64,
+    #[serde(default)]
+    author_note: Option<String>,
     memories: String,
     memory_embeddings: String,
     memory_summary: String,
@@ -196,6 +205,7 @@ struct SessionsSnapshot {
     sessions: Vec<Session>,
     companion_shared_memory: Vec<CompanionSharedMemory>,
     memory_embeddings: Vec<SyncedMemoryEmbedding>,
+    companion_scheduled_notes: Vec<SyncCompanionScheduledNote>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -204,6 +214,7 @@ struct MessagesSnapshot {
     message_variants: Vec<MessageVariant>,
     usage_records: Vec<UsageRecord>,
     usage_metadata: Vec<UsageMetadata>,
+    companion_turn_effects: Vec<SyncCompanionTurnEffect>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -230,6 +241,28 @@ pub fn get_or_create_local_device_id(conn: &DbConnection) -> Result<String, Stri
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
     Ok(device_id)
+}
+
+pub fn local_device_has_onboarded(conn: &DbConnection) -> bool {
+    let app_state = conn
+        .query_row("SELECT app_state FROM settings LIMIT 1", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .ok();
+    let Some(raw) = app_state else {
+        return false;
+    };
+    let Ok(state) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    let onboarding = state.get("onboarding");
+    let flag = |key: &str| {
+        onboarding
+            .and_then(|value| value.get(key))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    };
+    flag("completed") || flag("skipped")
 }
 
 pub fn rebuild_change_log(app: &tauri::AppHandle, conn: &mut DbConnection) -> Result<(), String> {
@@ -350,7 +383,7 @@ fn fetch_memory_embeddings_for_owner(
         .map(|memory| SyncedMemoryEmbedding {
             session_id: session_id.to_string(),
             session_kind: kind.as_str().to_string(),
-            memory,
+            memory: memory.into(),
         })
         .collect())
 }
@@ -367,7 +400,7 @@ fn persist_memory_embedding_records(
         grouped
             .entry((record.session_id.clone(), record.session_kind.clone()))
             .or_default()
-            .push(record.memory.clone());
+            .push(record.memory.clone().into());
     }
 
     for ((session_id, session_kind), memories) in grouped {
@@ -465,7 +498,7 @@ pub fn clear_domain_heads(conn: &DbConnection, domain: SyncDomain) -> Result<(),
     Ok(())
 }
 
-pub fn apply_change_batch(
+pub fn append_change_batch(
     conn: &mut DbConnection,
     domain: SyncDomain,
     changes: &[ChangeRecord],
@@ -488,8 +521,22 @@ pub fn apply_change_batch(
     }
 
     tx.commit()
-        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+}
 
+pub fn materialize_domain(conn: &mut DbConnection, domain: SyncDomain) -> Result<(), String> {
+    materialize_domain_heads(conn, domain)
+}
+
+pub fn apply_change_batch(
+    conn: &mut DbConnection,
+    domain: SyncDomain,
+    changes: &[ChangeRecord],
+) -> Result<(), String> {
+    if changes.is_empty() {
+        return Ok(());
+    }
+    append_change_batch(conn, domain, changes)?;
     materialize_domain_heads(conn, domain)
 }
 
@@ -651,6 +698,15 @@ fn collect_current_entity_records(
             item,
         )?;
     }
+    for item in &fetch_creation_helper_sessions(conn)? {
+        push_entity_record(
+            &mut records,
+            SyncDomain::Core,
+            "creation_helper_session",
+            item.id.clone(),
+            item,
+        )?;
+    }
     for item in &audio_providers {
         push_entity_record(
             &mut records,
@@ -666,6 +722,43 @@ fn collect_current_entity_records(
             SyncDomain::Tts,
             "user_voice",
             item.id.clone(),
+            item,
+        )?;
+    }
+    for item in &fetch_asr_vocabulary_terms(conn)? {
+        push_entity_record(
+            &mut records,
+            SyncDomain::Tts,
+            "asr_vocabulary_term",
+            asr_vocabulary_entity_id(item),
+            item,
+        )?;
+    }
+    for item in &fetch_asr_corrections(conn)? {
+        push_entity_record(
+            &mut records,
+            SyncDomain::Tts,
+            "asr_correction",
+            asr_correction_entity_id(
+                &item.normalized_wrong,
+                &item.normalized_correct,
+                &item.language,
+                &item.scope,
+            ),
+            item,
+        )?;
+    }
+    for item in &fetch_asr_ignored_suggestions(conn)? {
+        push_entity_record(
+            &mut records,
+            SyncDomain::Tts,
+            "asr_ignored_suggestion",
+            asr_correction_entity_id(
+                &item.normalized_wrong,
+                &item.normalized_correct,
+                &item.language,
+                &item.scope,
+            ),
             item,
         )?;
     }
@@ -901,6 +994,15 @@ fn collect_current_entity_records(
             )?;
         }
     }
+    for item in &fetch_companion_scheduled_notes(conn)? {
+        push_entity_record(
+            &mut records,
+            SyncDomain::Sessions,
+            "companion_scheduled_note",
+            item.id.clone(),
+            item,
+        )?;
+    }
     for item in &messages {
         push_entity_record(
             &mut records,
@@ -934,6 +1036,15 @@ fn collect_current_entity_records(
             SyncDomain::Messages,
             "usage_metadata",
             format!("{}:{}", item.usage_id, item.key),
+            item,
+        )?;
+    }
+    for item in &fetch_companion_turn_effects(conn)? {
+        push_entity_record(
+            &mut records,
+            SyncDomain::Messages,
+            "companion_turn_effect",
+            item.id.clone(),
             item,
         )?;
     }
@@ -1258,14 +1369,35 @@ fn add_file_asset(
 }
 
 fn load_entity_heads(conn: &DbConnection) -> Result<HashMap<EntityKey, EntityHeadRecord>, String> {
+    load_entity_heads_filtered(conn, None)
+}
+
+fn load_entity_heads_for_domain(
+    conn: &DbConnection,
+    domain: SyncDomain,
+) -> Result<HashMap<EntityKey, EntityHeadRecord>, String> {
+    load_entity_heads_filtered(conn, Some(domain))
+}
+
+fn load_entity_heads_filtered(
+    conn: &DbConnection,
+    domain: Option<SyncDomain>,
+) -> Result<HashMap<EntityKey, EntityHeadRecord>, String> {
+    let base = "SELECT domain, entity_type, entity_id, payload_hash, payload_schema, payload, deleted, last_change_id, source_device_id, source_created_at, source_change_id
+             FROM sync_entity_heads";
+    let sql = match domain {
+        Some(_) => format!("{} WHERE domain = ?1", base),
+        None => base.to_string(),
+    };
     let mut stmt = conn
-        .prepare(
-            "SELECT domain, entity_type, entity_id, payload_hash, payload_schema, payload, deleted, last_change_id, source_device_id, source_created_at, source_change_id
-             FROM sync_entity_heads",
-        )
+        .prepare(&sql)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let sql_params = match domain {
+        Some(domain) => vec![sync_domain_name(domain)],
+        None => Vec::new(),
+    };
     let rows = stmt
-        .query_map([], |row| {
+        .query_map(rusqlite::params_from_iter(sql_params.iter()), |row| {
             let domain_name: String = row.get(0)?;
             Ok((
                 domain_name,
@@ -1368,7 +1500,7 @@ fn append_remote_change(
     let current_head = load_head(tx, key)?;
     if let Some(head) = &current_head {
         match compare_change_origin(head, change) {
-            std::cmp::Ordering::Greater => return Ok(None),
+            std::cmp::Ordering::Less => return Ok(None),
             std::cmp::Ordering::Equal => {
                 let same_deleted = head.deleted == (change.op == ChangeOp::Delete);
                 let same_payload = head.payload_hash == change.payload_hash;
@@ -1384,7 +1516,7 @@ fn append_remote_change(
                     ),
                 ));
             }
-            std::cmp::Ordering::Less => {}
+            std::cmp::Ordering::Greater => {}
         }
     }
 
@@ -1529,16 +1661,10 @@ fn compare_change_origin(head: &EntityHeadRecord, change: &ChangeRecord) -> std:
 }
 
 fn materialize_domain_heads(conn: &mut DbConnection, domain: SyncDomain) -> Result<(), String> {
-    let heads = load_entity_heads(conn)?;
+    let heads = load_entity_heads_for_domain(conn, domain)?;
     let domain_heads = heads
         .into_iter()
-        .filter_map(|(key, head)| {
-            if key.domain == domain && !head.deleted {
-                Some((key, head))
-            } else {
-                None
-            }
-        })
+        .filter(|(_, head)| !head.deleted)
         .collect::<Vec<_>>();
 
     match domain {
@@ -1551,6 +1677,7 @@ fn materialize_domain_heads(conn: &mut DbConnection, domain: SyncDomain) -> Resu
                 secrets: Vec::new(),
                 provider_credentials: Vec::new(),
                 prompt_templates: Vec::new(),
+                creation_helper_sessions: Vec::new(),
             };
             for (key, head) in domain_heads {
                 match key.entity_type.as_str() {
@@ -1565,6 +1692,9 @@ fn materialize_domain_heads(conn: &mut DbConnection, domain: SyncDomain) -> Resu
                     "prompt_template" => snapshot
                         .prompt_templates
                         .push(deserialize_head(&key, &head)?),
+                    "creation_helper_session" => snapshot
+                        .creation_helper_sessions
+                        .push(deserialize_head(&key, &head)?),
                     _ => {}
                 }
             }
@@ -1576,6 +1706,9 @@ fn materialize_domain_heads(conn: &mut DbConnection, domain: SyncDomain) -> Resu
             let mut snapshot = TtsSnapshot {
                 audio_providers: Vec::new(),
                 user_voices: Vec::new(),
+                asr_vocabulary_terms: Vec::new(),
+                asr_corrections: Vec::new(),
+                asr_ignored_suggestions: Vec::new(),
             };
             for (key, head) in domain_heads {
                 match key.entity_type.as_str() {
@@ -1583,6 +1716,15 @@ fn materialize_domain_heads(conn: &mut DbConnection, domain: SyncDomain) -> Resu
                         .audio_providers
                         .push(deserialize_head(&key, &head)?),
                     "user_voice" => snapshot.user_voices.push(deserialize_head(&key, &head)?),
+                    "asr_vocabulary_term" => snapshot
+                        .asr_vocabulary_terms
+                        .push(deserialize_head(&key, &head)?),
+                    "asr_correction" => snapshot
+                        .asr_corrections
+                        .push(deserialize_head(&key, &head)?),
+                    "asr_ignored_suggestion" => snapshot
+                        .asr_ignored_suggestions
+                        .push(deserialize_head(&key, &head)?),
                     _ => {}
                 }
             }
@@ -1677,6 +1819,7 @@ fn materialize_domain_heads(conn: &mut DbConnection, domain: SyncDomain) -> Resu
                 sessions: Vec::new(),
                 companion_shared_memory: Vec::new(),
                 memory_embeddings: Vec::new(),
+                companion_scheduled_notes: Vec::new(),
             };
             for (key, head) in domain_heads {
                 match key.entity_type.as_str() {
@@ -1687,6 +1830,9 @@ fn materialize_domain_heads(conn: &mut DbConnection, domain: SyncDomain) -> Resu
                     "memory_embedding" => snapshot
                         .memory_embeddings
                         .push(deserialize_memory_embedding_head(&key, &head)?),
+                    "companion_scheduled_note" => snapshot
+                        .companion_scheduled_notes
+                        .push(deserialize_head(&key, &head)?),
                     _ => {}
                 }
             }
@@ -1698,6 +1844,7 @@ fn materialize_domain_heads(conn: &mut DbConnection, domain: SyncDomain) -> Resu
                 message_variants: Vec::new(),
                 usage_records: Vec::new(),
                 usage_metadata: Vec::new(),
+                companion_turn_effects: Vec::new(),
             };
             for (key, head) in domain_heads {
                 match key.entity_type.as_str() {
@@ -1709,6 +1856,9 @@ fn materialize_domain_heads(conn: &mut DbConnection, domain: SyncDomain) -> Resu
                     "usage_metadata" => {
                         snapshot.usage_metadata.push(deserialize_head(&key, &head)?)
                     }
+                    "companion_turn_effect" => snapshot
+                        .companion_turn_effects
+                        .push(deserialize_head(&key, &head)?),
                     _ => {}
                 }
             }
@@ -1741,7 +1891,7 @@ fn upgrade_legacy_memory_embedding_v0(
     SyncedMemoryEmbedding {
         session_id: value.session_id,
         session_kind: value.session_kind,
-        memory: MemoryEmbedding {
+        memory: SyncMemoryEmbeddingRecord {
             id: value.memory.id,
             text: value.memory.text,
             embedding: value.memory.embedding,
@@ -1779,7 +1929,7 @@ fn upgrade_legacy_memory_embedding_v1(
     SyncedMemoryEmbedding {
         session_id: value.session_id,
         session_kind: value.session_kind,
-        memory: MemoryEmbedding {
+        memory: SyncMemoryEmbeddingRecord {
             id: value.memory.id,
             text: value.memory.text,
             embedding: value.memory.embedding,
@@ -1811,14 +1961,20 @@ fn upgrade_legacy_memory_embedding_v1(
     }
 }
 
+fn bincode_decode_exact<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, bincode::Error> {
+    use bincode::Options;
+    bincode::options().with_fixint_encoding().deserialize(bytes)
+}
+
 fn deserialize_memory_embedding_head(
     key: &EntityKey,
     head: &EntityHeadRecord,
 ) -> Result<SyncedMemoryEmbedding, String> {
-    match bincode::deserialize(&head.payload) {
+    match bincode_decode_exact(&head.payload) {
         Ok(value) => Ok(value),
         Err(current_err) => {
-            if let Ok(value) = bincode::deserialize::<LegacySyncedMemoryEmbeddingV1>(&head.payload)
+            if let Ok(value) =
+                bincode_decode_exact::<LegacySyncedMemoryEmbeddingV1>(&head.payload)
             {
                 log_info_global(
                     "sync_payload",
@@ -1829,7 +1985,8 @@ fn deserialize_memory_embedding_head(
                 );
                 return Ok(upgrade_legacy_memory_embedding_v1(value));
             }
-            if let Ok(value) = bincode::deserialize::<LegacySyncedMemoryEmbeddingV0>(&head.payload)
+            if let Ok(value) =
+                bincode_decode_exact::<LegacySyncedMemoryEmbeddingV0>(&head.payload)
             {
                 log_info_global(
                     "sync_payload",
@@ -1893,7 +2050,7 @@ fn deserialize_head<T: serde::de::DeserializeOwned + serde::Serialize>(
         ));
     }
 
-    match bincode::deserialize(&head.payload) {
+    match bincode_decode_exact(&head.payload) {
         Ok(value) => {
             let pretty = serde_json::to_string_pretty(&value)
                 .unwrap_or_else(|err| format!("<failed to render json: {}>", err));
@@ -1960,7 +2117,7 @@ fn collect_optional_text_values(conn: &DbConnection, sql: &str) -> Result<Vec<St
 
 fn fetch_group_configs(conn: &DbConnection) -> Result<Vec<SyncGroupConfigRecord>, String> {
     let mut stmt = conn
-        .prepare("SELECT id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, COALESCE(lorebook_ids, '[]'), COALESCE(disable_character_lorebooks, 0), COALESCE(speaker_selection_method, 'llm'), COALESCE(memory_type, 'manual') FROM group_characters")
+        .prepare("SELECT id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, COALESCE(lorebook_ids, '[]'), COALESCE(disable_character_lorebooks, 0), chat_appearance, COALESCE(speaker_selection_method, 'llm'), COALESCE(memory_type, 'manual') FROM group_characters")
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     let rows = stmt
         .query_map([], |r| {
@@ -1978,8 +2135,9 @@ fn fetch_group_configs(conn: &DbConnection) -> Result<Vec<SyncGroupConfigRecord>
                 background_image_path: r.get(10)?,
                 lorebook_ids: r.get(11)?,
                 disable_character_lorebooks: r.get(12)?,
-                speaker_selection_method: r.get(13)?,
-                memory_type: r.get(14)?,
+                chat_appearance: r.get(13)?,
+                speaker_selection_method: r.get(14)?,
+                memory_type: r.get(15)?,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -2013,7 +2171,7 @@ fn fetch_group_sessions_full(
     }
 
     let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!("SELECT id, group_character_id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, COALESCE(lorebook_ids, '[]'), COALESCE(disable_character_lorebooks, 0), memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events, memory_status, memory_error, memory_progress_step, COALESCE(speaker_selection_method, 'llm'), COALESCE(memory_type, 'manual') FROM group_sessions WHERE id IN ({})", placeholders);
+    let sql = format!("SELECT id, group_character_id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, COALESCE(lorebook_ids, '[]'), COALESCE(disable_character_lorebooks, 0), author_note, memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events, memory_status, memory_error, memory_progress_step, COALESCE(speaker_selection_method, 'llm'), COALESCE(memory_type, 'manual') FROM group_sessions WHERE id IN ({})", placeholders);
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -2034,16 +2192,17 @@ fn fetch_group_sessions_full(
                 background_image_path: r.get(11)?,
                 lorebook_ids: r.get(12)?,
                 disable_character_lorebooks: r.get(13)?,
-                memories: r.get(14)?,
-                memory_embeddings: r.get(15)?,
-                memory_summary: r.get(16)?,
-                memory_summary_token_count: r.get(17)?,
-                memory_tool_events: r.get(18)?,
-                memory_status: r.get(19)?,
-                memory_error: r.get(20)?,
-                memory_progress_step: r.get(21)?,
-                speaker_selection_method: r.get(22)?,
-                memory_type: r.get(23)?,
+                author_note: r.get(14)?,
+                memories: r.get(15)?,
+                memory_embeddings: r.get(16)?,
+                memory_summary: r.get(17)?,
+                memory_summary_token_count: r.get(18)?,
+                memory_tool_events: r.get(19)?,
+                memory_status: r.get(20)?,
+                memory_error: r.get(21)?,
+                memory_progress_step: r.get(22)?,
+                speaker_selection_method: r.get(23)?,
+                memory_type: r.get(24)?,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
@@ -2139,8 +2298,8 @@ fn apply_core_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), St
         .collect::<Vec<_>>();
     for persona in snapshot.personas {
         tx.execute(
-            r#"INSERT OR REPLACE INTO personas (id, title, description, nickname, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, active_lorebook_ids, is_default, created_at, updated_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"#,
+            r#"INSERT OR REPLACE INTO personas (id, title, description, nickname, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, lora_name, lora_strength, active_lorebook_ids, is_default, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"#,
             params![
                 persona.id,
                 persona.title,
@@ -2152,6 +2311,8 @@ fn apply_core_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), St
                 persona.avatar_crop_scale,
                 persona.design_description,
                 persona.design_reference_image_ids,
+                persona.lora_name,
+                persona.lora_strength,
                 persona.active_lorebook_ids,
                 persona.is_default,
                 persona.created_at,
@@ -2167,6 +2328,7 @@ fn apply_core_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), St
         "secrets",
         "provider_credentials",
         "prompt_templates",
+        "creation_helper_sessions",
     ] {
         tx.execute(&format!("DELETE FROM {}", table), [])
             .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -2240,6 +2402,23 @@ fn apply_core_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), St
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     }
 
+    for session in snapshot.creation_helper_sessions {
+        tx.execute(
+            r#"INSERT OR REPLACE INTO creation_helper_sessions (id, creation_goal, status, session_json, uploaded_images_json, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
+            params![
+                session.id,
+                session.creation_goal,
+                session.status,
+                session.session_json,
+                session.uploaded_images_json,
+                session.created_at,
+                session.updated_at
+            ],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    }
+
     tx.commit()
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
 }
@@ -2300,8 +2479,180 @@ fn apply_tts_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), Str
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     }
 
+    apply_asr_learning_tables(
+        &tx,
+        &snapshot.asr_vocabulary_terms,
+        &snapshot.asr_corrections,
+        &snapshot.asr_ignored_suggestions,
+    )?;
+
     tx.commit()
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+}
+
+pub(crate) fn apply_asr_learning_tables(
+    tx: &rusqlite::Transaction<'_>,
+    vocabulary_terms: &[SyncAsrVocabularyTerm],
+    corrections: &[SyncAsrCorrection],
+    ignored_suggestions: &[SyncAsrIgnoredSuggestion],
+) -> Result<(), String> {
+    let example_term_links: Vec<(i64, String)> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT e.id, t.normalized_term, t.language, t.scope
+                 FROM asr_voice_examples e
+                 JOIN asr_vocabulary_terms t ON e.term_id = t.id",
+            )
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        let rows = stmt
+            .query_map([], |r| {
+                let language: Option<String> = r.get(2)?;
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    format!(
+                        "{}|{}|{}",
+                        r.get::<_, String>(1)?,
+                        language.as_deref().unwrap_or("-"),
+                        r.get::<_, String>(3)?
+                    ),
+                ))
+            })
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
+    };
+    let example_correction_links: Vec<(i64, String)> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT e.id, c.normalized_wrong, c.normalized_correct, c.language, c.scope
+                 FROM asr_voice_examples e
+                 JOIN asr_corrections c ON e.correction_id = c.id",
+            )
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        let rows = stmt
+            .query_map([], |r| {
+                let language: Option<String> = r.get(3)?;
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    format!(
+                        "{}|{}|{}|{}",
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        language.as_deref().unwrap_or("-"),
+                        r.get::<_, String>(4)?
+                    ),
+                ))
+            })
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
+    };
+
+    for table in [
+        "asr_vocabulary_terms",
+        "asr_corrections",
+        "asr_ignored_suggestions",
+    ] {
+        tx.execute(&format!("DELETE FROM {}", table), [])
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    }
+
+    let mut term_ids: HashMap<String, i64> = HashMap::new();
+    for term in vocabulary_terms {
+        tx.execute(
+            r#"INSERT INTO asr_vocabulary_terms (term, normalized_term, language, category, scope, priority, use_count, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
+            params![
+                term.term,
+                term.normalized_term,
+                term.language,
+                term.category,
+                term.scope,
+                term.priority,
+                term.use_count,
+                term.created_at,
+                term.updated_at
+            ],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        term_ids.insert(asr_vocabulary_entity_id(term), tx.last_insert_rowid());
+    }
+
+    let mut correction_ids: HashMap<String, i64> = HashMap::new();
+    for correction in corrections {
+        tx.execute(
+            r#"INSERT INTO asr_corrections (wrong, normalized_wrong, correct, normalized_correct, language, scope, confidence, use_count, accepted_count, rejected_count, seen_count, last_seen_at, user_approved, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"#,
+            params![
+                correction.wrong,
+                correction.normalized_wrong,
+                correction.correct,
+                correction.normalized_correct,
+                correction.language,
+                correction.scope,
+                correction.confidence,
+                correction.use_count,
+                correction.accepted_count,
+                correction.rejected_count,
+                correction.seen_count,
+                correction.last_seen_at,
+                correction.user_approved,
+                correction.created_at,
+                correction.updated_at
+            ],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        correction_ids.insert(
+            asr_correction_entity_id(
+                &correction.normalized_wrong,
+                &correction.normalized_correct,
+                &correction.language,
+                &correction.scope,
+            ),
+            tx.last_insert_rowid(),
+        );
+    }
+
+    for suggestion in ignored_suggestions {
+        tx.execute(
+            r#"INSERT OR IGNORE INTO asr_ignored_suggestions (wrong, normalized_wrong, correct, normalized_correct, language, scope, ignored_count, last_ignored_at, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"#,
+            params![
+                suggestion.wrong,
+                suggestion.normalized_wrong,
+                suggestion.correct,
+                suggestion.normalized_correct,
+                suggestion.language,
+                suggestion.scope,
+                suggestion.ignored_count,
+                suggestion.last_ignored_at,
+                suggestion.created_at,
+                suggestion.updated_at
+            ],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    }
+
+    for (example_id, key) in example_term_links {
+        if let Some(new_id) = term_ids.get(&key) {
+            tx.execute(
+                "UPDATE asr_voice_examples SET term_id = ?1 WHERE id = ?2",
+                params![new_id, example_id],
+            )
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        }
+    }
+    for (example_id, key) in example_correction_links {
+        if let Some(new_id) = correction_ids.get(&key) {
+            tx.execute(
+                "UPDATE asr_voice_examples SET correction_id = ?1 WHERE id = ?2",
+                params![new_id, example_id],
+            )
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        }
+    }
+
+    Ok(())
 }
 
 fn apply_lorebooks_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), String> {
@@ -2374,8 +2725,8 @@ fn apply_characters_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<
         .collect::<Vec<_>>();
     for character in snapshot.characters {
         tx.execute(
-            r#"INSERT OR REPLACE INTO characters (id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, background_image_path, definition, description, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, mode, companion, memory_type, active_lorebook_ids, prompt_template_id, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, disable_avatar_gradient, avatar_gradient_source, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, default_chat_template_id, created_at, updated_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40)"#,
+            r#"INSERT OR REPLACE INTO characters (id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, card_type, design_description, design_reference_image_ids, lora_name, lora_strength, background_image_path, definition, description, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, mode, companion, memory_type, active_lorebook_ids, prompt_template_id, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, disable_avatar_gradient, avatar_gradient_source, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, default_chat_template_id, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46)"#,
             params![
                 character.id,
                 character.name,
@@ -2383,8 +2734,14 @@ fn apply_characters_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<
                 character.avatar_crop_x,
                 character.avatar_crop_y,
                 character.avatar_crop_scale,
+                character.banner_crop_x,
+                character.banner_crop_y,
+                character.banner_crop_scale,
+                character.card_type.unwrap_or_else(|| "circle".to_string()),
                 character.design_description,
                 character.design_reference_image_ids,
+                character.lora_name,
+                character.lora_strength,
                 character.background_image_path,
                 character.definition,
                 character.description,
@@ -2546,8 +2903,8 @@ fn apply_groups_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), 
         .collect::<Vec<_>>();
     for group in snapshot.group_characters {
         tx.execute(
-            r#"INSERT OR REPLACE INTO group_characters (id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, speaker_selection_method, memory_type)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"#,
+            r#"INSERT OR REPLACE INTO group_characters (id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, chat_appearance, speaker_selection_method, memory_type)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"#,
             params![
                 group.id,
                 group.name,
@@ -2562,6 +2919,7 @@ fn apply_groups_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), 
                 group.background_image_path,
                 group.lorebook_ids,
                 group.disable_character_lorebooks,
+                group.chat_appearance,
                 group.speaker_selection_method,
                 group.memory_type
             ],
@@ -2572,8 +2930,8 @@ fn apply_groups_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), 
 
     for session in snapshot.group_sessions {
         tx.execute(
-            r#"INSERT OR REPLACE INTO group_sessions (id, group_character_id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events, memory_status, memory_error, memory_progress_step, speaker_selection_method, memory_type)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)"#,
+            r#"INSERT OR REPLACE INTO group_sessions (id, group_character_id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, author_note, memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events, memory_status, memory_error, memory_progress_step, speaker_selection_method, memory_type)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"#,
             params![
                 session.id,
                 session.group_character_id,
@@ -2589,6 +2947,7 @@ fn apply_groups_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), 
                 session.background_image_path,
                 session.lorebook_ids,
                 session.disable_character_lorebooks,
+                session.author_note,
                 session.memories,
                 "[]",
                 session.memory_summary,
@@ -2614,8 +2973,8 @@ fn apply_groups_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), 
 
     for message in snapshot.group_messages {
         tx.execute(
-            r#"INSERT OR REPLACE INTO group_messages (id, session_id, role, content, speaker_character_id, turn_number, created_at, prompt_tokens, completion_tokens, total_tokens, selected_variant_id, is_pinned, attachments, used_lorebook_entries, reasoning, selection_reasoning, model_id)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"#,
+            r#"INSERT OR REPLACE INTO group_messages (id, session_id, role, content, speaker_character_id, turn_number, created_at, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, selected_variant_id, is_pinned, attachments, used_lorebook_entries, memory_refs, reasoning, selection_reasoning, model_id)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)"#,
             params![
                 message.id,
                 message.session_id,
@@ -2627,10 +2986,14 @@ fn apply_groups_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), 
                 message.prompt_tokens,
                 message.completion_tokens,
                 message.total_tokens,
+                message.first_token_ms,
+                message.tokens_per_second,
+                message.mtp_stats,
                 message.selected_variant_id,
                 message.is_pinned,
                 message.attachments,
                 message.used_lorebook_entries,
+                message.memory_refs,
                 message.reasoning,
                 message.selection_reasoning,
                 message.model_id
@@ -2641,8 +3004,8 @@ fn apply_groups_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<(), 
 
     for variant in snapshot.group_message_variants {
         tx.execute(
-            "INSERT OR REPLACE INTO group_message_variants (id, message_id, content, speaker_character_id, created_at, prompt_tokens, completion_tokens, total_tokens, reasoning, selection_reasoning, model_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![variant.id, variant.message_id, variant.content, variant.speaker_character_id, variant.created_at, variant.prompt_tokens, variant.completion_tokens, variant.total_tokens, variant.reasoning, variant.selection_reasoning, variant.model_id],
+            "INSERT OR REPLACE INTO group_message_variants (id, message_id, content, speaker_character_id, created_at, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, reasoning, selection_reasoning, model_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![variant.id, variant.message_id, variant.content, variant.speaker_character_id, variant.created_at, variant.prompt_tokens, variant.completion_tokens, variant.total_tokens, variant.first_token_ms, variant.tokens_per_second, variant.mtp_stats, variant.reasoning, variant.selection_reasoning, variant.model_id],
         )
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     }
@@ -2787,12 +3150,15 @@ fn apply_sessions_snapshot_struct(
 
     for session in snapshot.sessions {
         tx.execute(
-            r#"INSERT OR REPLACE INTO sessions (id, character_id, title, background_image_path, system_prompt, mode, selected_scene_id, prompt_template_id, lorebook_ids_override, author_note, persona_id, persona_disabled, voice_autoplay, temperature, top_p, max_output_tokens, frequency_penalty, presence_penalty, top_k, companion_state, memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events, archived, created_at, updated_at, memory_status, memory_error, memory_progress_step)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)"#,
+            r#"INSERT OR REPLACE INTO sessions (id, character_id, title, parent_session_id, branched_from_message_id, root_session_id, background_image_path, system_prompt, mode, selected_scene_id, prompt_template_id, lorebook_ids_override, author_note, persona_id, persona_disabled, voice_autoplay, temperature, top_p, max_output_tokens, frequency_penalty, presence_penalty, top_k, advanced_model_settings, companion_state, memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events, archived, created_at, updated_at, memory_status, memory_error, memory_progress_step)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35)"#,
             params![
                 session.id,
                 session.character_id,
                 session.title,
+                session.parent_session_id,
+                session.branched_from_message_id,
+                session.root_session_id,
                 session.background_image_path,
                 session.system_prompt,
                 if session.mode.trim().is_empty() { "roleplay".to_string() } else { session.mode },
@@ -2809,6 +3175,7 @@ fn apply_sessions_snapshot_struct(
                 session.frequency_penalty,
                 session.presence_penalty,
                 session.top_k,
+                session.advanced_model_settings,
                 session.companion_state,
                 session.memories,
                 "[]",
@@ -2845,6 +3212,30 @@ fn apply_sessions_snapshot_struct(
                 row.memory_progress_step,
                 row.created_at,
                 row.updated_at,
+            ],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    }
+
+    tx.execute("DELETE FROM companion_scheduled_notes", [])
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    for note in snapshot.companion_scheduled_notes {
+        tx.execute(
+            r#"INSERT INTO companion_scheduled_notes (id, character_id, label, content, available_at, expires_at, recurrence, recurrence_window_ms, enabled, created_at, updated_at)
+               SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+               WHERE EXISTS (SELECT 1 FROM characters WHERE id = ?2)"#,
+            params![
+                note.id,
+                note.character_id,
+                note.label,
+                note.content,
+                note.available_at,
+                note.expires_at,
+                note.recurrence,
+                note.recurrence_window_ms,
+                note.enabled,
+                note.created_at,
+                note.updated_at
             ],
         )
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -2974,8 +3365,8 @@ fn apply_messages_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<()
 
     for message in snapshot.messages {
         tx.execute(
-            r#"INSERT OR REPLACE INTO messages (id, session_id, role, content, created_at, visible_in_chat, scene_edited, prompt_tokens, completion_tokens, total_tokens, selected_variant_id, is_pinned, memory_refs, used_lorebook_entries, attachments, reasoning)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"#,
+            r#"INSERT OR REPLACE INTO messages (id, session_id, role, content, created_at, visible_in_chat, scene_edited, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, model_id, selected_variant_id, is_pinned, memory_refs, used_lorebook_entries, attachments, reasoning)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"#,
             params![
                 message.id,
                 message.session_id,
@@ -2987,6 +3378,10 @@ fn apply_messages_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<()
                 message.prompt_tokens,
                 message.completion_tokens,
                 message.total_tokens,
+                message.first_token_ms,
+                message.tokens_per_second,
+                message.mtp_stats,
+                message.model_id,
                 message.selected_variant_id,
                 message.is_pinned,
                 message.memory_refs,
@@ -3000,8 +3395,8 @@ fn apply_messages_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<()
 
     for variant in snapshot.message_variants {
         tx.execute(
-            "INSERT OR REPLACE INTO message_variants (id, message_id, content, created_at, prompt_tokens, completion_tokens, total_tokens, reasoning) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![variant.id, variant.message_id, variant.content, variant.created_at, variant.prompt_tokens, variant.completion_tokens, variant.total_tokens, variant.reasoning],
+            "INSERT OR REPLACE INTO message_variants (id, message_id, content, created_at, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, reasoning) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![variant.id, variant.message_id, variant.content, variant.created_at, variant.prompt_tokens, variant.completion_tokens, variant.total_tokens, variant.first_token_ms, variant.tokens_per_second, variant.mtp_stats, variant.reasoning],
         )
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     }
@@ -3044,6 +3439,35 @@ fn apply_messages_snapshot(conn: &mut DbConnection, payload: &[u8]) -> Result<()
         tx.execute(
             "INSERT OR REPLACE INTO usage_metadata (usage_id, key, value) VALUES (?1, ?2, ?3)",
             params![metadata.usage_id, metadata.key, metadata.value],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    }
+
+    tx.execute("DELETE FROM companion_turn_effects", [])
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    for effect in snapshot.companion_turn_effects {
+        tx.execute(
+            r#"INSERT INTO companion_turn_effects (id, session_id, user_message_id, assistant_message_id, created_at, updated_at, status, summary, relationship_delta, emotion_delta, signal_changes, memory_changes, source_window)
+               SELECT ?1, ?2,
+                      CASE WHEN ?3 IS NOT NULL AND EXISTS (SELECT 1 FROM messages WHERE id = ?3) THEN ?3 ELSE NULL END,
+                      ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+               WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ?2)
+                 AND EXISTS (SELECT 1 FROM messages WHERE id = ?4)"#,
+            params![
+                effect.id,
+                effect.session_id,
+                effect.user_message_id,
+                effect.assistant_message_id,
+                effect.created_at,
+                effect.updated_at,
+                effect.status,
+                effect.summary,
+                effect.relationship_delta,
+                effect.emotion_delta,
+                effect.signal_changes,
+                effect.memory_changes,
+                effect.source_window
+            ],
         )
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     }
@@ -3100,7 +3524,7 @@ fn fetch_global_core(conn: &DbConnection) -> Result<GlobalCoreData, String> {
     let settings: Vec<Settings> = settings_iter.map(|r| r.unwrap()).collect();
 
     let mut stmt = conn
-        .prepare("SELECT id, title, description, nickname, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, COALESCE(active_lorebook_ids, '[]'), is_default, created_at, updated_at FROM personas")
+        .prepare("SELECT id, title, description, nickname, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, lora_name, lora_strength, COALESCE(active_lorebook_ids, '[]'), is_default, created_at, updated_at FROM personas")
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     let personas: Vec<Persona> = stmt
         .query_map([], |r| {
@@ -3115,10 +3539,12 @@ fn fetch_global_core(conn: &DbConnection) -> Result<GlobalCoreData, String> {
                 avatar_crop_scale: r.get(7)?,
                 design_description: r.get(8)?,
                 design_reference_image_ids: r.get(9)?,
-                active_lorebook_ids: r.get(10)?,
-                is_default: r.get(11)?,
-                created_at: r.get(12)?,
-                updated_at: r.get(13)?,
+                lora_name: r.get(10)?,
+                lora_strength: r.get(11)?,
+                active_lorebook_ids: r.get(12)?,
+                is_default: r.get(13)?,
+                created_at: r.get(14)?,
+                updated_at: r.get(15)?,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
@@ -3344,7 +3770,7 @@ fn fetch_characters_data(
     }
     let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
-    let sql = format!("SELECT id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, design_description, design_reference_image_ids, background_image_path, definition, description, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, COALESCE(mode, 'roleplay'), companion, memory_type, COALESCE(active_lorebook_ids, '[]'), prompt_template_id, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, disable_avatar_gradient, COALESCE(avatar_gradient_source, 'base'), custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, default_chat_template_id, created_at, updated_at FROM characters WHERE id IN ({})", placeholders);
+    let sql = format!("SELECT id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, COALESCE(card_type, 'circle'), design_description, design_reference_image_ids, lora_name, lora_strength, background_image_path, definition, description, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, COALESCE(mode, 'roleplay'), companion, memory_type, COALESCE(active_lorebook_ids, '[]'), prompt_template_id, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, disable_avatar_gradient, COALESCE(avatar_gradient_source, 'base'), custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, default_chat_template_id, created_at, updated_at FROM characters WHERE id IN ({})", placeholders);
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -3357,40 +3783,46 @@ fn fetch_characters_data(
                 avatar_crop_x: r.get(3)?,
                 avatar_crop_y: r.get(4)?,
                 avatar_crop_scale: r.get(5)?,
-                design_description: r.get(6)?,
-                design_reference_image_ids: r.get(7)?,
-                background_image_path: r.get(8)?,
-                definition: r.get(9)?,
-                description: r.get(10)?,
-                nickname: r.get(11)?,
-                scenario: r.get(12)?,
-                creator_notes: r.get(13)?,
-                creator: r.get(14)?,
-                creator_notes_multilingual: r.get(15)?,
-                source: r.get(16)?,
-                tags: r.get(17)?,
-                default_scene_id: r.get(18)?,
-                default_model_id: r.get(19)?,
-                mode: r.get(20)?,
-                companion: r.get(21)?,
-                memory_type: r.get(22)?,
-                active_lorebook_ids: r.get(23)?,
-                prompt_template_id: r.get(24)?,
-                group_chat_prompt_template_id: r.get(25)?,
-                group_chat_roleplay_prompt_template_id: r.get(26)?,
-                system_prompt: r.get(27)?,
-                voice_config: r.get(28)?,
-                voice_autoplay: r.get(29)?,
-                disable_avatar_gradient: r.get(30)?,
-                avatar_gradient_source: r.get(31)?,
-                custom_gradient_enabled: r.get(32)?,
-                custom_gradient_colors: r.get(33)?,
-                custom_text_color: r.get(34)?,
-                custom_text_secondary: r.get(35)?,
-                chat_appearance: r.get(36)?,
-                default_chat_template_id: r.get(37)?,
-                created_at: r.get(38)?,
-                updated_at: r.get(39)?,
+                banner_crop_x: r.get(6)?,
+                banner_crop_y: r.get(7)?,
+                banner_crop_scale: r.get(8)?,
+                card_type: r.get(9)?,
+                design_description: r.get(10)?,
+                design_reference_image_ids: r.get(11)?,
+                lora_name: r.get(12)?,
+                lora_strength: r.get(13)?,
+                background_image_path: r.get(14)?,
+                definition: r.get(15)?,
+                description: r.get(16)?,
+                nickname: r.get(17)?,
+                scenario: r.get(18)?,
+                creator_notes: r.get(19)?,
+                creator: r.get(20)?,
+                creator_notes_multilingual: r.get(21)?,
+                source: r.get(22)?,
+                tags: r.get(23)?,
+                default_scene_id: r.get(24)?,
+                default_model_id: r.get(25)?,
+                mode: r.get(26)?,
+                companion: r.get(27)?,
+                memory_type: r.get(28)?,
+                active_lorebook_ids: r.get(29)?,
+                prompt_template_id: r.get(30)?,
+                group_chat_prompt_template_id: r.get(31)?,
+                group_chat_roleplay_prompt_template_id: r.get(32)?,
+                system_prompt: r.get(33)?,
+                voice_config: r.get(34)?,
+                voice_autoplay: r.get(35)?,
+                disable_avatar_gradient: r.get(36)?,
+                avatar_gradient_source: r.get(37)?,
+                custom_gradient_enabled: r.get(38)?,
+                custom_gradient_colors: r.get(39)?,
+                custom_text_color: r.get(40)?,
+                custom_text_secondary: r.get(41)?,
+                chat_appearance: r.get(42)?,
+                default_chat_template_id: r.get(43)?,
+                created_at: r.get(44)?,
+                updated_at: r.get(45)?,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
@@ -3520,7 +3952,7 @@ fn fetch_sessions_data(
     }
     let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
-    let sql = format!("SELECT id, character_id, title, background_image_path, system_prompt, COALESCE(mode, 'roleplay'), selected_scene_id, prompt_template_id, lorebook_ids_override, author_note, persona_id, persona_disabled, voice_autoplay, temperature, top_p, max_output_tokens, frequency_penalty, presence_penalty, top_k, companion_state, memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events, archived, created_at, updated_at, memory_status, memory_error, memory_progress_step FROM sessions WHERE id IN ({})", placeholders);
+    let sql = format!("SELECT id, character_id, title, parent_session_id, branched_from_message_id, root_session_id, background_image_path, system_prompt, COALESCE(mode, 'roleplay'), selected_scene_id, prompt_template_id, lorebook_ids_override, author_note, persona_id, persona_disabled, voice_autoplay, temperature, top_p, max_output_tokens, frequency_penalty, presence_penalty, top_k, advanced_model_settings, companion_state, memories, memory_embeddings, memory_summary, memory_summary_token_count, memory_tool_events, archived, created_at, updated_at, memory_status, memory_error, memory_progress_step FROM sessions WHERE id IN ({})", placeholders);
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -3530,34 +3962,38 @@ fn fetch_sessions_data(
                 id: r.get(0)?,
                 character_id: r.get(1)?,
                 title: r.get(2)?,
-                background_image_path: r.get(3)?,
-                system_prompt: r.get(4)?,
-                mode: r.get(5)?,
-                selected_scene_id: r.get(6)?,
-                prompt_template_id: r.get(7)?,
-                lorebook_ids_override: r.get(8)?,
-                author_note: r.get(9)?,
-                persona_id: r.get(10)?,
-                persona_disabled: r.get(11)?,
-                voice_autoplay: r.get(12)?,
-                temperature: r.get(13)?,
-                top_p: r.get(14)?,
-                max_output_tokens: r.get(15)?,
-                frequency_penalty: r.get(16)?,
-                presence_penalty: r.get(17)?,
-                top_k: r.get(18)?,
-                companion_state: r.get(19)?,
-                memories: r.get(20)?,
-                memory_embeddings: r.get(21)?,
-                memory_summary: r.get(22)?,
-                memory_summary_token_count: r.get(23)?,
-                memory_tool_events: r.get(24)?,
-                archived: r.get(25)?,
-                created_at: r.get(26)?,
-                updated_at: r.get(27)?,
-                memory_status: r.get(28)?,
-                memory_error: r.get(29)?,
-                memory_progress_step: r.get(30)?,
+                parent_session_id: r.get(3)?,
+                branched_from_message_id: r.get(4)?,
+                root_session_id: r.get(5)?,
+                background_image_path: r.get(6)?,
+                system_prompt: r.get(7)?,
+                mode: r.get(8)?,
+                selected_scene_id: r.get(9)?,
+                prompt_template_id: r.get(10)?,
+                lorebook_ids_override: r.get(11)?,
+                author_note: r.get(12)?,
+                persona_id: r.get(13)?,
+                persona_disabled: r.get(14)?,
+                voice_autoplay: r.get(15)?,
+                temperature: r.get(16)?,
+                top_p: r.get(17)?,
+                max_output_tokens: r.get(18)?,
+                frequency_penalty: r.get(19)?,
+                presence_penalty: r.get(20)?,
+                top_k: r.get(21)?,
+                advanced_model_settings: r.get(22)?,
+                companion_state: r.get(23)?,
+                memories: r.get(24)?,
+                memory_embeddings: r.get(25)?,
+                memory_summary: r.get(26)?,
+                memory_summary_token_count: r.get(27)?,
+                memory_tool_events: r.get(28)?,
+                archived: r.get(29)?,
+                created_at: r.get(30)?,
+                updated_at: r.get(31)?,
+                memory_status: r.get(32)?,
+                memory_error: r.get(33)?,
+                memory_progress_step: r.get(34)?,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
@@ -3573,7 +4009,7 @@ fn fetch_sessions_data(
         );
     }
 
-    let sql_msg = format!("SELECT id, session_id, role, content, created_at, visible_in_chat, scene_edited, prompt_tokens, completion_tokens, total_tokens, selected_variant_id, is_pinned, memory_refs, used_lorebook_entries, attachments, reasoning FROM messages WHERE session_id IN ({})", placeholders);
+    let sql_msg = format!("SELECT id, session_id, role, content, created_at, visible_in_chat, scene_edited, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, model_id, selected_variant_id, is_pinned, memory_refs, used_lorebook_entries, attachments, reasoning FROM messages WHERE session_id IN ({})", placeholders);
     let mut stmt = conn
         .prepare(&sql_msg)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -3590,19 +4026,23 @@ fn fetch_sessions_data(
                 prompt_tokens: r.get(7)?,
                 completion_tokens: r.get(8)?,
                 total_tokens: r.get(9)?,
-                selected_variant_id: r.get(10)?,
-                is_pinned: r.get(11)?,
-                memory_refs: r.get(12)?,
-                used_lorebook_entries: r.get(13)?,
-                attachments: r.get(14)?,
-                reasoning: r.get(15)?,
+                first_token_ms: r.get(10)?,
+                tokens_per_second: r.get(11)?,
+                mtp_stats: r.get(12)?,
+                model_id: r.get(13)?,
+                selected_variant_id: r.get(14)?,
+                is_pinned: r.get(15)?,
+                memory_refs: r.get(16)?,
+                used_lorebook_entries: r.get(17)?,
+                attachments: r.get(18)?,
+                reasoning: r.get(19)?,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
         .map(|r| r.unwrap())
         .collect();
 
-    let sql_var = format!("SELECT id, message_id, content, created_at, prompt_tokens, completion_tokens, total_tokens, reasoning FROM message_variants WHERE message_id IN (SELECT id FROM messages WHERE session_id IN ({}))", placeholders);
+    let sql_var = format!("SELECT id, message_id, content, created_at, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, reasoning FROM message_variants WHERE message_id IN (SELECT id FROM messages WHERE session_id IN ({}))", placeholders);
     let mut stmt = conn
         .prepare(&sql_var)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -3616,7 +4056,10 @@ fn fetch_sessions_data(
                 prompt_tokens: r.get(4)?,
                 completion_tokens: r.get(5)?,
                 total_tokens: r.get(6)?,
-                reasoning: r.get(7)?,
+                first_token_ms: r.get(7)?,
+                tokens_per_second: r.get(8)?,
+                mtp_stats: r.get(9)?,
+                reasoning: r.get(10)?,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
@@ -3677,6 +4120,212 @@ fn fetch_sessions_data(
         .collect();
 
     Ok((sessions, messages, variants, usages, metadata))
+}
+
+fn fetch_creation_helper_sessions(
+    conn: &DbConnection,
+) -> Result<Vec<CreationHelperSession>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, creation_goal, status, session_json, uploaded_images_json, created_at, updated_at
+             FROM creation_helper_sessions",
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(CreationHelperSession {
+                id: r.get(0)?,
+                creation_goal: r.get(1)?,
+                status: r.get(2)?,
+                session_json: r.get(3)?,
+                uploaded_images_json: r.get(4)?,
+                created_at: r.get(5)?,
+                updated_at: r.get(6)?,
+            })
+        })
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+}
+
+fn fetch_companion_scheduled_notes(
+    conn: &DbConnection,
+) -> Result<Vec<SyncCompanionScheduledNote>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, character_id, label, content, available_at, expires_at, recurrence,
+                    recurrence_window_ms, enabled, created_at, updated_at
+             FROM companion_scheduled_notes",
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(SyncCompanionScheduledNote {
+                id: r.get(0)?,
+                character_id: r.get(1)?,
+                label: r.get(2)?,
+                content: r.get(3)?,
+                available_at: r.get(4)?,
+                expires_at: r.get(5)?,
+                recurrence: r.get(6)?,
+                recurrence_window_ms: r.get(7)?,
+                enabled: r.get(8)?,
+                created_at: r.get(9)?,
+                updated_at: r.get(10)?,
+            })
+        })
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+}
+
+fn fetch_companion_turn_effects(
+    conn: &DbConnection,
+) -> Result<Vec<SyncCompanionTurnEffect>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, user_message_id, assistant_message_id, created_at, updated_at,
+                    status, summary, relationship_delta, emotion_delta, signal_changes,
+                    memory_changes, source_window
+             FROM companion_turn_effects",
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(SyncCompanionTurnEffect {
+                id: r.get(0)?,
+                session_id: r.get(1)?,
+                user_message_id: r.get(2)?,
+                assistant_message_id: r.get(3)?,
+                created_at: r.get(4)?,
+                updated_at: r.get(5)?,
+                status: r.get(6)?,
+                summary: r.get(7)?,
+                relationship_delta: r.get(8)?,
+                emotion_delta: r.get(9)?,
+                signal_changes: r.get(10)?,
+                memory_changes: r.get(11)?,
+                source_window: r.get(12)?,
+            })
+        })
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+}
+
+fn asr_key_part(value: &Option<String>) -> String {
+    value.as_deref().unwrap_or("-").to_string()
+}
+
+pub(crate) fn asr_vocabulary_entity_id(term: &SyncAsrVocabularyTerm) -> String {
+    format!(
+        "{}|{}|{}",
+        term.normalized_term,
+        asr_key_part(&term.language),
+        term.scope
+    )
+}
+
+pub(crate) fn asr_correction_entity_id(
+    normalized_wrong: &str,
+    normalized_correct: &str,
+    language: &Option<String>,
+    scope: &str,
+) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        normalized_wrong,
+        normalized_correct,
+        asr_key_part(language),
+        scope
+    )
+}
+
+pub(crate) fn fetch_asr_vocabulary_terms(conn: &DbConnection) -> Result<Vec<SyncAsrVocabularyTerm>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT term, normalized_term, language, category, scope, priority, use_count, created_at, updated_at
+             FROM asr_vocabulary_terms",
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(SyncAsrVocabularyTerm {
+                term: r.get(0)?,
+                normalized_term: r.get(1)?,
+                language: r.get(2)?,
+                category: r.get(3)?,
+                scope: r.get(4)?,
+                priority: r.get(5)?,
+                use_count: r.get(6)?,
+                created_at: r.get(7)?,
+                updated_at: r.get(8)?,
+            })
+        })
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+}
+
+pub(crate) fn fetch_asr_corrections(conn: &DbConnection) -> Result<Vec<SyncAsrCorrection>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT wrong, normalized_wrong, correct, normalized_correct, language, scope, confidence, use_count, accepted_count, rejected_count, seen_count, last_seen_at, user_approved, created_at, updated_at
+             FROM asr_corrections",
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(SyncAsrCorrection {
+                wrong: r.get(0)?,
+                normalized_wrong: r.get(1)?,
+                correct: r.get(2)?,
+                normalized_correct: r.get(3)?,
+                language: r.get(4)?,
+                scope: r.get(5)?,
+                confidence: r.get(6)?,
+                use_count: r.get(7)?,
+                accepted_count: r.get(8)?,
+                rejected_count: r.get(9)?,
+                seen_count: r.get(10)?,
+                last_seen_at: r.get(11)?,
+                user_approved: r.get(12)?,
+                created_at: r.get(13)?,
+                updated_at: r.get(14)?,
+            })
+        })
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+}
+
+pub(crate) fn fetch_asr_ignored_suggestions(
+    conn: &DbConnection,
+) -> Result<Vec<SyncAsrIgnoredSuggestion>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT wrong, normalized_wrong, correct, normalized_correct, language, scope, ignored_count, last_ignored_at, created_at, updated_at
+             FROM asr_ignored_suggestions",
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(SyncAsrIgnoredSuggestion {
+                wrong: r.get(0)?,
+                normalized_wrong: r.get(1)?,
+                correct: r.get(2)?,
+                normalized_correct: r.get(3)?,
+                language: r.get(4)?,
+                scope: r.get(5)?,
+                ignored_count: r.get(6)?,
+                last_ignored_at: r.get(7)?,
+                created_at: r.get(8)?,
+                updated_at: r.get(9)?,
+            })
+        })
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
 }
 
 fn fetch_companion_shared_memory_data(
@@ -3813,7 +4462,7 @@ fn fetch_group_sessions_data(
         .map(|r| r.unwrap())
         .collect();
 
-    let sql_msg = format!("SELECT id, session_id, role, content, speaker_character_id, turn_number, created_at, prompt_tokens, completion_tokens, total_tokens, selected_variant_id, is_pinned, attachments, used_lorebook_entries, reasoning, selection_reasoning, model_id FROM group_messages WHERE session_id IN ({})", placeholders);
+    let sql_msg = format!("SELECT id, session_id, role, content, speaker_character_id, turn_number, created_at, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, selected_variant_id, is_pinned, attachments, used_lorebook_entries, memory_refs, reasoning, selection_reasoning, model_id FROM group_messages WHERE session_id IN ({})", placeholders);
     let mut stmt = conn
         .prepare(&sql_msg)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -3830,20 +4479,24 @@ fn fetch_group_sessions_data(
                 prompt_tokens: r.get(7)?,
                 completion_tokens: r.get(8)?,
                 total_tokens: r.get(9)?,
-                selected_variant_id: r.get(10)?,
-                is_pinned: r.get(11)?,
-                attachments: r.get(12)?,
-                used_lorebook_entries: r.get(13)?,
-                reasoning: r.get(14)?,
-                selection_reasoning: r.get(15)?,
-                model_id: r.get(16)?,
+                first_token_ms: r.get(10)?,
+                tokens_per_second: r.get(11)?,
+                mtp_stats: r.get(12)?,
+                selected_variant_id: r.get(13)?,
+                is_pinned: r.get(14)?,
+                attachments: r.get(15)?,
+                used_lorebook_entries: r.get(16)?,
+                memory_refs: r.get(17)?,
+                reasoning: r.get(18)?,
+                selection_reasoning: r.get(19)?,
+                model_id: r.get(20)?,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
         .map(|r| r.unwrap())
         .collect();
 
-    let sql_var = format!("SELECT id, message_id, content, speaker_character_id, created_at, prompt_tokens, completion_tokens, total_tokens, reasoning, selection_reasoning, model_id FROM group_message_variants WHERE message_id IN (SELECT id FROM group_messages WHERE session_id IN ({}))", placeholders);
+    let sql_var = format!("SELECT id, message_id, content, speaker_character_id, created_at, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, reasoning, selection_reasoning, model_id FROM group_message_variants WHERE message_id IN (SELECT id FROM group_messages WHERE session_id IN ({}))", placeholders);
     let mut stmt = conn
         .prepare(&sql_var)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -3858,9 +4511,12 @@ fn fetch_group_sessions_data(
                 prompt_tokens: r.get(5)?,
                 completion_tokens: r.get(6)?,
                 total_tokens: r.get(7)?,
-                reasoning: r.get(8)?,
-                selection_reasoning: r.get(9)?,
-                model_id: r.get(10)?,
+                first_token_ms: r.get(8)?,
+                tokens_per_second: r.get(9)?,
+                mtp_stats: r.get(10)?,
+                reasoning: r.get(11)?,
+                selection_reasoning: r.get(12)?,
+                model_id: r.get(13)?,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
@@ -3987,4 +4643,340 @@ pub fn scan_for_missing_files(conn: &DbConnection, app_handle: &tauri::AppHandle
     missing.sort();
     missing.dedup();
     missing
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_record() -> SyncedMemoryEmbedding {
+        SyncedMemoryEmbedding {
+            session_id: "session-1".into(),
+            session_kind: "session".into(),
+            memory: SyncMemoryEmbeddingRecord {
+                id: "852275".into(),
+                text: "Sam is an Army soldier".into(),
+                embedding: vec![0.25, -0.5, 0.75],
+                created_at: 1776758542110,
+                token_count: 20,
+                is_cold: false,
+                last_accessed_at: 1776758600000,
+                importance_score: 1.0,
+                persistence_importance: 1.0,
+                prompt_importance: 1.0,
+                volatility: 0.4,
+                is_pinned: true,
+                access_count: 1,
+                embedding_source_version: Some("v4".into()),
+                embedding_dimensions: Some(3),
+                match_score: None,
+                category: Some("character_trait".into()),
+                observed_at: None,
+                observed_time_precision: None,
+                canonical_entities: Vec::new(),
+                fact_signature: None,
+                fact_polarity: None,
+                source_role: None,
+                source_message_id: None,
+                superseded_by: None,
+                superseded_at: None,
+                supersedes: Vec::new(),
+            },
+        }
+    }
+
+    fn head_record(payload: Vec<u8>) -> EntityHeadRecord {
+        EntityHeadRecord {
+            payload_hash: blake3::hash(&payload).to_hex().to_string(),
+            payload_schema: CHANGE_SCHEMA_VERSION,
+            payload,
+            deleted: false,
+            _last_change_id: 1,
+            source_device_id: "test-device".into(),
+            source_created_at: 1,
+            source_change_id: 1,
+        }
+    }
+
+    fn embedding_key() -> EntityKey {
+        EntityKey {
+            domain: SyncDomain::Sessions,
+            entity_type: "memory_embedding".into(),
+            entity_id: "session:session-1:852275".into(),
+        }
+    }
+
+    #[test]
+    fn wire_record_round_trips_mixed_optionals() {
+        let record = sample_record();
+        let payload = bincode::serialize(&record).unwrap();
+        let head = head_record(payload);
+        let decoded = deserialize_memory_embedding_head(&embedding_key(), &head).unwrap();
+        assert_eq!(decoded.memory.id, "852275");
+        assert_eq!(decoded.memory.created_at, 1776758542110);
+        assert_eq!(decoded.memory.token_count, 20);
+        assert_eq!(decoded.memory.embedding_source_version.as_deref(), Some("v4"));
+        assert_eq!(decoded.memory.match_score, None);
+        assert_eq!(decoded.memory.category.as_deref(), Some("character_trait"));
+    }
+
+    #[test]
+    fn skip_serialized_payload_is_rejected_instead_of_truncated() {
+        #[derive(serde::Serialize)]
+        struct LegacySkipSerialized {
+            session_id: String,
+            session_kind: String,
+            memory: crate::chat_manager::types::MemoryEmbedding,
+        }
+
+        let record = sample_record();
+        let legacy = LegacySkipSerialized {
+            session_id: record.session_id.clone(),
+            session_kind: record.session_kind.clone(),
+            memory: record.memory.clone().into(),
+        };
+        let payload = bincode::serialize(&legacy).unwrap();
+        let head = head_record(payload);
+        let result = deserialize_memory_embedding_head(&embedding_key(), &head);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn genuine_v0_payload_still_upgrades() {
+        #[derive(serde::Serialize)]
+        struct V0Memory {
+            id: String,
+            text: String,
+            embedding: Vec<f32>,
+        }
+        #[derive(serde::Serialize)]
+        struct V0Synced {
+            session_id: String,
+            session_kind: String,
+            memory: V0Memory,
+        }
+
+        let payload = bincode::serialize(&V0Synced {
+            session_id: "session-1".into(),
+            session_kind: "session".into(),
+            memory: V0Memory {
+                id: "852275".into(),
+                text: "Sam is an Army soldier".into(),
+                embedding: vec![0.25, -0.5, 0.75],
+            },
+        })
+        .unwrap();
+        let head = head_record(payload);
+        let decoded = deserialize_memory_embedding_head(&embedding_key(), &head).unwrap();
+        assert_eq!(decoded.memory.text, "Sam is an Army soldier");
+        assert_eq!(decoded.memory.embedding, vec![0.25, -0.5, 0.75]);
+    }
+
+    fn change_at(source_created_at: i64) -> ChangeRecord {
+        ChangeRecord {
+            change_id: source_created_at,
+            source_device_id: "other-device".into(),
+            source_created_at,
+            source_change_id: source_created_at,
+            entity_type: "settings".into(),
+            entity_id: "1".into(),
+            op: ChangeOp::Upsert,
+            payload_schema: CHANGE_SCHEMA_VERSION,
+            payload_hash: "hash".into(),
+            payload: Vec::new(),
+        }
+    }
+
+    fn asr_test_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys=ON;
+            CREATE TABLE asr_vocabulary_terms (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              term TEXT NOT NULL,
+              normalized_term TEXT NOT NULL,
+              language TEXT,
+              category TEXT,
+              scope TEXT NOT NULL DEFAULT 'global',
+              priority INTEGER NOT NULL DEFAULT 50,
+              use_count INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE asr_corrections (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              wrong TEXT NOT NULL,
+              normalized_wrong TEXT NOT NULL,
+              correct TEXT NOT NULL,
+              normalized_correct TEXT NOT NULL,
+              language TEXT,
+              scope TEXT NOT NULL DEFAULT 'global',
+              confidence REAL NOT NULL DEFAULT 0.75,
+              use_count INTEGER NOT NULL DEFAULT 1,
+              accepted_count INTEGER NOT NULL DEFAULT 0,
+              rejected_count INTEGER NOT NULL DEFAULT 0,
+              seen_count INTEGER NOT NULL DEFAULT 0,
+              last_seen_at TEXT,
+              user_approved INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE asr_ignored_suggestions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              wrong TEXT NOT NULL,
+              normalized_wrong TEXT NOT NULL,
+              correct TEXT NOT NULL,
+              normalized_correct TEXT NOT NULL,
+              language TEXT,
+              scope TEXT NOT NULL DEFAULT 'global',
+              ignored_count INTEGER NOT NULL DEFAULT 1,
+              last_ignored_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE UNIQUE INDEX idx_asr_ignored_suggestions_lookup
+              ON asr_ignored_suggestions(normalized_wrong, normalized_correct, language, scope);
+            CREATE TABLE asr_voice_examples (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              audio_path TEXT NOT NULL,
+              expected_text TEXT NOT NULL,
+              normalized_expected_text TEXT NOT NULL,
+              whisper_output TEXT,
+              normalized_whisper_output TEXT,
+              language TEXT,
+              scope TEXT NOT NULL DEFAULT 'global',
+              term_id INTEGER,
+              correction_id INTEGER,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(term_id) REFERENCES asr_vocabulary_terms(id) ON DELETE SET NULL,
+              FOREIGN KEY(correction_id) REFERENCES asr_corrections(id) ON DELETE SET NULL
+            );
+            "#,
+        )
+        .unwrap();
+        conn
+    }
+
+    fn sample_asr_term(priority: i64) -> SyncAsrVocabularyTerm {
+        SyncAsrVocabularyTerm {
+            term: "Lettuce".into(),
+            normalized_term: "lettuce".into(),
+            language: Some("en".into()),
+            category: None,
+            scope: "global".into(),
+            priority,
+            use_count: 3,
+            created_at: "2026-01-01 00:00:00".into(),
+            updated_at: "2026-07-04 00:00:00".into(),
+        }
+    }
+
+    #[test]
+    fn asr_apply_replaces_tables_and_relinks_local_examples() {
+        let mut conn = asr_test_conn();
+        conn.execute(
+            "INSERT INTO asr_vocabulary_terms (term, normalized_term, language, scope) VALUES ('Lettuce', 'lettuce', 'en', 'global')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asr_corrections (wrong, normalized_wrong, correct, normalized_correct, language, scope) VALUES ('letus', 'letus', 'lettuce', 'lettuce', 'en', 'global')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asr_voice_examples (audio_path, expected_text, normalized_expected_text, term_id, correction_id) VALUES ('/tmp/a.wav', 'Lettuce', 'lettuce', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let tx = conn.transaction().unwrap();
+        apply_asr_learning_tables(
+            &tx,
+            &[sample_asr_term(90)],
+            &[SyncAsrCorrection {
+                wrong: "letus".into(),
+                normalized_wrong: "letus".into(),
+                correct: "lettuce".into(),
+                normalized_correct: "lettuce".into(),
+                language: Some("en".into()),
+                scope: "global".into(),
+                confidence: 0.9,
+                use_count: 5,
+                accepted_count: 4,
+                rejected_count: 0,
+                seen_count: 6,
+                last_seen_at: None,
+                user_approved: 1,
+                created_at: "2026-01-01 00:00:00".into(),
+                updated_at: "2026-07-04 00:00:00".into(),
+            }],
+            &[],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        let priority: i64 = conn
+            .query_row("SELECT priority FROM asr_vocabulary_terms LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        let term_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM asr_vocabulary_terms", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(priority, 90);
+        assert_eq!(term_count, 1);
+
+        let (term_id, correction_id): (Option<i64>, Option<i64>) = conn
+            .query_row(
+                "SELECT term_id, correction_id FROM asr_voice_examples LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        let new_term_id: i64 = conn
+            .query_row("SELECT id FROM asr_vocabulary_terms LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        let new_correction_id: i64 = conn
+            .query_row("SELECT id FROM asr_corrections LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(term_id, Some(new_term_id));
+        assert_eq!(correction_id, Some(new_correction_id));
+    }
+
+    #[test]
+    fn asr_apply_drops_links_for_terms_missing_from_snapshot() {
+        let mut conn = asr_test_conn();
+        conn.execute(
+            "INSERT INTO asr_vocabulary_terms (term, normalized_term, language, scope) VALUES ('Gone', 'gone', 'en', 'global')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asr_voice_examples (audio_path, expected_text, normalized_expected_text, term_id) VALUES ('/tmp/b.wav', 'Gone', 'gone', 1)",
+            [],
+        )
+        .unwrap();
+
+        let tx = conn.transaction().unwrap();
+        apply_asr_learning_tables(&tx, &[sample_asr_term(50)], &[], &[]).unwrap();
+        tx.commit().unwrap();
+
+        let term_id: Option<i64> = conn
+            .query_row("SELECT term_id FROM asr_voice_examples LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(term_id, None);
+    }
+
+    #[test]
+    fn newer_remote_change_outranks_head_and_stale_does_not() {
+        let head = head_record(vec![1, 2, 3]);
+        assert_eq!(
+            compare_change_origin(&head, &change_at(2)),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_change_origin(&head, &change_at(0)),
+            std::cmp::Ordering::Less
+        );
+    }
 }

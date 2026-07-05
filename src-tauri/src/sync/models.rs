@@ -1,4 +1,4 @@
-use crate::chat_manager::types::MemoryEmbedding;
+use crate::chat_manager::types::{MemoryEmbedding, MemoryEntityAnchor};
 use serde::{Deserialize, Serialize};
 
 fn default_speaker_selection_method() -> String {
@@ -48,6 +48,10 @@ pub struct Persona {
     pub design_description: Option<String>,
     #[serde(default)]
     pub design_reference_image_ids: Option<String>,
+    #[serde(default)]
+    pub lora_name: Option<String>,
+    #[serde(default)]
+    pub lora_strength: Option<f64>,
     #[serde(default)]
     pub active_lorebook_ids: Option<String>,
     pub is_default: i64,
@@ -127,6 +131,38 @@ pub struct CreationHelperSession {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct SyncCompanionScheduledNote {
+    pub id: String,
+    pub character_id: String,
+    pub label: String,
+    pub content: String,
+    pub available_at: i64,
+    pub expires_at: Option<i64>,
+    pub recurrence: String,
+    pub recurrence_window_ms: Option<i64>,
+    pub enabled: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SyncCompanionTurnEffect {
+    pub id: String,
+    pub session_id: String,
+    pub user_message_id: Option<String>,
+    pub assistant_message_id: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub status: String,
+    pub summary: Option<String>,
+    pub relationship_delta: String,
+    pub emotion_delta: String,
+    pub signal_changes: String,
+    pub memory_changes: String,
+    pub source_window: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AudioProvider {
     pub id: String,
     pub provider_type: String,
@@ -142,6 +178,52 @@ pub struct AudioProvider {
     pub asset_root: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SyncAsrVocabularyTerm {
+    pub term: String,
+    pub normalized_term: String,
+    pub language: Option<String>,
+    pub category: Option<String>,
+    pub scope: String,
+    pub priority: i64,
+    pub use_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SyncAsrCorrection {
+    pub wrong: String,
+    pub normalized_wrong: String,
+    pub correct: String,
+    pub normalized_correct: String,
+    pub language: Option<String>,
+    pub scope: String,
+    pub confidence: f64,
+    pub use_count: i64,
+    pub accepted_count: i64,
+    pub rejected_count: i64,
+    pub seen_count: i64,
+    pub last_seen_at: Option<String>,
+    pub user_approved: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SyncAsrIgnoredSuggestion {
+    pub wrong: String,
+    pub normalized_wrong: String,
+    pub correct: String,
+    pub normalized_correct: String,
+    pub language: Option<String>,
+    pub scope: String,
+    pub ignored_count: i64,
+    pub last_ignored_at: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -221,9 +303,21 @@ pub struct Character {
     pub avatar_crop_y: Option<f64>,
     pub avatar_crop_scale: Option<f64>,
     #[serde(default)]
+    pub banner_crop_x: Option<f64>,
+    #[serde(default)]
+    pub banner_crop_y: Option<f64>,
+    #[serde(default)]
+    pub banner_crop_scale: Option<f64>,
+    #[serde(default)]
+    pub card_type: Option<String>,
+    #[serde(default)]
     pub design_description: Option<String>,
     #[serde(default)]
     pub design_reference_image_ids: Option<String>,
+    #[serde(default)]
+    pub lora_name: Option<String>,
+    #[serde(default)]
+    pub lora_strength: Option<f64>,
     pub background_image_path: Option<String>,
     pub definition: Option<String>,
     pub description: Option<String>,
@@ -332,6 +426,12 @@ pub struct Session {
     pub character_id: String,
     pub title: String,
     #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub branched_from_message_id: Option<String>,
+    #[serde(default)]
+    pub root_session_id: Option<String>,
+    #[serde(default)]
     pub background_image_path: Option<String>,
     pub system_prompt: Option<String>,
     #[serde(default)]
@@ -353,6 +453,8 @@ pub struct Session {
     pub frequency_penalty: Option<f64>,
     pub presence_penalty: Option<f64>,
     pub top_k: Option<i64>,
+    #[serde(default)]
+    pub advanced_model_settings: Option<String>,
     #[serde(default)]
     pub companion_state: Option<String>,
     pub memories: String,
@@ -387,11 +489,110 @@ pub struct CompanionSharedMemory {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncMemoryEmbeddingRecord {
+    pub id: String,
+    pub text: String,
+    pub embedding: Vec<f32>,
+    pub created_at: u64,
+    pub token_count: u32,
+    pub is_cold: bool,
+    pub last_accessed_at: u64,
+    pub importance_score: f32,
+    pub persistence_importance: f32,
+    pub prompt_importance: f32,
+    pub volatility: f32,
+    pub is_pinned: bool,
+    pub access_count: u32,
+    pub embedding_source_version: Option<String>,
+    pub embedding_dimensions: Option<usize>,
+    pub match_score: Option<f32>,
+    pub category: Option<String>,
+    pub observed_at: Option<u64>,
+    pub observed_time_precision: Option<String>,
+    pub canonical_entities: Vec<MemoryEntityAnchor>,
+    pub fact_signature: Option<String>,
+    pub fact_polarity: Option<i8>,
+    pub source_role: Option<String>,
+    pub source_message_id: Option<String>,
+    pub superseded_by: Option<String>,
+    pub superseded_at: Option<u64>,
+    pub supersedes: Vec<String>,
+}
+
+impl From<MemoryEmbedding> for SyncMemoryEmbeddingRecord {
+    fn from(memory: MemoryEmbedding) -> Self {
+        Self {
+            id: memory.id,
+            text: memory.text,
+            embedding: memory.embedding,
+            created_at: memory.created_at,
+            token_count: memory.token_count,
+            is_cold: memory.is_cold,
+            last_accessed_at: memory.last_accessed_at,
+            importance_score: memory.importance_score,
+            persistence_importance: memory.persistence_importance,
+            prompt_importance: memory.prompt_importance,
+            volatility: memory.volatility,
+            is_pinned: memory.is_pinned,
+            access_count: memory.access_count,
+            embedding_source_version: memory.embedding_source_version,
+            embedding_dimensions: memory.embedding_dimensions,
+            match_score: memory.match_score,
+            category: memory.category,
+            observed_at: memory.observed_at,
+            observed_time_precision: memory.observed_time_precision,
+            canonical_entities: memory.canonical_entities,
+            fact_signature: memory.fact_signature,
+            fact_polarity: memory.fact_polarity,
+            source_role: memory.source_role,
+            source_message_id: memory.source_message_id,
+            superseded_by: memory.superseded_by,
+            superseded_at: memory.superseded_at,
+            supersedes: memory.supersedes,
+        }
+    }
+}
+
+impl From<SyncMemoryEmbeddingRecord> for MemoryEmbedding {
+    fn from(record: SyncMemoryEmbeddingRecord) -> Self {
+        Self {
+            id: record.id,
+            text: record.text,
+            embedding: record.embedding,
+            created_at: record.created_at,
+            token_count: record.token_count,
+            is_cold: record.is_cold,
+            last_accessed_at: record.last_accessed_at,
+            importance_score: record.importance_score,
+            persistence_importance: record.persistence_importance,
+            prompt_importance: record.prompt_importance,
+            volatility: record.volatility,
+            is_pinned: record.is_pinned,
+            access_count: record.access_count,
+            embedding_source_version: record.embedding_source_version,
+            embedding_dimensions: record.embedding_dimensions,
+            match_score: record.match_score,
+            category: record.category,
+            observed_at: record.observed_at,
+            observed_time_precision: record.observed_time_precision,
+            canonical_entities: record.canonical_entities,
+            fact_signature: record.fact_signature,
+            fact_polarity: record.fact_polarity,
+            source_role: record.source_role,
+            source_message_id: record.source_message_id,
+            superseded_by: record.superseded_by,
+            superseded_at: record.superseded_at,
+            supersedes: record.supersedes,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncedMemoryEmbedding {
     pub session_id: String,
     pub session_kind: String,
-    pub memory: MemoryEmbedding,
+    pub memory: SyncMemoryEmbeddingRecord,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -408,6 +609,14 @@ pub struct Message {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    #[serde(default)]
+    pub first_token_ms: Option<i64>,
+    #[serde(default)]
+    pub tokens_per_second: Option<f64>,
+    #[serde(default)]
+    pub mtp_stats: Option<String>,
+    #[serde(default)]
+    pub model_id: Option<String>,
     pub selected_variant_id: Option<String>,
     pub is_pinned: i64,
     pub memory_refs: String,
@@ -426,6 +635,12 @@ pub struct MessageVariant {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    #[serde(default)]
+    pub first_token_ms: Option<i64>,
+    #[serde(default)]
+    pub tokens_per_second: Option<f64>,
+    #[serde(default)]
+    pub mtp_stats: Option<String>,
     pub reasoning: Option<String>,
 }
 
@@ -524,11 +739,19 @@ pub struct GroupMessage {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    #[serde(default)]
+    pub first_token_ms: Option<i64>,
+    #[serde(default)]
+    pub tokens_per_second: Option<f64>,
+    #[serde(default)]
+    pub mtp_stats: Option<String>,
     pub selected_variant_id: Option<String>,
     pub is_pinned: i64,
     pub attachments: String,
     #[serde(default)]
     pub used_lorebook_entries: String,
+    #[serde(default)]
+    pub memory_refs: String,
     pub reasoning: Option<String>,
     pub selection_reasoning: Option<String>,
     pub model_id: Option<String>,
@@ -544,6 +767,12 @@ pub struct GroupMessageVariant {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    #[serde(default)]
+    pub first_token_ms: Option<i64>,
+    #[serde(default)]
+    pub tokens_per_second: Option<f64>,
+    #[serde(default)]
+    pub mtp_stats: Option<String>,
     pub reasoning: Option<String>,
     pub selection_reasoning: Option<String>,
     pub model_id: Option<String>,

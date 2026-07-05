@@ -26,6 +26,229 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: "2.1.1 / 2.1.1",
+    date: "2026-07-04",
+    title: "2.1.1 — Device Sync Rebuilt, Multi-GPU Clarity & Guided Tours",
+    description:
+      "Device sync got a ground-up reliability rebuild: conflicts resolve the right way, settings and memories arrive intact, transfers have no size ceiling, and failures say so instead of pretending everything worked. Multi-GPU stopped being a guessing game, five new guided tours walk you through the trickiest parts of the app, and ASR learning data joins sync and backups.",
+    changes: [
+      {
+        type: "bugfix",
+        description:
+          "Sync conflict resolution now keeps the newest data instead of the oldest. Previously a fresh install could silently overwrite the host device's real settings, advanced settings, and prompt templates with its own defaults.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "Memory metadata survives sync: importance, categories, timestamps, and embedding versions arrive intact instead of being stripped to bare text.",
+      },
+      {
+        type: "improvement",
+        description:
+          "Large libraries sync in chunks with no more transfer size ceiling, and each data domain is applied and finalized as it completes.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "A sync that fails or loses connection mid-transfer now reports a real error instead of completing silently with partial data.",
+      },
+      {
+        type: "feature",
+        description:
+          "Companion data, creation helper drafts, and ASR learning data (custom vocabulary, corrections, dismissed suggestions) now sync between devices. ASR learning data is also included in backups.",
+      },
+      {
+        type: "improvement",
+        description:
+          "The post-sync embedding model prompt now also triggers when the synced data itself contains memories, even if settings arrive misconfigured.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "A leftover single-GPU pin can no longer silently disable multi-GPU. Enabling multi-GPU at the same or broader level takes precedence, while a deliberate per-model pin still wins where intended.",
+      },
+      {
+        type: "improvement",
+        description:
+          "The model editor shows the effective multi-GPU state: distribution controls appear for models inheriting the global default, single-GPU controls hide when they do not apply, and models still pinned to one GPU get a notice with a one-tap Remove pin.",
+      },
+      {
+        type: "improvement",
+        description:
+          "Model browser installs persist your offload intent (auto, CPU, GPU, mixed) instead of a hardware-specific layer count, so VRAM you add later is actually used.",
+      },
+      {
+        type: "improvement",
+        description:
+          "Deleting a model file from Installed Models warns when a configured model, vision adapter, MTP draft, or global default still references it, listing exactly what would break, without blocking the delete.",
+      },
+      {
+        type: "feature",
+        description:
+          "Five new guided tours: the local model editor, runtime defaults, the model browser's recommendation panel, group chats, and dynamic memory now walk you through themselves on first visit, in every supported language.",
+      },
+      {
+        type: "improvement",
+        description:
+          "The tour engine scrolls partially visible targets into view, top-aligns targets taller than the screen, and places its card beside full-height panels instead of on top of them.",
+      },
+      {
+        type: "improvement",
+        description:
+          "Model loading shows a single toast with per-GPU progress bars, and toggling global multi-GPU offers to reconfigure existing models in one step.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "The zAI (GLM) provider works now: requests were sent to a nonexistent endpoint, so every call failed. Chat, the thinking toggle, and API key verification all target the real Z.AI API. Existing zAI providers with a regular API key need the base URL changed to https://api.z.ai/api/paas/v4 (coding-plan keys work as-is).",
+      },
+      {
+        type: "bugfix",
+        description:
+          "Companion souls are written by the Soul Writer model again: the character's own model no longer silently overrides the model chosen in Settings, and the soul step shows the model that will actually write.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "Desktop back navigation no longer strands you on the settings root, the mobile settings back flow was corrected, and Sprout hardware reports are validated before scoring runnability.",
+      },
+    ],
+  },
+  {
+    version: "2.1.0 / 2.1.0",
+    date: "2026-07-02",
+    title: "2.1 — Multi-GPU Local Models, Performance Metrics & Smarter Providers",
+    description:
+      "Run local models across every GPU in your machine with automatic layer distribution and KV cache placement, and watch a new performance dashboard track tokens per second on every generation. Pin OpenRouter to a specific provider endpoint, probe remote Ollama hardware for real runnability, and export chats in SillyTavern's own jsonl format. Plus a shared memory cycle hub across chat and group pages, and a long wave of memory, embedding, and backup reliability work.",
+    changes: [
+      {
+        type: "feature",
+        description:
+          "Multi-GPU local models: llama.cpp now distributes a model's layers across every selected GPU, with automatic or manual splits, KV cache placement modes, a main-GPU pin, and per-GPU VRAM reservation so nothing overflows.",
+      },
+      {
+        type: "feature",
+        description:
+          "Added a per-model single-GPU device override for choosing exactly which GPU runs a model.",
+      },
+      {
+        type: "feature",
+        description:
+          "Performance metrics: a new local-LLM performance page graphs tokens per second and prompt/generation timing per run and across runs, with a per-message action to see exactly how any reply was produced (including in group chats).",
+      },
+      {
+        type: "feature",
+        description:
+          "Per-message MTP stats: speculative-decoding acceptance and draft stats are now persisted and shown on each message.",
+      },
+      {
+        type: "feature",
+        description:
+          "OpenRouter provider pinning: pick a specific provider endpoint per model, with live pricing, cache rates, uptime, and provider logos, and route every request exclusively through it.",
+      },
+      {
+        type: "feature",
+        description:
+          "Sprout hardware probe: remote Ollama runnability is now judged against the real hardware behind the endpoint instead of a guess.",
+      },
+      {
+        type: "feature",
+        description:
+          "SillyTavern-compatible export: chat export and import now speak the official SillyTavern jsonl format, so histories move cleanly in and out.",
+      },
+      {
+        type: "feature",
+        description:
+          "Shared memory cycle hub: a single unified memory-cycle panel across both chat and group memory pages.",
+      },
+      {
+        type: "feature",
+        description:
+          "Mobile model browser: the HuggingFace browser now works properly on phones. It pairs with a remote Ollama provider (auto-selected when you have one) and pulls GGUF models straight to your host, with files and recommended settings in a slide-in drawer.",
+      },
+      {
+        type: "improvement",
+        description:
+          "Multi-GPU distribution and KV modes are explained inline with bottom-menu pickers, fully localized in the model editor.",
+      },
+      {
+        type: "improvement",
+        description:
+          "Installed models on mobile now focuses on Ollama, with a reorganized toolbar, an inline provider selector, and cleaner model rows.",
+      },
+      {
+        type: "improvement",
+        description:
+          "The download destination picker was redesigned as a grouped list, your destination choice now persists while you browse, and the real Ollama logo shows across Ollama surfaces on desktop and mobile.",
+      },
+      {
+        type: "improvement",
+        description:
+          "Added a warning when a manual layer split exceeds a device's reported VRAM before loading, and a notice when vision disables MTP.",
+      },
+      {
+        type: "improvement",
+        description:
+          "OpenRouter requests now send the roleplay category and current app-attribution headers.",
+      },
+      {
+        type: "improvement",
+        description:
+          "Backup and sync now preserve current data instead of overwriting it, and companion mode data is preserved in export and config settings.",
+      },
+      {
+        type: "improvement",
+        description:
+          "Explicit dynamic-memory model selection is preserved instead of falling back to a default, and shared-memory owner resolution honors companion character mode.",
+      },
+      {
+        type: "improvement",
+        description:
+          "ONNX Runtime is now bundled on Windows, with Kokoro routed through a shared runtime init.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "Added a smart multi-GPU offloader that spreads large models across all your hardware, sizing each device's share automatically and keeping far more of the model on the GPU instead of falling back to the CPU.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "Per-GPU KV cache VRAM is reserved when distributing layers, and immediate aborts skip model load by checking the abort signal before the engine starts.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "Fixed a re-embedding loop, de-duplicated lorebook scans and embedding-preference reads, and stamped embedding signatures from the actual vector to stop spurious vector migrations.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "Embedding migration markers now survive the session schema round-trip, and the embedding tokenizer is resolved from the version-specific file instead of a hardcoded one.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "Upgrading from 2.0.0 silently installs the v4 embedding tokenizer once if the model was present without it, so token counting resolves after the update.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "Windows are retried after a dynamic-memory failure instead of being skipped.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "macOS keeps native decorations and an opaque window so the traffic lights and rounded corners render correctly.",
+      },
+      {
+        type: "bugfix",
+        description:
+          "A per-conversation chat appearance override no longer injects defaults that clobber global settings, and Discovery card images load from the new ct-cards storage host.",
+      },
+    ],
+  },
+  {
     version: "2.0.0 / 2.0.0",
     date: "2026-06-27",
     title: "2.0 — Living Companion Souls, Director Group Chats, Time Awareness & a Reinvented Desktop",

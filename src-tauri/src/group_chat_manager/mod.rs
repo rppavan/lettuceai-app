@@ -571,7 +571,10 @@ fn llama_sampler_profile_defaults(profile: &str) -> LlamaSamplerProfileDefaults 
     }
 }
 
-fn build_llama_extra_fields(model: &Model, settings: &Settings) -> Option<HashMap<String, Value>> {
+pub(crate) fn build_llama_extra_fields(
+    model: &Model,
+    settings: &Settings,
+) -> Option<HashMap<String, Value>> {
     let mut extra = HashMap::new();
     let sampler_profile = resolve_llama_sampler_profile(model, settings);
     let sampler_defaults = llama_sampler_profile_defaults(&sampler_profile);
@@ -592,6 +595,117 @@ fn build_llama_extra_fields(model: &Model, settings: &Settings) -> Option<HashMa
         .or(settings.advanced_model_settings.llama_gpu_layers)
     {
         extra.insert("llamaGpuLayers".to_string(), json!(v));
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_multi_gpu_enabled)
+        .or(settings.advanced_model_settings.llama_multi_gpu_enabled)
+    {
+        extra.insert("llamaMultiGpuEnabled".to_string(), json!(v));
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_gpu_device_ids.clone())
+        .or_else(|| {
+            settings
+                .advanced_model_settings
+                .llama_gpu_device_ids
+                .clone()
+        })
+        .filter(|ids| !ids.is_empty())
+    {
+        extra.insert("llamaGpuDeviceIds".to_string(), json!(v));
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_gpu_distribution_mode.clone())
+        .or_else(|| {
+            settings
+                .advanced_model_settings
+                .llama_gpu_distribution_mode
+                .clone()
+        })
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| {
+            matches!(
+                v.as_str(),
+                "balanced" | "proportional" | "priority" | "manual"
+            )
+        })
+    {
+        extra.insert("llamaGpuDistributionMode".to_string(), json!(v));
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_gpu_manual_layers.clone())
+        .or_else(|| {
+            settings
+                .advanced_model_settings
+                .llama_gpu_manual_layers
+                .clone()
+        })
+        .filter(|layers| !layers.is_empty())
+    {
+        extra.insert("llamaGpuManualLayers".to_string(), json!(v));
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_kv_placement.clone())
+        .or_else(|| settings.advanced_model_settings.llama_kv_placement.clone())
+        .map(|v| v.trim().to_string())
+        .filter(|v| matches!(v.as_str(), "auto" | "split" | "systemRam" | "pin"))
+    {
+        extra.insert("llamaKvPlacement".to_string(), json!(v));
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_main_gpu)
+        .or(settings.advanced_model_settings.llama_main_gpu)
+    {
+        extra.insert("llamaMainGpu".to_string(), json!(v));
+    }
+    let group_multi_gpu_leveled = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_multi_gpu_enabled)
+        .map(|value| (value, 1u8))
+        .or(settings
+            .advanced_model_settings
+            .llama_multi_gpu_enabled
+            .map(|value| (value, 0u8)));
+    let group_single_gpu_pin = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_single_gpu_device_id)
+        .map(|value| (value, 1u8))
+        .or(settings
+            .advanced_model_settings
+            .llama_single_gpu_device_id
+            .map(|value| (value, 0u8)));
+    if !crate::chat_manager::execution::llama_pin_overridden_by_multi_gpu(
+        group_multi_gpu_leveled,
+        group_single_gpu_pin,
+    ) {
+        if let Some((v, _)) = group_single_gpu_pin {
+            extra.insert("llamaSingleGpuDeviceId".to_string(), json!(v));
+        }
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_priority_vram_limit_bytes)
+        .or(settings
+            .advanced_model_settings
+            .llama_priority_vram_limit_bytes)
+        .filter(|v| *v > 0)
+    {
+        extra.insert("llamaPriorityVramLimitBytes".to_string(), json!(v));
     }
     if let Some(v) = model
         .advanced_model_settings
@@ -764,6 +878,14 @@ fn build_llama_extra_fields(model: &Model, settings: &Settings) -> Option<HashMa
             .llama_raw_completion_fallback)
     {
         extra.insert("llamaRawCompletionFallback".to_string(), json!(v));
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_streaming_enabled)
+        .or(settings.advanced_model_settings.llama_streaming_enabled)
+    {
+        extra.insert("llamaStreamingEnabled".to_string(), json!(v));
     }
     if let Some(v) = model
         .advanced_model_settings
@@ -1248,6 +1370,10 @@ fn resolve_group_conversation_index_by_message_id(
 
 /// Resolve the last valid cursor (windowEnd) from memory tool events by anchoring on message IDs.
 /// Returns (window_end_index, cursor_rewound).
+fn group_memory_event_advances_cursor(event: &Value) -> bool {
+    !matches!(event.get("status").and_then(Value::as_str), Some("error"))
+}
+
 fn resolve_last_valid_group_window_end(
     conn: &rusqlite::Connection,
     session: &GroupSession,
@@ -1256,7 +1382,13 @@ fn resolve_last_valid_group_window_end(
         return Ok((0, false));
     }
 
-    for (rev_idx, event) in session.memory_tool_events.iter().rev().enumerate() {
+    for (rev_idx, event) in session
+        .memory_tool_events
+        .iter()
+        .rev()
+        .filter(|event| group_memory_event_advances_cursor(event))
+        .enumerate()
+    {
         let end_id = event
             .get("windowMessageIds")
             .and_then(|v| v.as_array())
@@ -1275,6 +1407,31 @@ fn resolve_last_valid_group_window_end(
     }
 
     Ok((0, true))
+}
+
+#[cfg(test)]
+mod group_memory_cursor_tests {
+    use super::group_memory_event_advances_cursor;
+    use serde_json::json;
+
+    #[test]
+    fn failed_memory_event_does_not_advance_cursor() {
+        assert!(!group_memory_event_advances_cursor(&json!({
+            "status": "error",
+            "windowEnd": 346
+        })));
+    }
+
+    #[test]
+    fn complete_and_legacy_memory_events_advance_cursor() {
+        assert!(group_memory_event_advances_cursor(&json!({
+            "status": "complete",
+            "windowEnd": 288
+        })));
+        assert!(group_memory_event_advances_cursor(&json!({
+            "windowEnd": 288
+        })));
+    }
 }
 
 fn cancel_group_dynamic_memory_cycle(
@@ -2074,23 +2231,37 @@ fn dismiss_memory_vector_migration_toast(app: &AppHandle, toast_id: &str) {
     );
 }
 
-fn memory_embedding_requires_migration(
+fn memory_embedding_is_pending(memory: &MemoryEmbedding) -> bool {
+    memory.embedding.is_empty()
+}
+
+fn memory_embedding_is_stale(
     memory: &MemoryEmbedding,
     target_source_version: &str,
     target_dimensions: usize,
 ) -> bool {
-    if memory.embedding.is_empty() || memory.embedding.len() != target_dimensions {
+    if memory.embedding.is_empty() {
+        return false;
+    }
+    if memory.embedding.len() != target_dimensions {
         return true;
     }
-
     if memory.embedding_dimensions != Some(target_dimensions) {
         return true;
     }
-
     match memory.embedding_source_version.as_deref() {
         Some(version) => version != target_source_version,
         None => !(target_source_version == "v3" && target_dimensions == 512),
     }
+}
+
+fn memory_embedding_requires_embedding(
+    memory: &MemoryEmbedding,
+    target_source_version: &str,
+    target_dimensions: usize,
+) -> bool {
+    memory_embedding_is_pending(memory)
+        || memory_embedding_is_stale(memory, target_source_version, target_dimensions)
 }
 
 async fn migrate_group_memory_embeddings_if_needed(
@@ -2104,28 +2275,38 @@ async fn migrate_group_memory_embeddings_if_needed(
 
     let (target_source_version, target_dimensions) =
         embedding::resolve_active_embedding_signature(app)?;
-    let needs_migration = session.memory_embeddings.iter().any(|memory| {
-        memory_embedding_requires_migration(memory, &target_source_version, target_dimensions)
-    });
-    if !needs_migration {
+    let needs_stale_migration = session
+        .memory_embeddings
+        .iter()
+        .any(|memory| memory_embedding_is_stale(memory, &target_source_version, target_dimensions));
+    let needs_pending_embed = session
+        .memory_embeddings
+        .iter()
+        .any(memory_embedding_is_pending);
+    if !needs_stale_migration && !needs_pending_embed {
         return Ok(());
     }
+    let show_toast = needs_stale_migration;
 
     let toast_id = format!("group-memory-vector-migration:{}", session.id);
     let total = session.memory_embeddings.len().max(1);
-    emit_memory_vector_migration_toast(
-        app,
-        &toast_id,
-        "Migrating memory vectors",
-        "Updating saved memories for the current memory model. Messages may be delayed briefly.",
-        0.0,
-    );
+    if show_toast {
+        emit_memory_vector_migration_toast(
+            app,
+            &toast_id,
+            "Migrating memory vectors",
+            "Updating saved memories for the current memory model. Messages may be delayed briefly.",
+            0.0,
+        );
+    }
 
     let migration_result: Result<(bool, usize), String> = async {
         let mut migrated_any = false;
         let mut failures = 0usize;
         for (idx, memory) in session.memory_embeddings.iter_mut().enumerate() {
-            if memory_embedding_requires_migration(
+            let was_stale =
+                memory_embedding_is_stale(memory, &target_source_version, target_dimensions);
+            if memory_embedding_requires_embedding(
                 memory,
                 &target_source_version,
                 target_dimensions,
@@ -2143,41 +2324,69 @@ async fn migrate_group_memory_embeddings_if_needed(
                         migrated_any = true;
                     }
                     Ok(Err(err)) => {
-                        failures += 1;
-                        log_warn(
-                            app,
-                            "group_memory_retrieval",
-                            format!(
-                                "failed to re-embed saved memory {}/{}: {}",
-                                idx + 1,
-                                total,
-                                err
-                            ),
-                        );
+                        if was_stale {
+                            failures += 1;
+                            log_warn(
+                                app,
+                                "group_memory_retrieval",
+                                format!(
+                                    "failed to re-embed saved memory {}/{}: {}",
+                                    idx + 1,
+                                    total,
+                                    err
+                                ),
+                            );
+                        } else {
+                            log_info(
+                                app,
+                                "group_memory_retrieval",
+                                format!(
+                                    "deferred pending embedding for memory {}/{} (will retry): {}",
+                                    idx + 1,
+                                    total,
+                                    err
+                                ),
+                            );
+                        }
                     }
                     Err(_) => {
-                        failures += 1;
-                        log_warn(
-                            app,
-                            "group_memory_retrieval",
-                            format!(
-                                "timed out after {}s while re-embedding saved memory {}/{}",
-                                MEMORY_MIGRATION_EMBED_TIMEOUT_SECS,
-                                idx + 1,
-                                total
-                            ),
-                        );
+                        if was_stale {
+                            failures += 1;
+                            log_warn(
+                                app,
+                                "group_memory_retrieval",
+                                format!(
+                                    "timed out after {}s while re-embedding saved memory {}/{}",
+                                    MEMORY_MIGRATION_EMBED_TIMEOUT_SECS,
+                                    idx + 1,
+                                    total
+                                ),
+                            );
+                        } else {
+                            log_info(
+                                app,
+                                "group_memory_retrieval",
+                                format!(
+                                    "timed out after {}s while embedding pending memory {}/{} (will retry)",
+                                    MEMORY_MIGRATION_EMBED_TIMEOUT_SECS,
+                                    idx + 1,
+                                    total
+                                ),
+                            );
+                        }
                     }
                 }
             }
 
-            emit_memory_vector_migration_toast(
-                app,
-                &toast_id,
-                "Migrating memory vectors",
-                &format!("Re-embedded {}/{} saved memories.", idx + 1, total),
-                (idx + 1) as f32 / total as f32,
-            );
+            if show_toast {
+                emit_memory_vector_migration_toast(
+                    app,
+                    &toast_id,
+                    "Migrating memory vectors",
+                    &format!("Re-embedded {}/{} saved memories.", idx + 1, total),
+                    (idx + 1) as f32 / total as f32,
+                );
+            }
         }
 
         if migrated_any {
@@ -2187,7 +2396,9 @@ async fn migrate_group_memory_embeddings_if_needed(
     }
     .await;
 
-    dismiss_memory_vector_migration_toast(app, &toast_id);
+    if show_toast {
+        dismiss_memory_vector_migration_toast(app, &toast_id);
+    }
 
     let (migrated_any, failures) = match migration_result {
         Ok(outcome) => outcome,
@@ -2204,7 +2415,7 @@ async fn migrate_group_memory_embeddings_if_needed(
         }
     };
 
-    if migrated_any && failures == 0 {
+    if show_toast && migrated_any && failures == 0 {
         let _ = app.emit(
             "app://toast",
             json!({
@@ -3845,9 +4056,16 @@ async fn run_group_memory_tool_update(
                             }
                         };
 
-                        let (embedding_source_version, embedding_dimensions) =
-                            embedding::resolve_active_embedding_signature(app)
-                                .unwrap_or_else(|_| ("v3".to_string(), 512));
+                        let (embedding_source_version, embedding_dimensions) = match embedding
+                            .as_ref()
+                        {
+                            Some(vector) if !vector.is_empty() => {
+                                let (version, dimensions) =
+                                    embedding::embedding_signature_for_result(app, Some(vector));
+                                (Some(version), Some(dimensions))
+                            }
+                            _ => (None, None),
+                        };
                         let _now = now_millis().unwrap_or_default();
                         session.memory_embeddings.push(MemoryEmbedding {
                             id: mem_id.clone(),
@@ -3863,8 +4081,8 @@ async fn run_group_memory_tool_update(
                             volatility: 0.4,
                             is_pinned,
                             access_count: 0,
-                            embedding_source_version: Some(embedding_source_version),
-                            embedding_dimensions: Some(embedding_dimensions),
+                            embedding_source_version,
+                            embedding_dimensions,
                             match_score: None,
                             category: Some(category),
                             observed_at: None,
@@ -4298,9 +4516,15 @@ async fn run_group_memory_tool_update(
 
                     let token_count =
                         crate::embedding::tokenizer::count_tokens(app, &text).unwrap_or(0);
-                    let (embedding_source_version, embedding_dimensions) =
-                        embedding::resolve_active_embedding_signature(app)
-                            .unwrap_or_else(|_| ("v3".to_string(), 512));
+                    let (embedding_source_version, embedding_dimensions) = match embedding.as_ref()
+                    {
+                        Some(vector) if !vector.is_empty() => {
+                            let (version, dimensions) =
+                                embedding::embedding_signature_for_result(app, Some(vector));
+                            (Some(version), Some(dimensions))
+                        }
+                        _ => (None, None),
+                    };
                     let now = now_millis().unwrap_or_default();
                     session.memory_embeddings.push(MemoryEmbedding {
                         id: mem_id.clone(),
@@ -4316,8 +4540,8 @@ async fn run_group_memory_tool_update(
                         volatility: 0.4,
                         is_pinned,
                         access_count: 0,
-                        embedding_source_version: Some(embedding_source_version),
-                        embedding_dimensions: Some(embedding_dimensions),
+                        embedding_source_version,
+                        embedding_dimensions,
                         match_score: None,
                         category: Some(category.clone()),
                         observed_at: None,
@@ -6634,6 +6858,10 @@ async fn generate_character_response(
         total_tokens: u.total_tokens.map(|v| v as i32),
         first_token_ms: u.first_token_ms.map(|v| v as i64),
         tokens_per_second: u.tokens_per_second,
+        mtp_stats: u
+            .mtp_stats
+            .as_ref()
+            .and_then(|s| serde_json::to_value(s).ok()),
     });
 
     record_group_usage(
@@ -6910,6 +7138,12 @@ pub async fn group_chat_send(
         &memory_refs,
     )?;
 
+    let _ = crate::storage_manager::llm_metrics::llm_metrics_attach_message(
+        app.clone(),
+        req_id.clone(),
+        message.id.clone(),
+    );
+
     let participation_stats =
         group_sessions::group_participation_stats_internal_typed(&conn, &session_id)?;
 
@@ -7012,6 +7246,48 @@ pub fn group_chat_dynamic_memory_pending_approval(
     app.state::<crate::dynamic_memory_approval::DynamicMemoryApprovalManager>()
         .pending(&session_id)
         .map(|count| count as u32)
+}
+
+#[tauri::command]
+pub fn group_chat_dynamic_memory_cycle_status(
+    app: AppHandle,
+    session_id: String,
+    pool: State<'_, SwappablePool>,
+) -> Result<crate::chat_manager::memory::flow::DynamicMemoryCycleStatus, String> {
+    let settings = load_settings(&app)?;
+    let conn = pool.get_connection()?;
+    let session = group_sessions::group_session_get_internal_typed(&conn, &session_id)?;
+    if session.memory_type != "dynamic" {
+        return Err("Session does not use dynamic memory".to_string());
+    }
+    let dynamic = effective_group_dynamic_memory_settings(&settings);
+    let interval = dynamic.summary_message_interval.max(1) as usize;
+    let total = conn
+        .query_row(
+            "SELECT COUNT(1) FROM group_messages WHERE session_id = ?1 AND (role = 'user' OR role = 'assistant')",
+            rusqlite::params![&session_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?
+        .max(0) as usize;
+    let (last_window_end, _) = resolve_last_valid_group_window_end(&conn, &session)?;
+    let since = total.saturating_sub(last_window_end);
+    let approval = app.state::<crate::dynamic_memory_approval::DynamicMemoryApprovalManager>();
+
+    Ok(crate::chat_manager::memory::flow::DynamicMemoryCycleStatus {
+        run_mode: dynamic.run_mode.clone(),
+        interval,
+        messages_since_last_cycle: since,
+        messages_until_next_cycle: interval.saturating_sub(since),
+        total_conversation_messages: total,
+        pending_approval_count: approval.pending(&session_id),
+        skipped: approval.was_skipped(&session_id),
+        latest_cycle_status: session
+            .memory_tool_events
+            .last()
+            .and_then(|event| event.get("status").and_then(Value::as_str))
+            .map(str::to_string),
+    })
 }
 
 #[tauri::command]
@@ -7452,6 +7728,12 @@ pub async fn group_chat_continue(
         &used_lorebook_entries,
         &memory_refs,
     )?;
+
+    let _ = crate::storage_manager::llm_metrics::llm_metrics_attach_message(
+        app.clone(),
+        req_id.clone(),
+        message.id.clone(),
+    );
 
     let participation_stats =
         group_sessions::group_participation_stats_internal_typed(&conn, &session_id)?;

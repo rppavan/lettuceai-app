@@ -42,6 +42,7 @@ import {
   type QueuedDownload,
 } from "../../../core/downloads/DownloadQueueContext";
 import { BottomMenu, MenuLabel, MenuDivider } from "../../components/BottomMenu";
+import { GuidedTour, useGuidedTour } from "../../components/GuidedTour";
 import { toast } from "../../components/toast";
 import {
   addOrUpdateModel,
@@ -51,6 +52,9 @@ import {
 } from "../../../core/storage/repo";
 import { createDefaultAdvancedModelSettings } from "../../../core/storage/schemas";
 import type { ProviderCredential } from "../../../core/storage/schemas";
+import { openExternalUrl } from "../../../core/utils/openExternal";
+import { getPlatform } from "../../../core/utils/platform";
+import OllamaIcon from "../../../assets/ollama_light.png";
 
 interface HfSearchResult {
   modelId: string;
@@ -177,7 +181,10 @@ function maxContextForBpv(
   if (!kvBasePerToken || kvBasePerToken <= 0) return modelMaxCtx;
   const safety = dynamicSafetyReserve(totalAvailable);
   const overhead = computeOverhead(fileSize);
-  const remaining = Math.max(totalAvailable - fileSize - overhead - sidecarReserveBytes - safety, 0);
+  const remaining = Math.max(
+    totalAvailable - fileSize - overhead - sidecarReserveBytes - safety,
+    0,
+  );
   const bytesPerToken = kvBasePerToken * bpv;
   if (bytesPerToken <= 0) return modelMaxCtx;
   const maxCtx = Math.floor(remaining / bytesPerToken);
@@ -220,7 +227,10 @@ function computeRamMaxContext(
   if (!kvBasePerToken) return 0;
   const safety = dynamicSafetyReserve(totalAvailable);
   const overhead = computeOverhead(fileSize);
-  const remaining = Math.max(totalAvailable - fileSize - overhead - sidecarReserveBytes - safety, 0);
+  const remaining = Math.max(
+    totalAvailable - fileSize - overhead - sidecarReserveBytes - safety,
+    0,
+  );
   const rawCtx = Math.floor(remaining / (kvBasePerToken * bpv));
   if (kvContextCap && rawCtx >= kvContextCap) return modelMaxCtx;
   return rawCtx >= 512 ? Math.min(rawCtx, modelMaxCtx) : 0;
@@ -298,9 +308,7 @@ function calcScore(
       }
       if (kvOnRamRequested) {
         const ramCtxFitRatio =
-          kvCacheBytes + overhead > 0
-            ? Math.min(ramBudget / (kvCacheBytes + overhead), 1.0)
-            : 1.0;
+          kvCacheBytes + overhead > 0 ? Math.min(ramBudget / (kvCacheBytes + overhead), 1.0) : 1.0;
         return {
           score: 80 + ramCtxFitRatio * (kvFitsRam ? 12 : 4),
           fitsVram: false,
@@ -321,7 +329,11 @@ function calcScore(
         score: 72 + adjustedFitRatio * 23,
         fitsVram: true,
         gpuMode:
-          adjustedFitRatio >= 0.8 ? "nearFull" : adjustedFitRatio >= 0.4 ? "kvSpill" : "kvHeavySpill",
+          adjustedFitRatio >= 0.8
+            ? "nearFull"
+            : adjustedFitRatio >= 0.4
+              ? "kvSpill"
+              : "kvHeavySpill",
         priority: 2,
       };
     }
@@ -522,7 +534,11 @@ function getModelOffloadCopy(t: TFn, value: ModelOffload): { label: string; desc
   }
 }
 
-function getHeadroomStatus(t: TFn, totalNeeded: number, totalAvailable: number): {
+function getHeadroomStatus(
+  t: TFn,
+  totalNeeded: number,
+  totalAvailable: number,
+): {
   label: string;
   tone: string;
   description: string;
@@ -579,7 +595,10 @@ function getRunStatus(t: TFn, score: number): { label: string; tone: string; des
   };
 }
 
-function getPerformanceStatus(t: TFn, gpuMode: string): {
+function getPerformanceStatus(
+  t: TFn,
+  gpuMode: string,
+): {
   prefill: { label: string; tone: string };
   generation: { label: string; tone: string };
 } {
@@ -1278,6 +1297,7 @@ export function HuggingFaceBrowserPage() {
       setSelectedOllamaProviderId((prev) =>
         prev && ollama.some((p) => p.id === prev) ? prev : null,
       );
+      setProvidersLoaded(true);
     };
 
     void syncLocalModelState();
@@ -1328,9 +1348,28 @@ export function HuggingFaceBrowserPage() {
     [setSearchParams, preserveParams],
   );
 
-  const [ollamaProviders, setOllamaProviders] = useState<ProviderCredential[]>([]);
-  const [selectedOllamaProviderId, setSelectedOllamaProviderId] = useState<string | null>(null);
+  const isMobilePlatform = useMemo(() => getPlatform().type === "mobile", []);
+
+  const HF_DESTINATION_STORAGE_KEY = "hfBrowser:destinationProviderId";
+  const [providersLoaded, setProvidersLoaded] = useState(() => readSettingsCached() != null);
+  const [ollamaProviders, setOllamaProviders] = useState<ProviderCredential[]>(() => {
+    const cached = readSettingsCached();
+    return cached ? cached.providerCredentials.filter((p) => p.providerId === "ollama") : [];
+  });
+  const [selectedOllamaProviderId, setSelectedOllamaProviderId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.sessionStorage.getItem(HF_DESTINATION_STORAGE_KEY);
+  });
   const [showOllamaProviderMenu, setShowOllamaProviderMenu] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (selectedOllamaProviderId) {
+      window.sessionStorage.setItem(HF_DESTINATION_STORAGE_KEY, selectedOllamaProviderId);
+    } else {
+      window.sessionStorage.removeItem(HF_DESTINATION_STORAGE_KEY);
+    }
+  }, [selectedOllamaProviderId]);
 
   // Filter state
   const [showFilterMenu, setShowFilterMenu] = useState(false);
@@ -1385,8 +1424,35 @@ export function HuggingFaceBrowserPage() {
   );
   const isOllamaMode = !!selectedOllamaProvider;
 
+  useEffect(() => {
+    if (!isMobilePlatform || !providersLoaded || ollamaProviders.length === 0) return;
+    if (
+      selectedOllamaProviderId &&
+      ollamaProviders.some((p) => p.id === selectedOllamaProviderId)
+    ) {
+      return;
+    }
+    if (ollamaProviders.length === 1) {
+      setSelectedOllamaProviderId(ollamaProviders[0].id);
+    } else {
+      setShowOllamaProviderMenu(true);
+    }
+  }, [isMobilePlatform, providersLoaded, ollamaProviders, selectedOllamaProviderId]);
+
+  const sproutConfig = useMemo(() => {
+    const config = (selectedOllamaProvider?.config ?? {}) as Record<string, any>;
+    if (config.sproutEnabled !== true) return null;
+    const url = typeof config.sproutUrl === "string" ? config.sproutUrl.trim() : "";
+    if (!url) return null;
+    const apiKey = typeof config.sproutApiKey === "string" ? config.sproutApiKey : "";
+    return { url, apiKey };
+  }, [selectedOllamaProvider]);
+  const sproutActive = isOllamaMode && !!sproutConfig;
+
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const collapseSearchNeighbors = isMobilePlatform && (searchFocused || query.trim().length > 0);
   const [sortMode, setSortMode] = useState<SortMode>("trending");
   const [results, setResults] = useState<HfSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -1437,6 +1503,8 @@ export function HuggingFaceBrowserPage() {
   const [readmeLoading, setReadmeLoading] = useState(false);
   const [runabilityScores, setRunabilityScores] = useState<Record<string, RunabilityScore>>({});
 
+  const { shouldShow: showHfTour, dismiss: dismissHfTour } = useGuidedTour("hfBrowser");
+
   // Recommendation panel state
   const [recData, setRecData] = useState<RecommendationData | null>(null);
   const [recLoading, setRecLoading] = useState(false);
@@ -1453,6 +1521,7 @@ export function HuggingFaceBrowserPage() {
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareSelections, setCompareSelections] = useState<CompareSelection[]>([]);
   const [filesPanelTab, setFilesPanelTab] = useState<FilesPanelTab>("recommended");
+  const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const filesPanelRef = useRef<HTMLDivElement>(null);
@@ -1513,6 +1582,10 @@ export function HuggingFaceBrowserPage() {
       window.removeEventListener("resize", handleScroll);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
+  }, [view.kind, modelInfo]);
+
+  useEffect(() => {
+    setFilesDrawerOpen(false);
   }, [view.kind, modelInfo]);
 
   useEffect(() => {
@@ -1588,7 +1661,15 @@ export function HuggingFaceBrowserPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, hasMore, debouncedQuery, sortMode, sortField, results.length, debouncedFilterAuthor]);
+  }, [
+    loadingMore,
+    hasMore,
+    debouncedQuery,
+    sortMode,
+    sortField,
+    results.length,
+    debouncedFilterAuthor,
+  ]);
 
   useEffect(() => {
     if (view.kind === "search") {
@@ -1625,8 +1706,8 @@ export function HuggingFaceBrowserPage() {
       setReadmeLoading(true);
       setRunabilityScores({});
       setRecData(null);
-      setRecLoading(!isOllamaMode);
-      setFilesPanelTab(isOllamaMode ? "files" : "recommended");
+      setRecLoading(!isOllamaMode || sproutActive);
+      setFilesPanelTab(isOllamaMode && !sproutActive ? "files" : "recommended");
       setCompareOpen(false);
       setCompareSelections([]);
       setRecImageSupport(false);
@@ -1637,9 +1718,8 @@ export function HuggingFaceBrowserPage() {
       })
         .then((info) => {
           setModelInfo(info);
-          // Fetch runability scores in background (skipped in Ollama mode — host hardware unknown)
           const runnableFiles = info.files.filter((f) => f.size > 0 && !f.isMmproj && !f.isMtp);
-          if (runnableFiles.length > 0 && !isOllamaMode) {
+          if (runnableFiles.length > 0 && (!isOllamaMode || sproutActive)) {
             invoke<RunabilityScore[]>("hf_compute_runability", {
               modelId: info.modelId,
               files: runnableFiles.map((f) => ({
@@ -1647,6 +1727,8 @@ export function HuggingFaceBrowserPage() {
                 size: f.size,
                 quantization: f.quantization,
               })),
+              sproutUrl: sproutConfig?.url,
+              sproutApiKey: sproutConfig?.apiKey || undefined,
             })
               .then((scores) => {
                 const map: Record<string, RunabilityScore> = {};
@@ -1676,12 +1758,12 @@ export function HuggingFaceBrowserPage() {
 
       await Promise.allSettled([filesPromise, readmePromise]);
     },
-    [setView, isOllamaMode],
+    [setView, isOllamaMode, sproutActive, sproutConfig],
   );
 
   useEffect(() => {
     if (view.kind !== "model" || !modelInfo) return;
-    if (isOllamaMode) {
+    if (isOllamaMode && !sproutActive) {
       setRecLoading(false);
       setRecData(null);
       return;
@@ -1702,6 +1784,8 @@ export function HuggingFaceBrowserPage() {
         size: f.size,
         quantization: f.quantization,
       })),
+      sproutUrl: sproutConfig?.url,
+      sproutApiKey: sproutConfig?.apiKey || undefined,
     })
       .then((data) => {
         if (cancelled) return;
@@ -1725,7 +1809,7 @@ export function HuggingFaceBrowserPage() {
     return () => {
       cancelled = true;
     };
-  }, [view.kind, modelInfo, isOllamaMode]);
+  }, [view.kind, modelInfo, isOllamaMode, sproutActive, sproutConfig]);
 
   const filesWithSize = modelInfo?.files.filter((f) => f.size > 0) ?? [];
   const runnableFilesWithSize = useMemo(
@@ -1787,7 +1871,8 @@ export function HuggingFaceBrowserPage() {
       : clampedCtx;
     const kvBytes = recData.kvBasePerToken ? recData.kvBasePerToken * bpv * effectiveKvCtx : 0;
     const overhead = computeOverhead(selectedRecommendedFile.size);
-    const totalNeeded = selectedRecommendedFile.size + kvBytes + overhead + activeSidecarReserveBytes;
+    const totalNeeded =
+      selectedRecommendedFile.size + kvBytes + overhead + activeSidecarReserveBytes;
     const vramBudget = Math.max(recData.availableVram * 0.9 - activeSidecarReserveBytes, 0);
 
     if (selectedRecommendedFile.size <= vramBudget) return totalLayers;
@@ -1810,7 +1895,14 @@ export function HuggingFaceBrowserPage() {
   ]);
 
   useEffect(() => {
-    if (!mmprojFilesWithSize.length) {
+    if (isOllamaMode) {
+      setRecImageSupport(false);
+      setRecMmprojFile("");
+    }
+  }, [isOllamaMode]);
+
+  useEffect(() => {
+    if (!mmprojFilesWithSize.length || isOllamaMode) {
       setRecImageSupport(false);
       setRecMmprojFile("");
       return;
@@ -1822,7 +1914,7 @@ export function HuggingFaceBrowserPage() {
       }
       return mmprojFilesWithSize[0]?.filename ?? "";
     });
-  }, [mmprojFilesWithSize]);
+  }, [mmprojFilesWithSize, isOllamaMode]);
 
   useEffect(() => {
     if (!mtpFilesWithSize.length) {
@@ -1859,9 +1951,7 @@ export function HuggingFaceBrowserPage() {
       a.filename.localeCompare(b.filename),
     );
 
-    const sortedMtp = [...mtpFilesWithSize].sort((a, b) =>
-      a.filename.localeCompare(b.filename),
-    );
+    const sortedMtp = [...mtpFilesWithSize].sort((a, b) => a.filename.localeCompare(b.filename));
 
     return [...sortedRunnable, ...sortedMtp, ...sortedMmproj];
   }, [mmprojFilesWithSize, mtpFilesWithSize, runabilityScores, runnableFilesWithSize]);
@@ -2002,6 +2092,12 @@ export function HuggingFaceBrowserPage() {
         (modelItem.llamaModelOffloadMode as ModelOffload | null | undefined) ??
         gpuLayersToModelOffload(modelItem.llamaGpuLayers ?? null, null);
       const modelOffloadCopy = getModelOffloadCopy(t, modelOffloadValue);
+      const persistedGpuLayers =
+        modelOffloadValue === "cpu"
+          ? 0
+          : modelOffloadValue === "gpu"
+            ? (modelItem.llamaGpuLayers ?? null)
+            : null;
       const placementValue: KvPlacement =
         modelItem.llamaOffloadKqv === true
           ? "vram"
@@ -2023,9 +2119,8 @@ export function HuggingFaceBrowserPage() {
             ...defaultAdvanced,
             contextLength,
             llamaKvType: kvType as NonNullable<typeof defaultAdvanced.llamaKvType>,
-            llamaGpuLayers: modelItem.llamaGpuLayers == null ? null : modelItem.llamaGpuLayers,
-            llamaOffloadKqv:
-              modelItem.llamaOffloadKqv == null ? null : modelItem.llamaOffloadKqv,
+            llamaGpuLayers: persistedGpuLayers,
+            llamaOffloadKqv: modelItem.llamaOffloadKqv == null ? null : modelItem.llamaOffloadKqv,
             llamaMmprojPath: mmprojPath,
             llamaMtpEnabled: hasMtpSupport ? true : null,
             llamaMtpModelPath: mtpPath,
@@ -2194,7 +2289,8 @@ export function HuggingFaceBrowserPage() {
     async (file: HfModelFile) => {
       if (!modelInfo) return;
 
-      const fileRecommendation = recData?.files.find((item) => item.filename === file.filename) ?? null;
+      const fileRecommendation =
+        recData?.files.find((item) => item.filename === file.filename) ?? null;
       const requestedModelOffload = gpuOptionsEnabled ? recModelOffload : "auto";
       const requestedGpuLayers = fileRecommendation
         ? modelOffloadToGpuLayers(
@@ -2209,7 +2305,8 @@ export function HuggingFaceBrowserPage() {
         ? {
             createModelWhenFinished: true,
             installId: crypto.randomUUID(),
-            displayName: extractFileDisplayName(file.filename) || extractModelShortName(modelInfo.modelId),
+            displayName:
+              extractFileDisplayName(file.filename) || extractModelShortName(modelInfo.modelId),
             contextLength: recContext,
             kvType: recKvType,
             llamaOffloadKqv: gpuOptionsEnabled ? kvPlacementToOffloadKqv(recKvPlacement) : null,
@@ -2298,7 +2395,8 @@ export function HuggingFaceBrowserPage() {
 
     for (const item of queue) {
       const prevItem = prev.find((p) => p.id === item.id);
-      const becameComplete = (!prevItem || prevItem.status !== "complete") && item.status === "complete";
+      const becameComplete =
+        (!prevItem || prevItem.status !== "complete") && item.status === "complete";
       const becameError = (!prevItem || prevItem.status !== "error") && item.status === "error";
       const becameCancelled =
         (!prevItem || prevItem.status !== "cancelled") && item.status === "cancelled";
@@ -2332,6 +2430,26 @@ export function HuggingFaceBrowserPage() {
     prevQueueRef.current = queue;
   }, [queue, dismissItem, t]);
 
+  if (isMobilePlatform && providersLoaded && ollamaProviders.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center text-fg">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-fg/10 bg-fg/5">
+          <img src={OllamaIcon} alt="Ollama" className="h-6 w-6 opacity-70" />
+        </div>
+        <h2 className="text-[15px] font-semibold text-fg">{t("hfBrowser.mobileOllamaTitle")}</h2>
+        <p className="max-w-xs text-[12.5px] leading-relaxed text-fg/55">
+          {t("hfBrowser.destinationNoOllama")}
+        </p>
+        <button
+          onClick={() => hfNavigate("/settings/providers")}
+          className="mt-2 rounded-full border border-accent/40 bg-accent/15 px-5 py-2 text-[13px] font-medium text-accent transition hover:bg-accent/25 active:scale-[0.98]"
+        >
+          {t("hfBrowser.mobileOllamaCta")}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col text-fg">
       <div className="flex-1">
@@ -2360,6 +2478,8 @@ export function HuggingFaceBrowserPage() {
                       type="text"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
+                      onFocus={() => setSearchFocused(true)}
+                      onBlur={() => setSearchFocused(false)}
                       placeholder={t("hfBrowser.searchPlaceholder")}
                       className={cn(
                         "h-10 w-full rounded-xl border border-fg/10 bg-fg/4 pl-10 pr-9 text-[13px] text-fg placeholder-fg/35",
@@ -2377,60 +2497,71 @@ export function HuggingFaceBrowserPage() {
                     )}
                   </div>
 
-                  {/* Filter button */}
-                  <button
-                    onClick={() => setShowFilterMenu(true)}
-                    className={cn(
-                      "relative flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-[13px] font-medium transition",
-                      activeFilterCount > 0
-                        ? "border-accent/40 bg-accent/12 text-accent hover:border-accent/55"
-                        : "border-fg/10 bg-fg/4 text-fg/70 hover:border-fg/25 hover:text-fg",
-                    )}
-                    aria-haspopup="menu"
-                    aria-expanded={showFilterMenu}
-                    aria-label={t("hfBrowser.filters")}
-                    title={t("hfBrowser.filters")}
+                  <motion.div
+                    className="flex shrink-0 items-stretch gap-2 overflow-hidden"
+                    animate={{
+                      width: collapseSearchNeighbors ? 0 : "auto",
+                      opacity: collapseSearchNeighbors ? 0 : 1,
+                      marginLeft: collapseSearchNeighbors ? -8 : 0,
+                    }}
+                    initial={false}
+                    transition={{ type: "spring", stiffness: 380, damping: 36, mass: 0.7 }}
                   >
-                    <SlidersHorizontal size={14} />
-                    {activeFilterCount > 0 && (
-                      <span className="rounded-full bg-accent/25 px-1.5 text-[10px] font-semibold leading-[1.4] tabular-nums">
-                        {activeFilterCount}
-                      </span>
-                    )}
-                  </button>
+                    {/* Filter button */}
+                    <button
+                      onClick={() => setShowFilterMenu(true)}
+                      className={cn(
+                        "relative flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-[13px] font-medium transition",
+                        activeFilterCount > 0
+                          ? "border-accent/40 bg-accent/12 text-accent hover:border-accent/55"
+                          : "border-fg/10 bg-fg/4 text-fg/70 hover:border-fg/25 hover:text-fg",
+                      )}
+                      aria-haspopup="menu"
+                      aria-expanded={showFilterMenu}
+                      aria-label={t("hfBrowser.filters")}
+                      title={t("hfBrowser.filters")}
+                    >
+                      <SlidersHorizontal size={14} />
+                      {activeFilterCount > 0 && (
+                        <span className="rounded-full bg-accent/25 px-1.5 text-[10px] font-semibold leading-[1.4] tabular-nums">
+                          {activeFilterCount}
+                        </span>
+                      )}
+                    </button>
 
-                  {/* Destination picker */}
-                  <button
-                    onClick={() => setShowOllamaProviderMenu(true)}
-                    className={cn(
-                      "group flex h-10 shrink-0 items-center gap-2 rounded-xl border px-3 text-[13px] font-medium transition",
-                      isOllamaMode
-                        ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400/55 hover:bg-emerald-500/15"
-                        : "border-fg/10 bg-fg/4 text-fg/70 hover:border-fg/25 hover:text-fg",
-                    )}
-                    aria-haspopup="menu"
-                    aria-expanded={showOllamaProviderMenu}
-                    aria-label={t("hfBrowser.destination")}
-                  >
-                    {isOllamaMode ? (
-                      <Server size={14} className="text-emerald-300" />
-                    ) : (
-                      <HardDrive size={14} className="text-fg/55" />
-                    )}
-                    <span className="max-w-[9rem] truncate">
-                      {isOllamaMode
-                        ? (selectedOllamaProvider?.label ?? t("hfBrowser.destinationOllama"))
-                        : t("hfBrowser.destinationLocal")}
-                    </span>
-                    <ChevronDown
-                      size={13}
-                      className="shrink-0 opacity-50 transition group-hover:opacity-90"
-                    />
-                  </button>
+                    {/* Destination picker */}
+                    <button
+                      onClick={() => setShowOllamaProviderMenu(true)}
+                      className={cn(
+                        "group flex h-10 shrink-0 items-center gap-2 rounded-xl border px-3 text-[13px] font-medium transition",
+                        isOllamaMode
+                          ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400/55 hover:bg-emerald-500/15"
+                          : "border-fg/10 bg-fg/4 text-fg/70 hover:border-fg/25 hover:text-fg",
+                      )}
+                      aria-haspopup="menu"
+                      aria-expanded={showOllamaProviderMenu}
+                      aria-label={t("hfBrowser.destination")}
+                    >
+                      {isOllamaMode ? (
+                        <img src={OllamaIcon} alt="Ollama" className="h-4 w-4 shrink-0" />
+                      ) : (
+                        <HardDrive size={14} className="text-fg/55" />
+                      )}
+                      <span className="max-w-[9rem] truncate">
+                        {isOllamaMode
+                          ? (selectedOllamaProvider?.label ?? t("hfBrowser.destinationOllama"))
+                          : t("hfBrowser.destinationLocal")}
+                      </span>
+                      <ChevronDown
+                        size={13}
+                        className="shrink-0 opacity-50 transition group-hover:opacity-90"
+                      />
+                    </button>
+                  </motion.div>
                 </div>
 
                 {/* Sort segmented bar with sliding indicator */}
-                <div className="flex gap-1 overflow-x-auto rounded-xl border border-fg/8 bg-fg/3 p-1 no-scrollbar">
+                <div className="flex gap-1 rounded-xl border border-fg/8 bg-fg/3 p-1">
                   {(
                     [
                       { key: "trending", icon: TrendingUp, label: t("hfBrowser.sortTrending") },
@@ -2449,9 +2580,13 @@ export function HuggingFaceBrowserPage() {
                         key={key}
                         onClick={() => setSortMode(key)}
                         className={cn(
-                          "relative flex flex-1 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors",
-                          active ? "text-accent" : "text-fg/55 hover:text-fg/85",
+                          "relative flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors",
+                          active
+                            ? "flex-1 text-accent"
+                            : "flex-none text-fg/55 hover:text-fg/85 sm:flex-1",
                         )}
+                        aria-label={label}
+                        title={label}
                       >
                         {active && (
                           <motion.span
@@ -2462,7 +2597,7 @@ export function HuggingFaceBrowserPage() {
                         )}
                         <span className="relative z-10 flex items-center gap-1.5">
                           <Icon size={12} />
-                          {label}
+                          <span className={cn(!active && "hidden sm:inline")}>{label}</span>
                         </span>
                       </button>
                     );
@@ -2472,7 +2607,7 @@ export function HuggingFaceBrowserPage() {
 
               {/* Content area */}
               <div className="px-4 py-3 space-y-2">
-{/* Inline download cards */}
+                {/* Inline download cards */}
                 {hasDownloads && (
                   <InlineDownloadCards
                     showDivider={results.length > 0 || searching}
@@ -2549,8 +2684,7 @@ export function HuggingFaceBrowserPage() {
                       browserViewMode === "list" && "flex flex-col",
                       browserViewMode === "grid" &&
                         "grid grid-cols-1 gap-1.5 md:grid-cols-2 xl:grid-cols-3",
-                      browserViewMode === "gallery" &&
-                        "grid grid-cols-1 gap-2.5 md:grid-cols-2",
+                      browserViewMode === "gallery" && "grid grid-cols-1 gap-2.5 md:grid-cols-2",
                     )}
                   >
                     {displayedResults.map((model) => {
@@ -2596,11 +2730,17 @@ export function HuggingFaceBrowserPage() {
                               )}
                             </div>
                             <div className="flex shrink-0 items-center gap-2 text-[10.5px] tabular-nums text-fg/50">
-                              <span className="flex items-center gap-0.5" title={t("hfBrowser.downloadsTitle")}>
+                              <span
+                                className="flex items-center gap-0.5"
+                                title={t("hfBrowser.downloadsTitle")}
+                              >
                                 <ArrowDownToLine size={10} className="text-fg/35" />
                                 {formatNumber(model.downloads)}
                               </span>
-                              <span className="flex items-center gap-0.5" title={t("hfBrowser.likesTitle")}>
+                              <span
+                                className="flex items-center gap-0.5"
+                                title={t("hfBrowser.likesTitle")}
+                              >
                                 <Heart size={10} className="text-fg/35" />
                                 {formatNumber(model.likes)}
                               </span>
@@ -2666,11 +2806,17 @@ export function HuggingFaceBrowserPage() {
                               </div>
 
                               <div className="flex items-center gap-3 text-[10.5px] tabular-nums text-fg/50">
-                                <span className="flex items-center gap-1" title={t("hfBrowser.downloadsTitle")}>
+                                <span
+                                  className="flex items-center gap-1"
+                                  title={t("hfBrowser.downloadsTitle")}
+                                >
                                   <ArrowDownToLine size={10} className="text-fg/35" />
                                   {formatNumber(model.downloads)}
                                 </span>
-                                <span className="flex items-center gap-1" title={t("hfBrowser.likesTitle")}>
+                                <span
+                                  className="flex items-center gap-1"
+                                  title={t("hfBrowser.likesTitle")}
+                                >
                                   <Heart size={10} className="text-fg/35" />
                                   {formatNumber(model.likes)}
                                 </span>
@@ -2734,11 +2880,17 @@ export function HuggingFaceBrowserPage() {
                           </div>
 
                           <div className="flex shrink-0 items-center gap-2.5 text-[10.5px] tabular-nums text-fg/50">
-                            <span className="flex items-center gap-1" title={t("hfBrowser.downloadsTitle")}>
+                            <span
+                              className="flex items-center gap-1"
+                              title={t("hfBrowser.downloadsTitle")}
+                            >
                               <ArrowDownToLine size={10} className="text-fg/35" />
                               {formatNumber(model.downloads)}
                             </span>
-                            <span className="flex items-center gap-1" title={t("hfBrowser.likesTitle")}>
+                            <span
+                              className="flex items-center gap-1"
+                              title={t("hfBrowser.likesTitle")}
+                            >
                               <Heart size={10} className="text-fg/35" />
                               {formatNumber(model.likes)}
                             </span>
@@ -2775,7 +2927,9 @@ export function HuggingFaceBrowserPage() {
 
                 {/* End of results indicator (not for direct lookups) */}
                 {!searching && hasSearched && results.length > 0 && !hasMore && !isDirectLookup && (
-                  <p className="py-4 text-center text-[11px] text-fg/25">{t("hfBrowser.noMoreResults")}</p>
+                  <p className="py-4 text-center text-[11px] text-fg/25">
+                    {t("hfBrowser.noMoreResults")}
+                  </p>
                 )}
               </div>
             </motion.div>
@@ -2921,294 +3075,328 @@ export function HuggingFaceBrowserPage() {
                   </div>
 
                   {filesWithSize.length > 0 && (
-                    <div className="w-84 shrink-0 border-l border-fg/10 bg-surface/50 relative">
+                    <>
+                      {isMobilePlatform && (
+                        <>
+                          <button
+                            onClick={() => setFilesDrawerOpen(true)}
+                            className={cn(
+                              "fixed bottom-6 right-4 z-90 flex items-center gap-2 rounded-full border border-accent/30 bg-surface-el px-4 py-2.5 text-[12px] font-semibold text-accent shadow-lg transition active:scale-95",
+                              filesDrawerOpen && "pointer-events-none opacity-0",
+                            )}
+                          >
+                            <FileText size={13} />
+                            {t("hfBrowser.files")} ({filesWithSize.length})
+                          </button>
+                          <div
+                            className={cn(
+                              "fixed inset-0 z-100 bg-black/45 backdrop-blur-sm transition-opacity duration-200",
+                              filesDrawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
+                            )}
+                            onClick={() => setFilesDrawerOpen(false)}
+                            aria-hidden="true"
+                          />
+                        </>
+                      )}
                       <div
-                        ref={filesPanelRef}
-                        className="flex flex-col overflow-hidden will-change-transform rounded-b-xl"
+                        className={cn(
+                          isMobilePlatform
+                            ? "fixed bottom-0 right-0 top-[var(--titlebar-h,0px)] z-110 flex w-[min(90vw,24rem)] flex-col border-l border-fg/10 bg-surface-el pt-[env(safe-area-inset-top)] transition-transform duration-300 ease-out"
+                            : "w-84 shrink-0 border-l border-fg/10 bg-surface/50 relative",
+                          isMobilePlatform && !filesDrawerOpen && "translate-x-full",
+                        )}
                       >
-                        <div className="border-b border-fg/10 px-3 py-2 space-y-2">
-                          {isOllamaMode ? (
-                            <>
-                              <div className="rounded-md border border-amber-400/20 bg-amber-500/5 px-3 py-2 text-[12px] leading-relaxed text-amber-300/95">
-                                <div className="flex items-start gap-2">
-                                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                                  <div className="space-y-0.5">
-                                    <div className="font-medium">
-                                      {t("hfBrowser.ollamaModeNoticeTitle")}
-                                    </div>
-                                    <div className="text-amber-300/80">
-                                      {t("hfBrowser.ollamaModeNoticeBody")}
+                        {isMobilePlatform && (
+                          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-fg/10 px-4 py-3">
+                            <span className="truncate text-[13px] font-semibold text-fg">
+                              {extractModelShortName(modelInfo.modelId)}
+                            </span>
+                            <button
+                              onClick={() => setFilesDrawerOpen(false)}
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-fg/10 bg-fg/5 text-fg/70 transition hover:bg-fg/10 hover:text-fg"
+                              aria-label={t("components.bottomMenu.closeLabel")}
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
+                        )}
+                        <div
+                          ref={isMobilePlatform ? undefined : filesPanelRef}
+                          className={cn(
+                            "flex flex-col overflow-hidden will-change-transform rounded-b-xl",
+                            isMobilePlatform && "min-h-0 flex-1",
+                          )}
+                        >
+                          <div className="border-b border-fg/10 px-3 py-2 space-y-2">
+                            {isOllamaMode && !sproutActive ? (
+                              <>
+                                <div className="rounded-md border border-amber-400/20 bg-amber-500/5 px-3 py-2 text-[12px] leading-relaxed text-amber-300/95">
+                                  <div className="flex items-start gap-2">
+                                    <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                                    <div className="space-y-0.5">
+                                      <div className="font-medium">
+                                        {t("hfBrowser.ollamaModeNoticeTitle")}
+                                      </div>
+                                      <div className="text-amber-300/80">
+                                        {t("hfBrowser.ollamaModeNoticeBody")}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          void openExternalUrl(
+                                            "https://github.com/LettuceAI/Sprout",
+                                          )
+                                        }
+                                        className="mt-1 inline-flex items-center gap-1 font-medium text-amber-200 underline underline-offset-2 hover:text-amber-100"
+                                      >
+                                        <ExternalLink size={11} />
+                                        {t("hfBrowser.getSprout")}
+                                      </button>
                                     </div>
                                   </div>
                                 </div>
-                              </div>
-                              <div className="rounded-lg border border-fg/10 bg-fg/5 px-3 py-2 text-center text-[12px] font-medium text-fg/60">
-                                {t("hfBrowser.files")} ({filesWithSize.length})
-                              </div>
-                            </>
-                          ) : (
-                            <div className="grid grid-cols-2 gap-1 rounded-lg border border-fg/10 bg-fg/5 p-1">
-                              <button
-                                type="button"
-                                onClick={() => setFilesPanelTab("recommended")}
-                                className={cn(
-                                  "rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors",
-                                  filesPanelTab === "recommended"
-                                    ? "bg-emerald-400/15 text-emerald-400"
-                                    : "text-fg/50 hover:text-fg/70",
-                                )}
-                              >
-                                {t("hfBrowser.recommendedSettings")}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setFilesPanelTab("files")}
-                                className={cn(
-                                  "rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors",
-                                  filesPanelTab === "files"
-                                    ? "bg-emerald-400/15 text-emerald-400"
-                                    : "text-fg/50 hover:text-fg/70",
-                                )}
-                              >
-                                {t("hfBrowser.files")} ({filesWithSize.length})
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Recommended settings tab */}
-                        {filesPanelTab === "recommended" && (
-                          <div className="flex-1 overflow-y-auto px-3 py-3 pb-6">
-                            <div className="rounded-xl border border-fg/10 bg-fg/3 px-3 py-2.5">
-                              {recLoading || !recData ? (
-                                <div className="space-y-2.5 animate-pulse">
-                                  <div className="h-8 w-24 rounded bg-fg/10" />
-                                  <div className="h-12 rounded-lg bg-fg/10" />
-                                  <div className="h-3 w-28 rounded bg-fg/10" />
-                                  <div className="h-9 rounded-md bg-fg/10" />
-                                  <div className="h-3 w-28 rounded bg-fg/10" />
-                                  <div className="h-2 rounded bg-fg/10" />
-                                  <div className="h-9 rounded-md bg-fg/10" />
-                                  <div className="h-8 rounded-lg bg-fg/10" />
+                                <div className="rounded-lg border border-fg/10 bg-fg/5 px-3 py-2 text-center text-[12px] font-medium text-fg/60">
+                                  {t("hfBrowser.files")} ({filesWithSize.length})
                                 </div>
-                              ) : (
-                                (() => {
-                                  const selFile =
-                                    recData.files.find((f) => f.filename === recFile) ||
-                                    recData.files[0];
-                                  if (!selFile) return null;
+                              </>
+                            ) : (
+                              <div
+                                className="grid grid-cols-2 gap-1 rounded-lg border border-fg/10 bg-fg/5 p-1"
+                                data-tour-id="hf-rec-tabs"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => setFilesPanelTab("recommended")}
+                                  className={cn(
+                                    "rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors",
+                                    filesPanelTab === "recommended"
+                                      ? "bg-emerald-400/15 text-emerald-400"
+                                      : "text-fg/50 hover:text-fg/70",
+                                  )}
+                                >
+                                  {t("hfBrowser.recommendedSettings")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setFilesPanelTab("files")}
+                                  className={cn(
+                                    "rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors",
+                                    filesPanelTab === "files"
+                                      ? "bg-emerald-400/15 text-emerald-400"
+                                      : "text-fg/50 hover:text-fg/70",
+                                  )}
+                                >
+                                  {t("hfBrowser.files")} ({filesWithSize.length})
+                                </button>
+                              </div>
+                            )}
+                          </div>
 
-                                  const totalAvail = recData.totalAvailable;
-                                  const bpvSel = KV_BPV[recKvType] || 2;
-                                  const maxCtx = Math.max(
-                                    maxContextForBpv(
-                                      selFile.size,
-                                      recData.kvBasePerToken,
-                                      bpvSel,
-                                      totalAvail,
-                                      recData.modelMaxContext,
-                                      activeSidecarReserveBytes,
-                                    ),
-                                    1024,
-                                  );
-                                  const clampedCtx = Math.min(Math.max(recContext, 1024), maxCtx);
+                          {/* Recommended settings tab */}
+                          {filesPanelTab === "recommended" && (
+                            <div className="flex-1 overflow-y-auto px-3 py-3 pb-6">
+                              <div
+                                className="rounded-xl border border-fg/10 bg-fg/3 px-3 py-2.5"
+                                data-tour-id="hf-rec-panel"
+                              >
+                                {recLoading || !recData ? (
+                                  <div className="space-y-2.5 animate-pulse">
+                                    <div className="h-8 w-24 rounded bg-fg/10" />
+                                    <div className="h-12 rounded-lg bg-fg/10" />
+                                    <div className="h-3 w-28 rounded bg-fg/10" />
+                                    <div className="h-9 rounded-md bg-fg/10" />
+                                    <div className="h-3 w-28 rounded bg-fg/10" />
+                                    <div className="h-2 rounded bg-fg/10" />
+                                    <div className="h-9 rounded-md bg-fg/10" />
+                                    <div className="h-8 rounded-lg bg-fg/10" />
+                                  </div>
+                                ) : (
+                                  (() => {
+                                    const selFile =
+                                      recData.files.find((f) => f.filename === recFile) ||
+                                      recData.files[0];
+                                    if (!selFile) return null;
 
-                                  const effectiveKvCtx = recData.kvContextCap
-                                    ? Math.min(clampedCtx, recData.kvContextCap)
-                                    : clampedCtx;
-                                  const kvBytes = recData.kvBasePerToken
-                                    ? recData.kvBasePerToken * bpvSel * effectiveKvCtx
-                                    : 0;
-                                  const { score, gpuMode } = calcScore(
-                                    selFile.size,
-                                    selFile.quantQuality,
-                                    kvBytes,
-                                    recData.availableRam,
-                                    totalAvail,
-                                    recData.availableVram,
-                                    recModelOffload,
-                                    recKvPlacement,
-                                    activeSidecarReserveBytes,
-                                  );
-                                  const modeCopy = getRunabilityModeCopy(t, gpuMode);
-                                  const runStatus = getRunStatus(t, score);
-                                  const totalNeeded =
-                                    selFile.size +
-                                    kvBytes +
-                                    computeOverhead(selFile.size) +
-                                    activeSidecarReserveBytes;
-                                  const remainingHeadroom = Math.max(totalAvail - totalNeeded, 0);
-                                  const headroomStatus = getHeadroomStatus(
-                                    t,
-                                    totalNeeded,
-                                    totalAvail,
-                                  );
-                                  const perfStatus = getPerformanceStatus(t, gpuMode);
-                                  const statusRow = (
-                                    labelText: string,
-                                    value: ReactNode,
-                                    tone?: string,
-                                  ) => (
-                                    <div className="flex items-center justify-between gap-3 py-1.5">
-                                      <span className="text-[12px] text-fg/45">{labelText}</span>
-                                      <span
-                                        className={cn(
-                                          "min-w-0 text-right text-[12px] font-medium",
-                                          tone || "text-fg/75",
-                                        )}
-                                      >
-                                        {value}
-                                      </span>
-                                    </div>
-                                  );
-
-                                  const upgradeSuggestion = (() => {
-                                    if (selFile.quantQuality >= 90) return null;
-                                    const bpvVal = KV_BPV[recKvType] || 2;
-                                    let best: { file: FileRecommendation; score: number } | null =
-                                      null;
-                                    for (const f of recData.files) {
-                                      if (f.quantQuality <= selFile.quantQuality) continue;
-                                      if (f.filename === selFile.filename) continue;
-                                      const fMaxCtx = Math.max(
-                                        maxContextForBpv(
-                                          f.size,
-                                          recData.kvBasePerToken,
-                                          bpvVal,
-                                          totalAvail,
-                                          recData.modelMaxContext,
-                                          activeSidecarReserveBytes,
-                                        ),
-                                        1024,
-                                      );
-                                      if (fMaxCtx < 1024) continue;
-                                      const fCtx = Math.min(clampedCtx, fMaxCtx);
-                                      const fEffKvCtx = recData.kvContextCap
-                                        ? Math.min(fCtx, recData.kvContextCap)
-                                        : fCtx;
-                                      const fKv = recData.kvBasePerToken
-                                        ? recData.kvBasePerToken * bpvVal * fEffKvCtx
-                                        : 0;
-                                      const { score: fScore } = calcScore(
-                                        f.size,
-                                        f.quantQuality,
-                                        fKv,
-                                        recData.availableRam,
+                                    const totalAvail = recData.totalAvailable;
+                                    const bpvSel = KV_BPV[recKvType] || 2;
+                                    const maxCtx = Math.max(
+                                      maxContextForBpv(
+                                        selFile.size,
+                                        recData.kvBasePerToken,
+                                        bpvSel,
                                         totalAvail,
-                                        recData.availableVram,
-                                        recModelOffload,
-                                        recKvPlacement,
+                                        recData.modelMaxContext,
                                         activeSidecarReserveBytes,
-                                      );
-                                      if (fScore < 70) continue;
-                                      if (
-                                        !best ||
-                                        f.quantQuality > best.file.quantQuality ||
-                                        (f.quantQuality === best.file.quantQuality &&
-                                          fScore > best.score)
-                                      ) {
-                                        best = { file: f, score: fScore };
-                                      }
-                                    }
-                                    return best;
-                                  })();
+                                      ),
+                                      1024,
+                                    );
+                                    const clampedCtx = Math.min(Math.max(recContext, 1024), maxCtx);
 
-                                  return (
-                                    <div className="mt-2 space-y-2.5">
-                                      <div className="rounded-lg border border-fg/10 bg-fg/[0.035] px-3 py-2.5">
-                                        <div className="flex items-start justify-between gap-3 border-b border-fg/8 pb-2">
-                                          <div className="min-w-0">
-                                            <div className="text-[14px] font-semibold text-fg">
-                                              {modeCopy.short}
-                                            </div>
-                                            <p className="mt-0.5 text-[12px] leading-snug text-fg/50">
-                                              {modeCopy.long}
-                                            </p>
-                                          </div>
-                                          <div className="text-right shrink-0">
-                                            <div className={cn("text-[13px] font-semibold", runStatus.tone)}>
-                                              {runStatus.label}
-                                            </div>
-                                            <div className="mt-0.5 flex items-center justify-end gap-1 text-[11px] text-fg/35">
-                                              <Monitor size={9} />
-                                              {t("hfBrowser.willRun")}
-                                            </div>
-                                          </div>
-                                        </div>
-                                        <div className="mt-1.5 divide-y divide-fg/6">
-                                          {statusRow(
-                                            t("hfBrowser.statusHeadroom"),
-                                            t("hfBrowser.headroomLeft", {
-                                              label: headroomStatus.label,
-                                              size: formatBytes(remainingHeadroom),
-                                            }),
-                                            headroomStatus.tone,
+                                    const effectiveKvCtx = recData.kvContextCap
+                                      ? Math.min(clampedCtx, recData.kvContextCap)
+                                      : clampedCtx;
+                                    const kvBytes = recData.kvBasePerToken
+                                      ? recData.kvBasePerToken * bpvSel * effectiveKvCtx
+                                      : 0;
+                                    const { score, gpuMode } = calcScore(
+                                      selFile.size,
+                                      selFile.quantQuality,
+                                      kvBytes,
+                                      recData.availableRam,
+                                      totalAvail,
+                                      recData.availableVram,
+                                      recModelOffload,
+                                      recKvPlacement,
+                                      activeSidecarReserveBytes,
+                                    );
+                                    const modeCopy = getRunabilityModeCopy(t, gpuMode);
+                                    const runStatus = getRunStatus(t, score);
+                                    const totalNeeded =
+                                      selFile.size +
+                                      kvBytes +
+                                      computeOverhead(selFile.size) +
+                                      activeSidecarReserveBytes;
+                                    const remainingHeadroom = Math.max(totalAvail - totalNeeded, 0);
+                                    const headroomStatus = getHeadroomStatus(
+                                      t,
+                                      totalNeeded,
+                                      totalAvail,
+                                    );
+                                    const perfStatus = getPerformanceStatus(t, gpuMode);
+                                    const statusRow = (
+                                      labelText: string,
+                                      value: ReactNode,
+                                      tone?: string,
+                                    ) => (
+                                      <div className="flex items-center justify-between gap-3 py-1.5">
+                                        <span className="text-[12px] text-fg/45">{labelText}</span>
+                                        <span
+                                          className={cn(
+                                            "min-w-0 text-right text-[12px] font-medium",
+                                            tone || "text-fg/75",
                                           )}
-                                          {statusRow(t("hfBrowser.statusPrefill"), perfStatus.prefill.label, perfStatus.prefill.tone)}
-                                          {statusRow(
-                                            t("hfBrowser.statusGeneration"),
-                                            perfStatus.generation.label,
-                                            perfStatus.generation.tone,
-                                          )}
-                                          {statusRow(t("hfBrowser.statusConfidence"), t("hfBrowser.confidenceValue", { score }), runStatus.tone)}
-                                        </div>
-                                      </div>
-                                      <p className="text-[12px] leading-snug text-fg/45">
-                                        {headroomStatus.description}
-                                      </p>
-
-                                      {/* Upgrade suggestion */}
-                                      {upgradeSuggestion && (
-                                        <button
-                                          onClick={() => {
-                                            setRecFile(upgradeSuggestion.file.filename);
-                                            const mx = Math.max(
-                                              maxContextForBpv(
-                                                upgradeSuggestion.file.size,
-                                                recData.kvBasePerToken,
-                                                bpvSel,
-                                                totalAvail,
-                                                recData.modelMaxContext,
-                                                activeSidecarReserveBytes,
-                                              ),
-                                              1024,
-                                            );
-                                            setRecContext(Math.min(recContext, mx));
-                                          }}
-                                          className="flex w-full items-start gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/5 px-2.5 py-2 text-left transition hover:bg-emerald-400/10 active:scale-[0.98]"
                                         >
-                                          <TrendingUp
-                                            size={11}
-                                            className="text-emerald-400 shrink-0 mt-0.5"
-                                          />
-                                          <div className="flex-1 min-w-0">
-                                            <p className="text-[12px] leading-snug text-emerald-400/90">
-                                              {t("hfBrowser.upgradeSuggestion", {
-                                                quant: upgradeSuggestion.file.quantization,
-                                                size: formatBytes(upgradeSuggestion.file.size),
-                                                score: upgradeSuggestion.score.toString(),
-                                              })}
-                                            </p>
-                                          </div>
-                                        </button>
-                                      )}
+                                          {value}
+                                        </span>
+                                      </div>
+                                    );
 
-                                      {/* Quantization */}
-                                      <div>
-                                        <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
-                                          {t("hfBrowser.quantization")}
-                                        </label>
-                                        <select
-                                          value={recFile}
-                                          onChange={(e) => {
-                                            setRecFile(e.target.value);
-                                            const f = recData.files.find(
-                                              (x) => x.filename === e.target.value,
-                                            );
-                                            if (f) {
+                                    const upgradeSuggestion = (() => {
+                                      if (selFile.quantQuality >= 90) return null;
+                                      const bpvVal = KV_BPV[recKvType] || 2;
+                                      let best: { file: FileRecommendation; score: number } | null =
+                                        null;
+                                      for (const f of recData.files) {
+                                        if (f.quantQuality <= selFile.quantQuality) continue;
+                                        if (f.filename === selFile.filename) continue;
+                                        const fMaxCtx = Math.max(
+                                          maxContextForBpv(
+                                            f.size,
+                                            recData.kvBasePerToken,
+                                            bpvVal,
+                                            totalAvail,
+                                            recData.modelMaxContext,
+                                            activeSidecarReserveBytes,
+                                          ),
+                                          1024,
+                                        );
+                                        if (fMaxCtx < 1024) continue;
+                                        const fCtx = Math.min(clampedCtx, fMaxCtx);
+                                        const fEffKvCtx = recData.kvContextCap
+                                          ? Math.min(fCtx, recData.kvContextCap)
+                                          : fCtx;
+                                        const fKv = recData.kvBasePerToken
+                                          ? recData.kvBasePerToken * bpvVal * fEffKvCtx
+                                          : 0;
+                                        const { score: fScore } = calcScore(
+                                          f.size,
+                                          f.quantQuality,
+                                          fKv,
+                                          recData.availableRam,
+                                          totalAvail,
+                                          recData.availableVram,
+                                          recModelOffload,
+                                          recKvPlacement,
+                                          activeSidecarReserveBytes,
+                                        );
+                                        if (fScore < 70) continue;
+                                        if (
+                                          !best ||
+                                          f.quantQuality > best.file.quantQuality ||
+                                          (f.quantQuality === best.file.quantQuality &&
+                                            fScore > best.score)
+                                        ) {
+                                          best = { file: f, score: fScore };
+                                        }
+                                      }
+                                      return best;
+                                    })();
+
+                                    return (
+                                      <div className="mt-2 space-y-2.5">
+                                        <div className="rounded-lg border border-fg/10 bg-fg/[0.035] px-3 py-2.5">
+                                          <div className="flex items-start justify-between gap-3 border-b border-fg/8 pb-2">
+                                            <div className="min-w-0">
+                                              <div className="text-[14px] font-semibold text-fg">
+                                                {modeCopy.short}
+                                              </div>
+                                              <p className="mt-0.5 text-[12px] leading-snug text-fg/50">
+                                                {modeCopy.long}
+                                              </p>
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                              <div
+                                                className={cn(
+                                                  "text-[13px] font-semibold",
+                                                  runStatus.tone,
+                                                )}
+                                              >
+                                                {runStatus.label}
+                                              </div>
+                                              <div className="mt-0.5 flex items-center justify-end gap-1 text-[11px] text-fg/35">
+                                                <Monitor size={9} />
+                                                {t("hfBrowser.willRun")}
+                                              </div>
+                                            </div>
+                                          </div>
+                                          <div className="mt-1.5 divide-y divide-fg/6">
+                                            {statusRow(
+                                              t("hfBrowser.statusHeadroom"),
+                                              t("hfBrowser.headroomLeft", {
+                                                label: headroomStatus.label,
+                                                size: formatBytes(remainingHeadroom),
+                                              }),
+                                              headroomStatus.tone,
+                                            )}
+                                            {statusRow(
+                                              t("hfBrowser.statusPrefill"),
+                                              perfStatus.prefill.label,
+                                              perfStatus.prefill.tone,
+                                            )}
+                                            {statusRow(
+                                              t("hfBrowser.statusGeneration"),
+                                              perfStatus.generation.label,
+                                              perfStatus.generation.tone,
+                                            )}
+                                            {statusRow(
+                                              t("hfBrowser.statusConfidence"),
+                                              t("hfBrowser.confidenceValue", { score }),
+                                              runStatus.tone,
+                                            )}
+                                          </div>
+                                        </div>
+                                        <p className="text-[12px] leading-snug text-fg/45">
+                                          {headroomStatus.description}
+                                        </p>
+
+                                        {/* Upgrade suggestion */}
+                                        {upgradeSuggestion && (
+                                          <button
+                                            onClick={() => {
+                                              setRecFile(upgradeSuggestion.file.filename);
                                               const mx = Math.max(
                                                 maxContextForBpv(
-                                                  f.size,
+                                                  upgradeSuggestion.file.size,
                                                   recData.kvBasePerToken,
                                                   bpvSel,
                                                   totalAvail,
@@ -3217,534 +3405,609 @@ export function HuggingFaceBrowserPage() {
                                                 ),
                                                 1024,
                                               );
-                                              const optimalGpuCtx = computeGpuOptimalContext(
-                                                f.size,
-                                                recData.kvBasePerToken,
-                                                bpvSel,
-                                                recData.availableVram,
-                                                recData.modelMaxContext,
-                                                recData.kvContextCap,
-                                                activeSidecarReserveBytes,
+                                              setRecContext(Math.min(recContext, mx));
+                                            }}
+                                            className="flex w-full items-start gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/5 px-2.5 py-2 text-left transition hover:bg-emerald-400/10 active:scale-[0.98]"
+                                          >
+                                            <TrendingUp
+                                              size={11}
+                                              className="text-emerald-400 shrink-0 mt-0.5"
+                                            />
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-[12px] leading-snug text-emerald-400/90">
+                                                {t("hfBrowser.upgradeSuggestion", {
+                                                  quant: upgradeSuggestion.file.quantization,
+                                                  size: formatBytes(upgradeSuggestion.file.size),
+                                                  score: upgradeSuggestion.score.toString(),
+                                                })}
+                                              </p>
+                                            </div>
+                                          </button>
+                                        )}
+
+                                        {/* Quantization */}
+                                        <div data-tour-id="hf-rec-quant">
+                                          <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
+                                            {t("hfBrowser.quantization")}
+                                          </label>
+                                          <select
+                                            value={recFile}
+                                            onChange={(e) => {
+                                              setRecFile(e.target.value);
+                                              const f = recData.files.find(
+                                                (x) => x.filename === e.target.value,
                                               );
-                                              const optimalRamCtx = computeRamMaxContext(
-                                                f.size,
-                                                recData.kvBasePerToken,
-                                                bpvSel,
-                                                totalAvail,
-                                                recData.modelMaxContext,
-                                                recData.kvContextCap,
-                                                activeSidecarReserveBytes,
-                                              );
-                                              const optimal =
-                                                optimalGpuCtx > 0
-                                                  ? optimalGpuCtx
-                                                  : optimalRamCtx > 0
-                                                    ? optimalRamCtx
-                                                    : 8192;
-                                              setRecContext(Math.min(optimal, mx));
-                                            }
-                                          }}
-                                          className="mt-1 w-full rounded-md border border-fg/10 bg-fg/5 px-2 py-1.5 text-[11px] text-fg focus:border-fg/25 focus:outline-none"
-                                        >
-                                          {recData.files.map((f) => (
-                                            <option key={f.filename} value={f.filename}>
-                                              {f.quantization} — {formatBytes(f.size)}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </div>
+                                              if (f) {
+                                                const mx = Math.max(
+                                                  maxContextForBpv(
+                                                    f.size,
+                                                    recData.kvBasePerToken,
+                                                    bpvSel,
+                                                    totalAvail,
+                                                    recData.modelMaxContext,
+                                                    activeSidecarReserveBytes,
+                                                  ),
+                                                  1024,
+                                                );
+                                                const optimalGpuCtx = computeGpuOptimalContext(
+                                                  f.size,
+                                                  recData.kvBasePerToken,
+                                                  bpvSel,
+                                                  recData.availableVram,
+                                                  recData.modelMaxContext,
+                                                  recData.kvContextCap,
+                                                  activeSidecarReserveBytes,
+                                                );
+                                                const optimalRamCtx = computeRamMaxContext(
+                                                  f.size,
+                                                  recData.kvBasePerToken,
+                                                  bpvSel,
+                                                  totalAvail,
+                                                  recData.modelMaxContext,
+                                                  recData.kvContextCap,
+                                                  activeSidecarReserveBytes,
+                                                );
+                                                const optimal =
+                                                  optimalGpuCtx > 0
+                                                    ? optimalGpuCtx
+                                                    : optimalRamCtx > 0
+                                                      ? optimalRamCtx
+                                                      : 8192;
+                                                setRecContext(Math.min(optimal, mx));
+                                              }
+                                            }}
+                                            className="mt-1 w-full rounded-md border border-fg/10 bg-fg/5 px-2 py-1.5 text-[11px] text-fg focus:border-fg/25 focus:outline-none"
+                                          >
+                                            {recData.files.map((f) => (
+                                              <option key={f.filename} value={f.filename}>
+                                                {f.quantization} — {formatBytes(f.size)}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
 
-                                      {mmprojFilesWithSize.length > 0 && (
-                                        <>
-                                          <div className="flex items-center justify-between gap-3 rounded-lg border border-fg/10 bg-fg/5 px-2.5 py-2">
-                                            <div className="min-w-0">
-                                              <span className="block text-[11px] font-medium text-fg/85">
-                                                {t("hfBrowser.imageSupport")}
-                                              </span>
-                                              <span className="block whitespace-nowrap text-[11px] text-fg/40">
-                                                {t("hfBrowser.imageSupportHint")}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-fg/35">
-                                                {recImageSupport ? t("common.labels.on") : t("common.labels.off")}
-                                              </span>
-                                              <Switch
-                                                id="hf-image-support-toggle"
-                                                checked={recImageSupport}
-                                                onChange={setRecImageSupport}
-                                              />
-                                            </div>
+                                        {mmprojFilesWithSize.length > 0 && isOllamaMode && (
+                                          <div className="rounded-lg border border-amber-400/20 bg-amber-500/5 px-2.5 py-2 text-[11px] leading-relaxed text-amber-300/80">
+                                            {t("hfBrowser.ollamaVisionUnsupported")}
                                           </div>
+                                        )}
+                                        {mmprojFilesWithSize.length > 0 && !isOllamaMode && (
+                                          <>
+                                            <div className="flex items-center justify-between gap-3 rounded-lg border border-fg/10 bg-fg/5 px-2.5 py-2">
+                                              <div className="min-w-0">
+                                                <span className="block text-[11px] font-medium text-fg/85">
+                                                  {t("hfBrowser.imageSupport")}
+                                                </span>
+                                                <span className="block whitespace-nowrap text-[11px] text-fg/40">
+                                                  {t("hfBrowser.imageSupportHint")}
+                                                </span>
+                                              </div>
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-fg/35">
+                                                  {recImageSupport
+                                                    ? t("common.labels.on")
+                                                    : t("common.labels.off")}
+                                                </span>
+                                                <Switch
+                                                  id="hf-image-support-toggle"
+                                                  checked={recImageSupport}
+                                                  onChange={setRecImageSupport}
+                                                />
+                                              </div>
+                                            </div>
 
-                                          {recImageSupport && (
-                                            <div>
-                                              <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
-                                                {t("hfBrowser.mmproj")}
-                                              </label>
-                                              <select
-                                                value={recMmprojFile}
-                                                onChange={(e) => setRecMmprojFile(e.target.value)}
-                                                className="mt-1 w-full rounded-md border border-fg/10 bg-fg/5 px-2 py-1.5 text-[11px] text-fg focus:border-fg/25 focus:outline-none"
-                                              >
-                                                {mmprojFilesWithSize.map((file) => (
-                                                  <option key={file.filename} value={file.filename}>
-                                                    {file.quantization} — {formatBytes(file.size)}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            </div>
-                                          )}
-                                        </>
-                                      )}
-
-                                      {recMtpAvailable && (
-                                        <>
-                                          <div className="flex items-center justify-between gap-3 rounded-lg border border-fg/10 bg-fg/5 px-2.5 py-2">
-                                            <div className="min-w-0">
-                                              <span className="block text-[11px] font-medium text-fg/85">
-                                                {t("hfBrowser.mtpTitle")}
-                                              </span>
-                                              <span className="block whitespace-nowrap text-[11px] text-fg/40">
-                                                {recMtpBundled
-                                                  ? t("hfBrowser.mtpHintBundled")
-                                                  : t("hfBrowser.mtpHintSidecar")}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-fg/35">
-                                                {recMtpSupport ? t("common.labels.on") : t("common.labels.off")}
-                                              </span>
-                                              <Switch
-                                                id="hf-mtp-support-toggle"
-                                                checked={recMtpSupport}
-                                                onChange={setRecMtpSupport}
-                                              />
-                                            </div>
-                                          </div>
-
-                                          {recMtpSupport && !recMtpBundled && (
-                                            <div>
-                                              <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
-                                                {t("hfBrowser.mtpFile")}
-                                              </label>
-                                              <select
-                                                value={recMtpFile}
-                                                onChange={(e) => setRecMtpFile(e.target.value)}
-                                                className="mt-1 w-full rounded-md border border-fg/10 bg-fg/5 px-2 py-1.5 text-[11px] text-fg focus:border-fg/25 focus:outline-none"
-                                              >
-                                                {mtpFilesWithSize.map((file) => (
-                                                  <option key={file.filename} value={file.filename}>
-                                                    {file.filename} — {formatBytes(file.size)}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            </div>
-                                          )}
-                                        </>
-                                      )}
-
-                                      {/* Context length */}
-                                      {(() => {
-                                        const modelMax = recData.modelMaxContext;
-                                        const showGpuGuidance =
-                                          gpuOptionsEnabled && recModelOffload !== "cpu";
-                                        const warnOnGpuCtxOverflow =
-                                          showGpuGuidance && recKvPlacement !== "ram";
-                                        // Max context for 100% GPU offload (model+KV+compute all in VRAM)
-                                        const fullGpuCtx = computeGpuOptimalContext(
-                                          selFile.size,
-                                          recData.kvBasePerToken,
-                                          KV_BPV[recKvType] || 2,
-                                          recData.availableVram,
-                                          modelMax,
-                                          recData.kvContextCap,
-                                          activeSidecarReserveBytes,
-                                        );
-                                        // Max context before RAM runs out (dynamic for current KV type)
-                                        const ramCtx = computeRamMaxContext(
-                                          selFile.size,
-                                          recData.kvBasePerToken,
-                                          KV_BPV[recKvType] || 2,
-                                          totalAvail,
-                                          modelMax,
-                                          recData.kvContextCap,
-                                          activeSidecarReserveBytes,
-                                        );
-
-                                        return (
-                                          <div>
-                                            <div className="flex items-center justify-between">
-                                              <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
-                                                {t("hfBrowser.contextLength")}
-                                              </label>
-                                              <span className="text-[12px] font-mono text-fg/60">
-                                                {clampedCtx.toLocaleString()}
-                                              </span>
-                                            </div>
-                                            <div className="relative mt-1">
-                                              <input
-                                                type="range"
-                                                min={1024}
-                                                max={maxCtx}
-                                                step={256}
-                                                value={clampedCtx}
-                                                onChange={(e) =>
-                                                  setRecContext(Number(e.target.value))
-                                                }
-                                                className="w-full accent-accent h-1.5"
-                                              />
-                                              {/* Optimal context tick marks below slider */}
-                                              {maxCtx > 1024 &&
-                                                (() => {
-                                                  const pct = (v: number) =>
-                                                    ((v - 1024) / (maxCtx - 1024)) * 100;
-                                                  return (
-                                                    <>
-                                                      {showGpuGuidance &&
-                                                        fullGpuCtx > 1024 &&
-                                                        fullGpuCtx < maxCtx && (
-                                                        <div
-                                                          className="absolute bottom-0 w-0.5 bg-emerald-400 rounded-full pointer-events-none"
-                                                          style={{
-                                                            left: `${pct(fullGpuCtx)}%`,
-                                                            height: 6,
-                                                            transform: "translateY(100%)",
-                                                          }}
-                                                        />
-                                                      )}
-                                                      {ramCtx > 1024 &&
-                                                        ramCtx < maxCtx &&
-                                                        ramCtx !== fullGpuCtx && (
-                                                          <div
-                                                            className="absolute bottom-0 w-0.5 bg-amber-400 rounded-full pointer-events-none"
-                                                            style={{
-                                                              left: `${pct(ramCtx)}%`,
-                                                              height: 6,
-                                                              transform: "translateY(100%)",
-                                                            }}
-                                                          />
-                                                        )}
-                                                    </>
-                                                  );
-                                                })()}
-                                            </div>
-                                            <div className="flex justify-between text-[9px] text-fg/30">
-                                              <span>1,024</span>
-                                              <span>{maxCtx.toLocaleString()}</span>
-                                            </div>
-                                            {/* Clickable context presets */}
-                                            {((showGpuGuidance && fullGpuCtx > 0) || ramCtx > 0) && (
-                                              <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
-                                                {showGpuGuidance &&
-                                                  fullGpuCtx > 0 &&
-                                                  fullGpuCtx < maxCtx && (
-                                                  <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                      setRecContext(Math.min(fullGpuCtx, maxCtx))
-                                                    }
-                                                    className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-400/80 hover:text-emerald-300 transition-colors"
-                                                  >
-                                                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.4)]" />
-                                                    {t("hfBrowser.optimalGpuCtxShort", {
-                                                      ctx: fullGpuCtx.toLocaleString(),
-                                                    })}
-                                                  </button>
-                                                )}
-                                                {ramCtx > 0 && ramCtx !== fullGpuCtx && (
-                                                  <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                      setRecContext(Math.min(ramCtx, maxCtx))
-                                                    }
-                                                    className="flex items-center gap-1.5 text-[12px] font-medium text-amber-400/80 hover:text-amber-300 transition-colors"
-                                                  >
-                                                    <span className="inline-block w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.4)]" />
-                                                    {t("hfBrowser.optimalRamCtxShort", {
-                                                      ctx: ramCtx.toLocaleString(),
-                                                    })}
-                                                  </button>
-                                                )}
+                                            {recImageSupport && (
+                                              <div>
+                                                <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
+                                                  {t("hfBrowser.mmproj")}
+                                                </label>
+                                                <select
+                                                  value={recMmprojFile}
+                                                  onChange={(e) => setRecMmprojFile(e.target.value)}
+                                                  className="mt-1 w-full rounded-md border border-fg/10 bg-fg/5 px-2 py-1.5 text-[11px] text-fg focus:border-fg/25 focus:outline-none"
+                                                >
+                                                  {mmprojFilesWithSize.map((file) => (
+                                                    <option
+                                                      key={file.filename}
+                                                      value={file.filename}
+                                                    >
+                                                      {file.quantization} — {formatBytes(file.size)}
+                                                    </option>
+                                                  ))}
+                                                </select>
                                               </div>
                                             )}
-                                            {/* Warning: exceeding GPU-optimal context */}
-                                            {warnOnGpuCtxOverflow &&
-                                              fullGpuCtx > 0 &&
-                                              fullGpuCtx < maxCtx &&
-                                              clampedCtx > fullGpuCtx && (
-                                                <div className="flex items-start gap-2 mt-1.5 rounded-lg border border-amber-400/20 bg-amber-400/5 px-2.5 py-2">
-                                                  <AlertTriangle
-                                                    size={13}
-                                                    className="text-amber-400 shrink-0 mt-0.5"
-                                                  />
-                                                  <p className="text-[11px] leading-snug text-amber-400/80">
-                                                    {t("hfBrowser.ctxExceedsGpu", {
-                                                      ctx: fullGpuCtx.toLocaleString(),
-                                                    })}
-                                                  </p>
+                                          </>
+                                        )}
+
+                                        {recMtpAvailable && (
+                                          <>
+                                            <div className="flex items-center justify-between gap-3 rounded-lg border border-fg/10 bg-fg/5 px-2.5 py-2">
+                                              <div className="min-w-0">
+                                                <span className="block text-[11px] font-medium text-fg/85">
+                                                  {t("hfBrowser.mtpTitle")}
+                                                </span>
+                                                <span className="block whitespace-nowrap text-[11px] text-fg/40">
+                                                  {recMtpBundled
+                                                    ? t("hfBrowser.mtpHintBundled")
+                                                    : t("hfBrowser.mtpHintSidecar")}
+                                                </span>
+                                              </div>
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-fg/35">
+                                                  {recMtpSupport
+                                                    ? t("common.labels.on")
+                                                    : t("common.labels.off")}
+                                                </span>
+                                                <Switch
+                                                  id="hf-mtp-support-toggle"
+                                                  checked={recMtpSupport}
+                                                  onChange={setRecMtpSupport}
+                                                />
+                                              </div>
+                                            </div>
+
+                                            {recMtpSupport && !recMtpBundled && (
+                                              <div>
+                                                <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
+                                                  {t("hfBrowser.mtpFile")}
+                                                </label>
+                                                <select
+                                                  value={recMtpFile}
+                                                  onChange={(e) => setRecMtpFile(e.target.value)}
+                                                  className="mt-1 w-full rounded-md border border-fg/10 bg-fg/5 px-2 py-1.5 text-[11px] text-fg focus:border-fg/25 focus:outline-none"
+                                                >
+                                                  {mtpFilesWithSize.map((file) => (
+                                                    <option
+                                                      key={file.filename}
+                                                      value={file.filename}
+                                                    >
+                                                      {file.filename} — {formatBytes(file.size)}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              </div>
+                                            )}
+                                          </>
+                                        )}
+
+                                        {/* Context length */}
+                                        {(() => {
+                                          const modelMax = recData.modelMaxContext;
+                                          const showGpuGuidance =
+                                            gpuOptionsEnabled && recModelOffload !== "cpu";
+                                          const warnOnGpuCtxOverflow =
+                                            showGpuGuidance && recKvPlacement !== "ram";
+                                          // Max context for 100% GPU offload (model+KV+compute all in VRAM)
+                                          const fullGpuCtx = computeGpuOptimalContext(
+                                            selFile.size,
+                                            recData.kvBasePerToken,
+                                            KV_BPV[recKvType] || 2,
+                                            recData.availableVram,
+                                            modelMax,
+                                            recData.kvContextCap,
+                                            activeSidecarReserveBytes,
+                                          );
+                                          // Max context before RAM runs out (dynamic for current KV type)
+                                          const ramCtx = computeRamMaxContext(
+                                            selFile.size,
+                                            recData.kvBasePerToken,
+                                            KV_BPV[recKvType] || 2,
+                                            totalAvail,
+                                            modelMax,
+                                            recData.kvContextCap,
+                                            activeSidecarReserveBytes,
+                                          );
+
+                                          return (
+                                            <div data-tour-id="hf-rec-context">
+                                              <div className="flex items-center justify-between">
+                                                <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
+                                                  {t("hfBrowser.contextLength")}
+                                                </label>
+                                                <span className="text-[12px] font-mono text-fg/60">
+                                                  {clampedCtx.toLocaleString()}
+                                                </span>
+                                              </div>
+                                              <div className="relative mt-1">
+                                                <input
+                                                  type="range"
+                                                  min={1024}
+                                                  max={maxCtx}
+                                                  step={256}
+                                                  value={clampedCtx}
+                                                  onChange={(e) =>
+                                                    setRecContext(Number(e.target.value))
+                                                  }
+                                                  className="w-full accent-accent h-1.5"
+                                                />
+                                                {/* Optimal context tick marks below slider */}
+                                                {maxCtx > 1024 &&
+                                                  (() => {
+                                                    const pct = (v: number) =>
+                                                      ((v - 1024) / (maxCtx - 1024)) * 100;
+                                                    return (
+                                                      <>
+                                                        {showGpuGuidance &&
+                                                          fullGpuCtx > 1024 &&
+                                                          fullGpuCtx < maxCtx && (
+                                                            <div
+                                                              className="absolute bottom-0 w-0.5 bg-emerald-400 rounded-full pointer-events-none"
+                                                              style={{
+                                                                left: `${pct(fullGpuCtx)}%`,
+                                                                height: 6,
+                                                                transform: "translateY(100%)",
+                                                              }}
+                                                            />
+                                                          )}
+                                                        {ramCtx > 1024 &&
+                                                          ramCtx < maxCtx &&
+                                                          ramCtx !== fullGpuCtx && (
+                                                            <div
+                                                              className="absolute bottom-0 w-0.5 bg-amber-400 rounded-full pointer-events-none"
+                                                              style={{
+                                                                left: `${pct(ramCtx)}%`,
+                                                                height: 6,
+                                                                transform: "translateY(100%)",
+                                                              }}
+                                                            />
+                                                          )}
+                                                      </>
+                                                    );
+                                                  })()}
+                                              </div>
+                                              <div className="flex justify-between text-[9px] text-fg/30">
+                                                <span>1,024</span>
+                                                <span>{maxCtx.toLocaleString()}</span>
+                                              </div>
+                                              {/* Clickable context presets */}
+                                              {((showGpuGuidance && fullGpuCtx > 0) ||
+                                                ramCtx > 0) && (
+                                                <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                                                  {showGpuGuidance &&
+                                                    fullGpuCtx > 0 &&
+                                                    fullGpuCtx < maxCtx && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                          setRecContext(
+                                                            Math.min(fullGpuCtx, maxCtx),
+                                                          )
+                                                        }
+                                                        className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-400/80 hover:text-emerald-300 transition-colors"
+                                                      >
+                                                        <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.4)]" />
+                                                        {t("hfBrowser.optimalGpuCtxShort", {
+                                                          ctx: fullGpuCtx.toLocaleString(),
+                                                        })}
+                                                      </button>
+                                                    )}
+                                                  {ramCtx > 0 && ramCtx !== fullGpuCtx && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        setRecContext(Math.min(ramCtx, maxCtx))
+                                                      }
+                                                      className="flex items-center gap-1.5 text-[12px] font-medium text-amber-400/80 hover:text-amber-300 transition-colors"
+                                                    >
+                                                      <span className="inline-block w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.4)]" />
+                                                      {t("hfBrowser.optimalRamCtxShort", {
+                                                        ctx: ramCtx.toLocaleString(),
+                                                      })}
+                                                    </button>
+                                                  )}
                                                 </div>
                                               )}
-                                            {/* State B: Model exceeds VRAM entirely */}
-                                            {showGpuGuidance && fullGpuCtx === 0 && ramCtx > 0 && (
-                                              <div className="flex items-start gap-2 mt-1.5 rounded-lg border border-blue-400/20 bg-blue-400/5 px-2.5 py-2">
-                                                <Info
-                                                  size={13}
-                                                  className="text-blue-400 shrink-0 mt-0.5"
-                                                />
-                                                <p className="text-[11px] leading-snug text-blue-300/80">
-                                                  {t("hfBrowser.modelExceedsVram")}
-                                                </p>
-                                              </div>
+                                              {/* Warning: exceeding GPU-optimal context */}
+                                              {warnOnGpuCtxOverflow &&
+                                                fullGpuCtx > 0 &&
+                                                fullGpuCtx < maxCtx &&
+                                                clampedCtx > fullGpuCtx && (
+                                                  <div className="flex items-start gap-2 mt-1.5 rounded-lg border border-amber-400/20 bg-amber-400/5 px-2.5 py-2">
+                                                    <AlertTriangle
+                                                      size={13}
+                                                      className="text-amber-400 shrink-0 mt-0.5"
+                                                    />
+                                                    <p className="text-[11px] leading-snug text-amber-400/80">
+                                                      {t("hfBrowser.ctxExceedsGpu", {
+                                                        ctx: fullGpuCtx.toLocaleString(),
+                                                      })}
+                                                    </p>
+                                                  </div>
+                                                )}
+                                              {/* State B: Model exceeds VRAM entirely */}
+                                              {showGpuGuidance &&
+                                                fullGpuCtx === 0 &&
+                                                ramCtx > 0 && (
+                                                  <div className="flex items-start gap-2 mt-1.5 rounded-lg border border-blue-400/20 bg-blue-400/5 px-2.5 py-2">
+                                                    <Info
+                                                      size={13}
+                                                      className="text-blue-400 shrink-0 mt-0.5"
+                                                    />
+                                                    <p className="text-[11px] leading-snug text-blue-300/80">
+                                                      {t("hfBrowser.modelExceedsVram")}
+                                                    </p>
+                                                  </div>
+                                                )}
+                                            </div>
+                                          );
+                                        })()}
+
+                                        {/* KV Cache type */}
+                                        <div>
+                                          <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
+                                            {t("hfBrowser.kvCacheType")}
+                                          </label>
+                                          <select
+                                            value={recKvType}
+                                            onChange={(e) => {
+                                              setRecKvType(e.target.value);
+                                              const bpv = KV_BPV[e.target.value] || 2;
+                                              const mx = Math.max(
+                                                maxContextForBpv(
+                                                  selFile.size,
+                                                  recData.kvBasePerToken,
+                                                  bpv,
+                                                  totalAvail,
+                                                  recData.modelMaxContext,
+                                                  activeSidecarReserveBytes,
+                                                ),
+                                                1024,
+                                              );
+                                              setRecContext((prev) => Math.min(prev, mx));
+                                            }}
+                                            className="mt-1 w-full rounded-md border border-fg/10 bg-fg/5 px-2 py-1.5 text-[11px] text-fg focus:border-fg/25 focus:outline-none"
+                                          >
+                                            <option value="f32">{t("hfBrowser.kvF32")}</option>
+                                            <option value="f16">{t("hfBrowser.kvF16")}</option>
+                                            <option value="q8_0">{t("hfBrowser.kvQ80")}</option>
+                                            <option value="q5_1">{t("hfBrowser.kvQ51")}</option>
+                                            <option value="q5_0">{t("hfBrowser.kvQ50")}</option>
+                                            <option value="q4_1">{t("hfBrowser.kvQ41")}</option>
+                                            <option value="q4_0">{t("hfBrowser.kvQ40")}</option>
+                                            <option value="iq4_nl">{t("hfBrowser.kvIq4nl")}</option>
+                                          </select>
+                                        </div>
+
+                                        <div data-tour-id="hf-rec-offload">
+                                          <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
+                                            {t("hfBrowser.detailModelOffload")}
+                                          </label>
+                                          <div className="mt-1 grid grid-cols-4 gap-1 rounded-md border border-fg/10 bg-fg/5 p-1">
+                                            {(["auto", "cpu", "gpu", "mixed"] as const).map(
+                                              (value) => {
+                                                const active = recModelOffload === value;
+                                                const copy = getModelOffloadCopy(t, value);
+                                                return (
+                                                  <button
+                                                    key={value}
+                                                    type="button"
+                                                    disabled={!gpuOptionsEnabled}
+                                                    onClick={() => setRecModelOffload(value)}
+                                                    className={cn(
+                                                      "rounded-sm px-2 py-1.5 text-[11px] font-medium transition",
+                                                      !gpuOptionsEnabled
+                                                        ? "cursor-not-allowed text-fg/25"
+                                                        : active
+                                                          ? "bg-accent/15 text-accent"
+                                                          : "text-fg/50 hover:bg-fg/8 hover:text-fg/80",
+                                                    )}
+                                                    title={copy.description}
+                                                  >
+                                                    {copy.label}
+                                                  </button>
+                                                );
+                                              },
                                             )}
                                           </div>
-                                        );
-                                      })()}
-
-                                      {/* KV Cache type */}
-                                      <div>
-                                        <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
-                                          {t("hfBrowser.kvCacheType")}
-                                        </label>
-                                        <select
-                                          value={recKvType}
-                                          onChange={(e) => {
-                                            setRecKvType(e.target.value);
-                                            const bpv = KV_BPV[e.target.value] || 2;
-                                            const mx = Math.max(
-                                              maxContextForBpv(
-                                                selFile.size,
-                                                recData.kvBasePerToken,
-                                                bpv,
-                                                totalAvail,
-                                                recData.modelMaxContext,
-                                                activeSidecarReserveBytes,
-                                              ),
-                                              1024,
-                                            );
-                                            setRecContext((prev) => Math.min(prev, mx));
-                                          }}
-                                          className="mt-1 w-full rounded-md border border-fg/10 bg-fg/5 px-2 py-1.5 text-[11px] text-fg focus:border-fg/25 focus:outline-none"
-                                        >
-                                          <option value="f32">{t("hfBrowser.kvF32")}</option>
-                                          <option value="f16">{t("hfBrowser.kvF16")}</option>
-                                          <option value="q8_0">{t("hfBrowser.kvQ80")}</option>
-                                          <option value="q5_1">{t("hfBrowser.kvQ51")}</option>
-                                          <option value="q5_0">{t("hfBrowser.kvQ50")}</option>
-                                          <option value="q4_1">{t("hfBrowser.kvQ41")}</option>
-                                          <option value="q4_0">{t("hfBrowser.kvQ40")}</option>
-                                          <option value="iq4_nl">{t("hfBrowser.kvIq4nl")}</option>
-                                        </select>
-                                      </div>
-
-                                      <div>
-                                        <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
-                                          {t("hfBrowser.detailModelOffload")}
-                                        </label>
-                                        <div className="mt-1 grid grid-cols-4 gap-1 rounded-md border border-fg/10 bg-fg/5 p-1">
-                                          {(["auto", "cpu", "gpu", "mixed"] as const).map((value) => {
-                                            const active = recModelOffload === value;
-                                            const copy = getModelOffloadCopy(t, value);
-                                            return (
-                                              <button
-                                                key={value}
-                                                type="button"
-                                                disabled={!gpuOptionsEnabled}
-                                                onClick={() => setRecModelOffload(value)}
-                                                className={cn(
-                                                  "rounded-sm px-2 py-1.5 text-[11px] font-medium transition",
-                                                  !gpuOptionsEnabled
-                                                    ? "cursor-not-allowed text-fg/25"
-                                                    : active
-                                                      ? "bg-accent/15 text-accent"
-                                                      : "text-fg/50 hover:bg-fg/8 hover:text-fg/80",
-                                                )}
-                                                title={copy.description}
-                                              >
-                                                {copy.label}
-                                              </button>
-                                            );
-                                          })}
-                                        </div>
-                                        <p className="mt-1 text-[11px] leading-snug text-fg/40">
-                                          {gpuOptionsEnabled
-                                            ? getModelOffloadCopy(t, recModelOffload).description
-                                            : t("hfBrowser.gpuOffloadUnavailable")}
-                                        </p>
-                                      </div>
-
-                                      <div>
-                                        <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
-                                          {t("hfBrowser.kvLocationLabel")}
-                                        </label>
-                                        <div className="mt-1 grid grid-cols-3 gap-1 rounded-md border border-fg/10 bg-fg/5 p-1">
-                                          {(["auto", "ram", "vram"] as const).map((value) => {
-                                            const active = recKvPlacement === value;
-                                            const copy = getKvPlacementCopy(t, value);
-                                            return (
-                                              <button
-                                                key={value}
-                                                type="button"
-                                                disabled={!gpuOptionsEnabled}
-                                                onClick={() => setRecKvPlacement(value)}
-                                                className={cn(
-                                                  "rounded-sm px-2 py-1.5 text-[11px] font-medium transition",
-                                                  !gpuOptionsEnabled
-                                                    ? "cursor-not-allowed text-fg/25"
-                                                    : active
-                                                      ? "bg-accent/15 text-accent"
-                                                      : "text-fg/50 hover:bg-fg/8 hover:text-fg/80",
-                                                )}
-                                                title={copy.description}
-                                              >
-                                                {copy.label}
-                                              </button>
-                                            );
-                                          })}
-                                        </div>
-                                        <p className="mt-1 text-[11px] leading-snug text-fg/40">
-                                          {gpuOptionsEnabled
-                                            ? getKvPlacementCopy(t, recKvPlacement).description
-                                            : t("hfBrowser.kvPlacementUnavailable")}
-                                        </p>
-                                      </div>
-
-                                      {/* Warning */}
-                                      {score < 60 && (
-                                        <div className="flex items-start gap-2 rounded-lg border border-red-400/20 bg-red-400/10 px-2.5 py-2">
-                                          <AlertTriangle
-                                            size={12}
-                                            className="text-red-400 shrink-0 mt-0.5"
-                                          />
-                                          <p className="text-[12px] leading-snug text-red-400/90">
-                                            {t("hfBrowser.notRecommended")}
+                                          <p className="mt-1 text-[11px] leading-snug text-fg/40">
+                                            {gpuOptionsEnabled
+                                              ? getModelOffloadCopy(t, recModelOffload).description
+                                              : t("hfBrowser.gpuOffloadUnavailable")}
                                           </p>
                                         </div>
-                                      )}
 
-                                      {/* Download recommended */}
-                                      {score >= 60 && (
+                                        <div data-tour-id="hf-rec-kv-location">
+                                          <label className="text-[9px] font-semibold uppercase tracking-wider text-fg/40">
+                                            {t("hfBrowser.kvLocationLabel")}
+                                          </label>
+                                          <div className="mt-1 grid grid-cols-3 gap-1 rounded-md border border-fg/10 bg-fg/5 p-1">
+                                            {(["auto", "ram", "vram"] as const).map((value) => {
+                                              const active = recKvPlacement === value;
+                                              const copy = getKvPlacementCopy(t, value);
+                                              return (
+                                                <button
+                                                  key={value}
+                                                  type="button"
+                                                  disabled={!gpuOptionsEnabled}
+                                                  onClick={() => setRecKvPlacement(value)}
+                                                  className={cn(
+                                                    "rounded-sm px-2 py-1.5 text-[11px] font-medium transition",
+                                                    !gpuOptionsEnabled
+                                                      ? "cursor-not-allowed text-fg/25"
+                                                      : active
+                                                        ? "bg-accent/15 text-accent"
+                                                        : "text-fg/50 hover:bg-fg/8 hover:text-fg/80",
+                                                  )}
+                                                  title={copy.description}
+                                                >
+                                                  {copy.label}
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                          <p className="mt-1 text-[11px] leading-snug text-fg/40">
+                                            {gpuOptionsEnabled
+                                              ? getKvPlacementCopy(t, recKvPlacement).description
+                                              : t("hfBrowser.kvPlacementUnavailable")}
+                                          </p>
+                                        </div>
+
+                                        {/* Warning */}
+                                        {score < 60 && (
+                                          <div className="flex items-start gap-2 rounded-lg border border-red-400/20 bg-red-400/10 px-2.5 py-2">
+                                            <AlertTriangle
+                                              size={12}
+                                              className="text-red-400 shrink-0 mt-0.5"
+                                            />
+                                            <p className="text-[12px] leading-snug text-red-400/90">
+                                              {t("hfBrowser.notRecommended")}
+                                            </p>
+                                          </div>
+                                        )}
+
+                                        {/* Download recommended */}
+                                        {score >= 60 && (
+                                          <button
+                                            onClick={() => void queueRecommendedDownload()}
+                                            className={cn(
+                                              "flex w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-400/30 bg-emerald-400/15 py-1.5 text-[11px] font-semibold text-emerald-500",
+                                              interactive.transition.default,
+                                              "hover:bg-emerald-400/25 active:scale-[0.97]",
+                                            )}
+                                          >
+                                            <Download size={12} />
+                                            {t("hfBrowser.download")} {selFile.quantization}
+                                          </button>
+                                        )}
+
                                         <button
-                                          onClick={() => void queueRecommendedDownload()}
-                                          className={cn(
-                                            "flex w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-400/30 bg-emerald-400/15 py-1.5 text-[11px] font-semibold text-emerald-500",
-                                            interactive.transition.default,
-                                            "hover:bg-emerald-400/25 active:scale-[0.97]",
-                                          )}
+                                          onClick={openCompareModal}
+                                          className="flex w-full items-center justify-center gap-1 py-1 text-[12px] text-fg/55 hover:text-fg/75 transition-colors"
                                         >
-                                          <Download size={12} />
-                                          {t("hfBrowser.download")} {selFile.quantization}
+                                          {t("hfBrowser.compare")}
                                         </button>
-                                      )}
 
-                                      <button
-                                        onClick={openCompareModal}
-                                        className="flex w-full items-center justify-center gap-1 py-1 text-[12px] text-fg/55 hover:text-fg/75 transition-colors"
-                                      >
-                                        {t("hfBrowser.compare")}
-                                      </button>
-
-                                      {/* More details button */}
-                                      <button
-                                        onClick={() => setDetailSheetOpen(true)}
-                                        className="flex w-full items-center justify-center gap-1 py-1 text-[12px] text-fg/40 hover:text-fg/60 transition-colors"
-                                      >
-                                        <Info size={10} />
-                                        {t("hfBrowser.moreDetails")}
-                                      </button>
-                                    </div>
-                                  );
-                                })()
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {filesPanelTab === "files" && (
-                          <div className="flex-1 overflow-y-auto px-3 py-3 pb-6 space-y-2">
-                            {sortedFilesWithSize.map((file) => {
-                              const rs = runabilityScores[file.filename];
-                              return (
-                                <div
-                                  key={file.filename}
-                                  className="rounded-xl border border-fg/10 bg-fg/3 px-3 py-2.5"
-                                >
-                                  <p
-                                    className="truncate text-[12px] font-medium text-fg"
-                                    title={file.filename}
-                                  >
-                                    {file.filename}
-                                  </p>
-                                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                                    <span className="rounded-md border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold text-accent/80">
-                                      {file.quantization}
-                                    </span>
-                                    {file.isMmproj && (
-                                      <span className="rounded-md border border-blue-400/20 bg-blue-400/10 px-1.5 py-0.5 text-[9px] font-semibold text-blue-300">
-                                        MMPROJ
-                                      </span>
-                                    )}
-                                    {file.isMtp && (
-                                      <span className="rounded-md border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold text-accent/80">
-                                        MTP
-                                      </span>
-                                    )}
-                                    {rs && (
-                                      <div className="flex flex-col gap-0.5">
-                                        <span
-                                          className={cn(
-                                            "rounded-md border px-1.5 py-0.5 text-[9px] font-semibold w-fit",
-                                            rs.label === "excellent"
-                                              ? "border-emerald-400/30 bg-emerald-400/15 text-emerald-500"
-                                              : rs.label === "good"
-                                                ? "border-blue-400/30 bg-blue-400/15 text-blue-500"
-                                                : rs.label === "marginal"
-                                                  ? "border-amber-400/30 bg-amber-400/15 text-amber-500"
-                                                  : rs.label === "poor"
-                                                    ? "border-orange-400/30 bg-orange-400/15 text-orange-500"
-                                                    : "border-red-400/30 bg-red-400/15 text-red-500",
-                                          )}
-                                          title={t("hfBrowser.runabilityTooltip", {
-                                            score: rs.score,
-                                            label: rs.label,
-                                            mode: getRunabilityModeCopy(t, rs.gpuMode).long,
-                                            ram: rs.fitsInRam ? t("hfBrowser.fitsInRam") : "",
-                                            vram: rs.fitsInVram ? t("hfBrowser.fitsInVram") : "",
-                                          })}
+                                        {/* More details button */}
+                                        <button
+                                          onClick={() => setDetailSheetOpen(true)}
+                                          className="flex w-full items-center justify-center gap-1 py-1 text-[12px] text-fg/40 hover:text-fg/60 transition-colors"
                                         >
-                                          {rs.score}
-                                        </span>
-                                        <span className="max-w-55 text-[10px] leading-tight text-fg/40">
-                                          {getRunabilityModeCopy(t, rs.gpuMode).short}
-                                        </span>
+                                          <Info size={10} />
+                                          {t("hfBrowser.moreDetails")}
+                                        </button>
                                       </div>
-                                    )}
-                                    <span className="text-[12px] text-fg/45">
-                                      {formatBytes(file.size)}
-                                    </span>
-                                  </div>
-                                  <button
-                                    onClick={() => void queueFilesDownload(file)}
-                                    className={cn(
-                                      "mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/30 bg-accent/15 py-1.5 text-[11px] font-semibold text-accent",
-                                      interactive.transition.default,
-                                      "hover:bg-accent/25 active:scale-[0.97]",
-                                    )}
+                                    );
+                                  })()
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {filesPanelTab === "files" && (
+                            <div className="flex-1 overflow-y-auto px-3 py-3 pb-6 space-y-2">
+                              {sortedFilesWithSize.map((file) => {
+                                const rs = runabilityScores[file.filename];
+                                return (
+                                  <div
+                                    key={file.filename}
+                                    className="rounded-xl border border-fg/10 bg-fg/3 px-3 py-2.5"
                                   >
-                                    {isOllamaMode ? <Server size={12} /> : <Download size={12} />}
-                                    {isOllamaMode
-                                      ? `${t("hfBrowser.pullToOllama")} ${selectedOllamaProvider?.label ?? ""}`.trim()
-                                      : returnTo && !file.isMmproj && !file.isMtp
-                                        ? t("hfBrowser.downloadAndUse")
-                                        : t("hfBrowser.download")}
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                                    <p
+                                      className="truncate text-[12px] font-medium text-fg"
+                                      title={file.filename}
+                                    >
+                                      {file.filename}
+                                    </p>
+                                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                      <span className="rounded-md border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold text-accent/80">
+                                        {file.quantization}
+                                      </span>
+                                      {file.isMmproj && (
+                                        <span className="rounded-md border border-blue-400/20 bg-blue-400/10 px-1.5 py-0.5 text-[9px] font-semibold text-blue-300">
+                                          MMPROJ
+                                        </span>
+                                      )}
+                                      {file.isMtp && (
+                                        <span className="rounded-md border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold text-accent/80">
+                                          MTP
+                                        </span>
+                                      )}
+                                      {rs && (
+                                        <div className="flex flex-col gap-0.5">
+                                          <span
+                                            className={cn(
+                                              "rounded-md border px-1.5 py-0.5 text-[9px] font-semibold w-fit",
+                                              rs.label === "excellent"
+                                                ? "border-emerald-400/30 bg-emerald-400/15 text-emerald-500"
+                                                : rs.label === "good"
+                                                  ? "border-blue-400/30 bg-blue-400/15 text-blue-500"
+                                                  : rs.label === "marginal"
+                                                    ? "border-amber-400/30 bg-amber-400/15 text-amber-500"
+                                                    : rs.label === "poor"
+                                                      ? "border-orange-400/30 bg-orange-400/15 text-orange-500"
+                                                      : "border-red-400/30 bg-red-400/15 text-red-500",
+                                            )}
+                                            title={t("hfBrowser.runabilityTooltip", {
+                                              score: rs.score,
+                                              label: rs.label,
+                                              mode: getRunabilityModeCopy(t, rs.gpuMode).long,
+                                              ram: rs.fitsInRam ? t("hfBrowser.fitsInRam") : "",
+                                              vram: rs.fitsInVram ? t("hfBrowser.fitsInVram") : "",
+                                            })}
+                                          >
+                                            {rs.score}
+                                          </span>
+                                          <span className="max-w-55 text-[10px] leading-tight text-fg/40">
+                                            {getRunabilityModeCopy(t, rs.gpuMode).short}
+                                          </span>
+                                        </div>
+                                      )}
+                                      <span className="text-[12px] text-fg/45">
+                                        {formatBytes(file.size)}
+                                      </span>
+                                    </div>
+                                    <button
+                                      onClick={() => void queueFilesDownload(file)}
+                                      className={cn(
+                                        "mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/30 bg-accent/15 py-1.5 text-[11px] font-semibold text-accent",
+                                        interactive.transition.default,
+                                        "hover:bg-accent/25 active:scale-[0.97]",
+                                      )}
+                                    >
+                                      {isOllamaMode ? (
+                                      <img
+                                        src={OllamaIcon}
+                                        alt="Ollama"
+                                        className="h-3.5 w-3.5 shrink-0"
+                                      />
+                                    ) : (
+                                      <Download size={12} />
+                                    )}
+                                      {isOllamaMode
+                                        ? `${t("hfBrowser.pullToOllama")} ${selectedOllamaProvider?.label ?? ""}`.trim()
+                                        : returnTo && !file.isMmproj && !file.isMtp
+                                          ? t("hfBrowser.downloadAndUse")
+                                          : t("hfBrowser.download")}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    </>
                   )}
                 </div>
               )}
@@ -3765,9 +4028,7 @@ export function HuggingFaceBrowserPage() {
             <div className="flex items-center justify-between border-b border-fg/10 px-4 py-3">
               <div>
                 <h3 className="text-sm font-semibold text-fg">{t("hfBrowser.compareTitle")}</h3>
-                <p className="text-[11px] text-fg/50">
-                  {t("hfBrowser.compareSubtitle")}
-                </p>
+                <p className="text-[11px] text-fg/50">{t("hfBrowser.compareSubtitle")}</p>
               </div>
               <button
                 type="button"
@@ -3797,7 +4058,9 @@ export function HuggingFaceBrowserPage() {
                       className="rounded-xl border border-fg/10 bg-fg/3 p-2.5 space-y-2"
                     >
                       <div className="flex items-center justify-between">
-                        <p className="text-[11px] font-semibold text-fg/70">{t("hfBrowser.compareConfig", { index: index + 1 })}</p>
+                        <p className="text-[11px] font-semibold text-fg/70">
+                          {t("hfBrowser.compareConfig", { index: index + 1 })}
+                        </p>
                         {compareSelections.length > 1 && (
                           <button
                             type="button"
@@ -4000,9 +4263,7 @@ export function HuggingFaceBrowserPage() {
             )}
           </div>
           <div className="mb-5 flex flex-wrap gap-1.5">
-            {[
-              ...new Set([...availablePipelineTags, ...COMMON_PIPELINE_TAGS]),
-            ].map((tag) => {
+            {[...new Set([...availablePipelineTags, ...COMMON_PIPELINE_TAGS])].map((tag) => {
               const active = filterPipelineTags.has(tag);
               const inResults = availablePipelineTags.has(tag);
               return (
@@ -4077,9 +4338,7 @@ export function HuggingFaceBrowserPage() {
               />
             </label>
           </div>
-          <p className="mb-5 text-[10.5px] text-fg/40">
-            {t("hfBrowser.filterParamNote")}
-          </p>
+          <p className="mb-5 text-[10.5px] text-fg/40">{t("hfBrowser.filterParamNote")}</p>
 
           {/* Quick presets */}
           <div className="mb-2 flex items-center gap-2">
@@ -4135,111 +4394,92 @@ export function HuggingFaceBrowserPage() {
 
       <BottomMenu
         isOpen={showOllamaProviderMenu}
-        onClose={() => setShowOllamaProviderMenu(false)}
+        onClose={() => {
+          if (isMobilePlatform && !selectedOllamaProviderId) return;
+          setShowOllamaProviderMenu(false);
+        }}
         title={t("hfBrowser.destinationPickerTitle")}
       >
-          <p className="mb-5 text-[12.5px] leading-relaxed text-fg/55">
-            {t("hfBrowser.destinationPickerSubtitle")}
-          </p>
+        <p className="mb-5 text-[12.5px] leading-relaxed text-fg/55">
+          {t("hfBrowser.destinationPickerSubtitle")}
+        </p>
 
-          {/* Local section */}
-          <div className="mb-2 flex items-center gap-2 px-1">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-fg/35">
-              {t("hfBrowser.destinationLocalSection")}
-            </span>
-            <div className="h-px flex-1 bg-fg/8" />
-          </div>
-          <button
-            onClick={() => {
-              setSelectedOllamaProviderId(null);
-              setShowOllamaProviderMenu(false);
-            }}
-            className={cn(
-              "group relative w-full overflow-hidden rounded-xl border px-3.5 py-3 text-left transition",
-              !isOllamaMode
-                ? "border-accent/35 bg-accent/8"
-                : "border-fg/10 bg-fg/3 hover:border-fg/20 hover:bg-fg/5",
-            )}
-          >
-            <div className="flex items-center gap-3">
-              <span
-                className={cn(
-                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
-                  !isOllamaMode ? "bg-accent/15 text-accent" : "bg-fg/8 text-fg/55",
-                )}
-              >
-                <HardDrive size={15} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px] font-medium text-fg">
-                  {t("hfBrowser.destinationLocal")}
-                </div>
-                <div className="truncate text-[11.5px] text-fg/45">
-                  {t("hfBrowser.destinationLocalHint")}
-                </div>
-              </div>
-              <span
-                className={cn(
-                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition",
-                  !isOllamaMode
-                    ? "border-accent/50 bg-accent/15 text-accent"
-                    : "border-fg/15 text-transparent",
-                )}
-              >
-                <Check size={11} strokeWidth={3} />
-              </span>
-            </div>
-          </button>
-
-          {/* Ollama section */}
-          <div className="mb-2 mt-5 flex items-center gap-2 px-1">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-fg/35">
-              {t("hfBrowser.destinationOllamaSection")}
-            </span>
-            <div className="h-px flex-1 bg-fg/8" />
-            {ollamaProviders.length > 0 && (
-              <span className="text-[10px] font-medium tabular-nums text-fg/40">
-                {ollamaProviders.length}
-              </span>
-            )}
-          </div>
-
-          {ollamaProviders.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-fg/10 bg-fg/2 px-4 py-5 text-center">
-              <Server size={18} className="mx-auto mb-2 text-fg/30" />
-              <p className="text-[12px] leading-snug text-fg/55">
-                {t("hfBrowser.destinationNoOllama")}
+        <div className="space-y-5">
+          {!isMobilePlatform && (
+            <div>
+              <p className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-fg/35">
+                {t("hfBrowser.destinationLocalSection")}
               </p>
+              <div className="overflow-hidden rounded-xl border border-fg/10 bg-fg/3">
+                <button
+                  onClick={() => {
+                    setSelectedOllamaProviderId(null);
+                    setShowOllamaProviderMenu(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center gap-3 px-4 py-3 text-left transition",
+                    !isOllamaMode ? "bg-accent/8" : "hover:bg-fg/5 active:bg-fg/8",
+                  )}
+                >
+                  <HardDrive
+                    size={16}
+                    className={cn("shrink-0", !isOllamaMode ? "text-accent" : "text-fg/45")}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-medium text-fg">
+                      {t("hfBrowser.destinationLocal")}
+                    </div>
+                    <div className="truncate text-[11.5px] text-fg/45">
+                      {t("hfBrowser.destinationLocalHint")}
+                    </div>
+                  </div>
+                  {!isOllamaMode && (
+                    <Check size={15} strokeWidth={2.5} className="shrink-0 text-accent" />
+                  )}
+                </button>
+              </div>
             </div>
-          ) : (
-            <div className="space-y-1.5">
-              {ollamaProviders.map((provider) => {
-                const isSelected = provider.id === selectedOllamaProviderId;
-                return (
-                  <button
-                    key={provider.id}
-                    onClick={() => {
-                      setSelectedOllamaProviderId(provider.id);
-                      setShowOllamaProviderMenu(false);
-                    }}
-                    className={cn(
-                      "group relative w-full overflow-hidden rounded-xl border px-3.5 py-3 text-left transition",
-                      isSelected
-                        ? "border-emerald-400/35 bg-emerald-500/8"
-                        : "border-fg/10 bg-fg/3 hover:border-fg/20 hover:bg-fg/5",
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span
-                        className={cn(
-                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
-                          isSelected
-                            ? "bg-emerald-500/15 text-emerald-300"
-                            : "bg-fg/8 text-fg/55",
-                        )}
-                      >
-                        <Server size={15} />
-                      </span>
+          )}
+
+          <div>
+            <div className="mb-2 flex items-center justify-between px-1">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-fg/35">
+                {t("hfBrowser.destinationOllamaSection")}
+              </p>
+              {ollamaProviders.length > 0 && (
+                <span className="text-[10px] font-medium tabular-nums text-fg/40">
+                  {ollamaProviders.length}
+                </span>
+              )}
+            </div>
+            {ollamaProviders.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-fg/10 bg-fg/2 px-4 py-5 text-center">
+                <img src={OllamaIcon} alt="Ollama" className="mx-auto mb-2 h-5 w-5 opacity-40" />
+                <p className="text-[12px] leading-snug text-fg/55">
+                  {t("hfBrowser.destinationNoOllama")}
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-fg/8 overflow-hidden rounded-xl border border-fg/10 bg-fg/3">
+                {ollamaProviders.map((provider) => {
+                  const isSelected = provider.id === selectedOllamaProviderId;
+                  return (
+                    <button
+                      key={provider.id}
+                      onClick={() => {
+                        setSelectedOllamaProviderId(provider.id);
+                        setShowOllamaProviderMenu(false);
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-3 px-4 py-3 text-left transition",
+                        isSelected ? "bg-accent/8" : "hover:bg-fg/5 active:bg-fg/8",
+                      )}
+                    >
+                      <img
+                        src={OllamaIcon}
+                        alt="Ollama"
+                        className={cn("h-4 w-4 shrink-0", !isSelected && "opacity-60")}
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-[13px] font-medium text-fg">
                           {provider.label}
@@ -4250,22 +4490,16 @@ export function HuggingFaceBrowserPage() {
                           </div>
                         )}
                       </div>
-                      <span
-                        className={cn(
-                          "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition",
-                          isSelected
-                            ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300"
-                            : "border-fg/15 text-transparent",
-                        )}
-                      >
-                        <Check size={11} strokeWidth={3} />
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+                      {isSelected && (
+                        <Check size={15} strokeWidth={2.5} className="shrink-0 text-accent" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       </BottomMenu>
 
       {returnTo && (
@@ -4284,6 +4518,10 @@ export function HuggingFaceBrowserPage() {
             <ArrowRight size={16} />
           </button>
         </div>
+      )}
+
+      {showHfTour && recData != null && !recLoading && (
+        <GuidedTour tour="hfBrowser" onDismiss={dismissHfTour} />
       )}
     </div>
   );
@@ -4549,9 +4787,7 @@ function AuthorView({
         <div className="flex flex-col items-center gap-2 py-16 text-center">
           <Server size={20} className="text-fg/25" />
           <p className="text-sm text-fg/55">
-            {debouncedSearch
-              ? "No models match your search."
-              : "No GGUF models from this author."}
+            {debouncedSearch ? "No models match your search." : "No GGUF models from this author."}
           </p>
         </div>
       )}

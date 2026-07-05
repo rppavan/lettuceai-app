@@ -143,7 +143,8 @@ impl ProviderAdapter for OpenRouterAdapter {
         out.insert("Authorization".into(), "Bearer <apiKey>".into());
         out.insert("Content-Type".into(), "application/json".into());
         out.insert("HTTP-Referer".into(), "https://www.lettuceai.app/".into()); // OpenRouter specific
-        out.insert("X-Title".into(), "Lettuce AI".into()); // OpenRouter specific
+        out.insert("X-OpenRouter-Title".into(), "LettuceAI".into()); // OpenRouter specific
+        out.insert("X-OpenRouter-Categories".into(), "roleplay".into());
         out
     }
 
@@ -156,7 +157,8 @@ impl ProviderAdapter for OpenRouterAdapter {
         out.insert("Authorization".into(), format!("Bearer {}", api_key));
         out.insert("Content-Type".into(), "application/json".into());
         out.insert("HTTP-Referer".into(), "https://www.lettuceai.app/".into());
-        out.insert("X-Title".into(), "Lettuce AI".into());
+        out.insert("X-OpenRouter-Title".into(), "LettuceAI".into());
+        out.insert("X-OpenRouter-Categories".into(), "roleplay".into());
 
         if let Some(extra) = extra {
             for (k, v) in extra.iter() {

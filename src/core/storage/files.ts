@@ -87,6 +87,7 @@ export const storageBridge = {
 
   // Embedding model download
   checkEmbeddingModel: () => invoke<boolean>("check_embedding_model"),
+  memoryEmbeddingsExist: () => invoke<boolean>("memory_embeddings_exist"),
   getEmbeddingModelInfo: () =>
     invoke<{
       installed: boolean;
@@ -131,6 +132,14 @@ export const storageBridge = {
     }>("embedding_download_progress", (event) => callback(event.payload)),
   cancelEmbeddingDownload: () => invoke("cancel_embedding_download") as Promise<void>,
   computeEmbedding: (text: string) => invoke<number[]>("compute_embedding", { text }),
+  llmMetricsList: (limit?: number) =>
+    invoke<unknown[]>("llm_metrics_list", { limit: limit ?? null }),
+  llmMetricsGet: (id: string) => invoke<unknown | null>("llm_metrics_get", { id }),
+  llmMetricsGetByMessage: (messageId: string) =>
+    invoke<unknown | null>("llm_metrics_get_by_message", { messageId }),
+  llmMetricsAttachMessage: (id: string, messageId: string) =>
+    invoke("llm_metrics_attach_message", { id, messageId }) as Promise<void>,
+  llmMetricsClear: () => invoke("llm_metrics_clear") as Promise<void>,
   initializeEmbeddingModel: () => invoke("initialize_embedding_model") as Promise<void>,
   clearEmbeddingRuntimeCache: () => invoke("clear_embedding_runtime_cache") as Promise<void>,
   runEmbeddingTest: () =>
@@ -480,6 +489,17 @@ export const storageBridge = {
     invoke("skip_dynamic_memory_cycle", { sessionId }) as Promise<void>,
   dynamicMemoryPendingApproval: (sessionId: string) =>
     invoke("dynamic_memory_pending_approval", { sessionId }) as Promise<number | null>,
+  dynamicMemoryCycleStatus: (sessionId: string) =>
+    invoke<{
+      runMode: "auto" | "askFirst" | "manual";
+      interval: number;
+      messagesSinceLastCycle: number;
+      messagesUntilNextCycle: number;
+      totalConversationMessages: number;
+      pendingApprovalCount: number | null;
+      skipped: boolean;
+      latestCycleStatus: string | null;
+    }>("dynamic_memory_cycle_status", { sessionId }),
   usageSummary: () =>
     invoke("storage_usage_summary") as Promise<{
       fileCount: number;
@@ -914,6 +934,17 @@ export const storageBridge = {
     invoke("group_chat_skip_dynamic_memory", { sessionId }) as Promise<void>,
   groupChatDynamicMemoryPendingApproval: (sessionId: string) =>
     invoke("group_chat_dynamic_memory_pending_approval", { sessionId }) as Promise<number | null>,
+  groupChatDynamicMemoryCycleStatus: (sessionId: string) =>
+    invoke<{
+      runMode: "auto" | "askFirst" | "manual";
+      interval: number;
+      messagesSinceLastCycle: number;
+      messagesUntilNextCycle: number;
+      totalConversationMessages: number;
+      pendingApprovalCount: number | null;
+      skipped: boolean;
+      latestCycleStatus: string | null;
+    }>("group_chat_dynamic_memory_cycle_status", { sessionId }),
 
   // Group Session Memory Operations
   groupSessionUpdateMemories: (

@@ -79,8 +79,36 @@ pub async fn verify_provider_api_key(
         }
     };
 
+    let is_custom = matches!(pid.0.as_str(), "custom" | "custom-anthropic");
+    let custom_adapter = if is_custom {
+        let credential = credential_id
+            .as_deref()
+            .and_then(|id| {
+                crate::storage_manager::providers::get_provider_credential(&app, id).ok()
+            })
+            .unwrap_or_else(|| crate::chat_manager::types::ProviderCredential {
+                id: "verify-temp".to_string(),
+                provider_id: pid.0.clone(),
+                label: String::new(),
+                api_key: None,
+                base_url: Some(base.clone()),
+                default_model: None,
+                headers: None,
+                config: None,
+            });
+        Some(crate::chat_manager::provider_adapter::adapter_for(
+            &credential,
+        ))
+    } else {
+        None
+    };
+
+    let verify_url = match &custom_adapter {
+        Some(adapter) => adapter.build_url(&base, "", &resolved_key, false),
+        None => build_verify_url(&pid, &base),
+    };
+
     let mut builder = Client::builder().timeout(Duration::from_secs(10));
-    let verify_url = build_verify_url(&pid, &base);
     if crate::tls::allow_invalid_tls_for_request(&app, Some(provider_id.as_str()), &verify_url) {
         builder = builder.danger_accept_invalid_certs(true);
     }
@@ -88,10 +116,30 @@ pub async fn verify_provider_api_key(
         .build()
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
-    let headers = build_headers(&pid, &resolved_key)?;
+    let headers = match &custom_adapter {
+        Some(adapter) => {
+            let mut map = reqwest::header::HeaderMap::new();
+            for (key, value) in adapter.headers(&resolved_key, None) {
+                if let (Ok(name), Ok(header_value)) = (
+                    reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(&value),
+                ) {
+                    map.insert(name, header_value);
+                }
+            }
+            map
+        }
+        None => build_headers(&pid, &resolved_key)?,
+    };
     let url = verify_url;
 
-    let response = match client.get(&url).headers(headers).send().await {
+    let probe_with_post = pid.0 == "zai" || is_custom;
+    let request = if probe_with_post {
+        client.post(&url).headers(headers).json(&Value::Null)
+    } else {
+        client.get(&url).headers(headers)
+    };
+    let response = match request.send().await {
         Ok(resp) => resp,
         Err(err) => {
             return Ok(VerifyProviderApiKeyResult {
@@ -107,14 +155,18 @@ pub async fn verify_provider_api_key(
     let status = response.status().as_u16();
     let json = response.json::<Value>().await.unwrap_or(Value::Null);
 
-    let valid = match status {
-        200 => true,
-        401 | 403 => false,
-        _ => json
-            .get("data")
-            .and_then(|d| d.as_array())
-            .map(|arr| !arr.is_empty())
-            .unwrap_or(status == 200),
+    let valid = if probe_with_post {
+        !matches!(status, 401 | 403)
+    } else {
+        match status {
+            200 => true,
+            401 | 403 => false,
+            _ => json
+                .get("data")
+                .and_then(|d| d.as_array())
+                .map(|arr| !arr.is_empty())
+                .unwrap_or(status == 200),
+        }
     };
 
     let error = if valid {

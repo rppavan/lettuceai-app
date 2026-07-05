@@ -1,28 +1,61 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Brain,
+  Check,
+  ChevronDown,
+  Cpu,
   FolderInput,
   FolderOpen,
+  Gauge,
   HardDrive,
   Layers,
+  ListOrdered,
   Loader2,
+  MemoryStick,
+  Pin,
   RotateCcw,
+  Scale,
+  Sparkles,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 
 import { BottomMenu, MenuButton, MenuButtonGroup, MenuDivider } from "../../components/BottomMenu";
+import { GuidedTour, useGuidedTour } from "../../components/GuidedTour";
+import { Switch } from "../../components/Switch";
 
-import { readSettings, saveAdvancedSettings } from "../../../core/storage/repo";
+import {
+  addOrUpdateModel,
+  readSettings,
+  saveAdvancedModelSettings,
+  saveAdvancedSettings,
+} from "../../../core/storage/repo";
 import { useI18n } from "../../../core/i18n/context";
-import { cn } from "../../design-tokens";
+import { cn, interactive } from "../../design-tokens";
 import { toast } from "../../components/toast";
 import { NumberInput } from "../../components/NumberInput";
 
 type RuntimeDefaults = {
   llamaDefaultContextLength: number | null;
   llamaDefaultKvCacheType: "auto" | "f16" | "q8_0" | "q4_0";
+  llamaMultiGpuEnabled: boolean | null;
+  llamaGpuDeviceIds: number[] | null;
+  llamaGpuDistributionMode: "balanced" | "proportional" | "priority" | "manual" | null;
+  llamaKvPlacement: "auto" | "split" | "systemRam" | "pin" | null;
+  llamaMainGpu: number | null;
+  llamaPriorityVramLimitBytes: number | null;
+};
+
+type LlamaGpuDevice = {
+  index: number;
+  name: string;
+  description: string;
+  backend: string;
+  memoryTotal: number;
+  memoryFree: number;
+  deviceType: string;
 };
 
 type ModelDirKind = "llm";
@@ -80,12 +113,43 @@ function SettingRow({
 const controlClassName =
   "rounded-xl border border-fg/10 bg-surface-el/20 px-3 py-2 text-sm text-fg transition hover:bg-surface-el/30 focus:border-fg/25 focus:outline-none";
 
+function SelectTrigger({
+  label,
+  onClick,
+  className,
+}: {
+  label: string;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        controlClassName,
+        "flex shrink-0 items-center justify-between gap-2 text-left",
+        className,
+      )}
+    >
+      <span className="truncate">{label}</span>
+      <ChevronDown className="h-4 w-4 shrink-0 text-fg/40" />
+    </button>
+  );
+}
+
 export function LocalRuntimeDefaultsPage() {
   const { t } = useI18n();
   const [defaults, setDefaults] = useState<RuntimeDefaults | null>(null);
   const [modelsDir, setModelsDir] = useState<LlmModelsDirInfo | null>(null);
+  const [gpuDevices, setGpuDevices] = useState<LlamaGpuDevice[]>([]);
   const [pending, setPending] = useState<{ kind: ModelDirKind; dir: string } | null>(null);
   const [movingDir, setMovingDir] = useState(false);
+  const [openMenu, setOpenMenu] = useState<"distribution" | "kvCache" | "pinnedGpu" | null>(null);
+  const [reconfigureKind, setReconfigureKind] = useState<"multi" | "single" | null>(null);
+  const [reconfigureCount, setReconfigureCount] = useState(0);
+  const [reconfiguring, setReconfiguring] = useState(false);
+  const { shouldShow: showTour, dismiss: dismissTour } = useGuidedTour("runtimeDefaults");
 
   const refreshModelsDir = useCallback(async () => {
     try {
@@ -161,12 +225,22 @@ export function LocalRuntimeDefaultsPage() {
     readSettings()
       .then((settings) => {
         const advanced = settings.advancedSettings ?? {};
+        const advancedModel = settings.advancedModelSettings ?? {};
         setDefaults({
           llamaDefaultContextLength: advanced.llamaDefaultContextLength ?? null,
           llamaDefaultKvCacheType: advanced.llamaDefaultKvCacheType ?? "auto",
+          llamaMultiGpuEnabled: advancedModel.llamaMultiGpuEnabled ?? null,
+          llamaGpuDeviceIds: advancedModel.llamaGpuDeviceIds ?? null,
+          llamaGpuDistributionMode: advancedModel.llamaGpuDistributionMode ?? null,
+          llamaKvPlacement: advancedModel.llamaKvPlacement ?? null,
+          llamaMainGpu: advancedModel.llamaMainGpu ?? null,
+          llamaPriorityVramLimitBytes: advancedModel.llamaPriorityVramLimitBytes ?? null,
         });
       })
       .catch(() => {});
+    invoke<LlamaGpuDevice[]>("llamacpp_backend_devices")
+      .then(setGpuDevices)
+      .catch(() => setGpuDevices([]));
   }, [refreshModelsDir]);
 
   const persistDefaults = useCallback(
@@ -179,6 +253,18 @@ export function LocalRuntimeDefaultsPage() {
           llamaDefaultContextLength: next.llamaDefaultContextLength ?? undefined,
           llamaDefaultKvCacheType:
             next.llamaDefaultKvCacheType === "auto" ? undefined : next.llamaDefaultKvCacheType,
+        });
+        await saveAdvancedModelSettings({
+          ...(settings.advancedModelSettings ?? {}),
+          llamaMultiGpuEnabled: next.llamaMultiGpuEnabled === true ? true : undefined,
+          llamaGpuDeviceIds:
+            next.llamaGpuDeviceIds && next.llamaGpuDeviceIds.length > 0
+              ? next.llamaGpuDeviceIds
+              : undefined,
+          llamaGpuDistributionMode: next.llamaGpuDistributionMode ?? undefined,
+          llamaKvPlacement: next.llamaKvPlacement ?? undefined,
+          llamaMainGpu: next.llamaMainGpu ?? undefined,
+          llamaPriorityVramLimitBytes: next.llamaPriorityVramLimitBytes ?? undefined,
         });
       } catch (err) {
         toast.error(
@@ -249,11 +335,143 @@ export function LocalRuntimeDefaultsPage() {
     );
   }
 
+  const selectedGpuIds = defaults.llamaGpuDeviceIds ?? [];
+  const eligibleGpuDevices = gpuDevices.filter((device) => device.deviceType !== "IntegratedGpu");
+  const multiGpuAvailable = eligibleGpuDevices.length >= 2;
+  const selectedEligibleDevices = eligibleGpuDevices.filter((device) =>
+    selectedGpuIds.includes(device.index),
+  );
+  const distributionOptions: {
+    value: NonNullable<RuntimeDefaults["llamaGpuDistributionMode"]>;
+    label: string;
+    description: string;
+    icon: LucideIcon;
+  }[] = [
+    {
+      value: "balanced",
+      label: t("runtimeDefaults.llamaDistBalanced"),
+      description: t("runtimeDefaults.llamaDistBalancedDesc"),
+      icon: Scale,
+    },
+    {
+      value: "proportional",
+      label: t("runtimeDefaults.llamaDistProportional"),
+      description: t("runtimeDefaults.llamaDistProportionalDesc"),
+      icon: Gauge,
+    },
+    {
+      value: "priority",
+      label: t("runtimeDefaults.llamaDistPriority"),
+      description: t("runtimeDefaults.llamaDistPriorityDesc"),
+      icon: ListOrdered,
+    },
+  ];
+  const kvPlacementOptions: {
+    value: NonNullable<RuntimeDefaults["llamaKvPlacement"]>;
+    label: string;
+    description: string;
+    icon: LucideIcon;
+  }[] = [
+    {
+      value: "auto",
+      label: t("runtimeDefaults.llamaKvAuto"),
+      description: t("runtimeDefaults.llamaKvAutoDesc"),
+      icon: Sparkles,
+    },
+    {
+      value: "split",
+      label: t("runtimeDefaults.llamaKvSplit"),
+      description: t("runtimeDefaults.llamaKvSplitDesc"),
+      icon: Layers,
+    },
+    {
+      value: "systemRam",
+      label: t("runtimeDefaults.llamaKvSystemRam"),
+      description: t("runtimeDefaults.llamaKvSystemRamDesc"),
+      icon: MemoryStick,
+    },
+    {
+      value: "pin",
+      label: t("runtimeDefaults.llamaKvPin"),
+      description: t("runtimeDefaults.llamaKvPinDesc"),
+      icon: Pin,
+    },
+  ];
+  const currentDistribution = defaults?.llamaGpuDistributionMode ?? "balanced";
+  const currentKvPlacement = defaults?.llamaKvPlacement ?? "auto";
+  const distributionLabel =
+    distributionOptions.find((opt) => opt.value === currentDistribution)?.label ?? "";
+  const kvPlacementLabel =
+    kvPlacementOptions.find((opt) => opt.value === currentKvPlacement)?.label ?? "";
+  const pinnedGpuIndex = defaults?.llamaMainGpu ?? selectedEligibleDevices[0]?.index ?? 0;
+  const pinnedGpuDevice = selectedEligibleDevices.find((device) => device.index === pinnedGpuIndex);
+  const pinnedGpuLabel = pinnedGpuDevice
+    ? pinnedGpuDevice.description || pinnedGpuDevice.name || `GPU ${pinnedGpuDevice.index}`
+    : "";
+  const reconfigureGpuDevice =
+    gpuDevices.find((device) => device.index === pinnedGpuIndex) ?? pinnedGpuDevice;
+  const reconfigureGpuLabel = reconfigureGpuDevice
+    ? reconfigureGpuDevice.description ||
+      reconfigureGpuDevice.name ||
+      `GPU ${reconfigureGpuDevice.index}`
+    : `GPU ${pinnedGpuIndex}`;
+
+  const openReconfigureMenu = async (kind: "multi" | "single") => {
+    try {
+      const settings = await readSettings();
+      const count = settings.models.filter((model) => model.providerId === "llamacpp").length;
+      if (count === 0) return;
+      setReconfigureCount(count);
+      setReconfigureKind(kind);
+    } catch {}
+  };
+
+  const runReconfigure = async () => {
+    if (!reconfigureKind || reconfiguring) return;
+    setReconfiguring(true);
+    try {
+      const settings = await readSettings();
+      const localModels = settings.models.filter((model) => model.providerId === "llamacpp");
+      for (const model of localModels) {
+        await addOrUpdateModel({
+          ...model,
+          advancedModelSettings: {
+            ...(model.advancedModelSettings ?? {}),
+            llamaGpuLayers: null,
+            llamaMultiGpuEnabled: null,
+            llamaSingleGpuDeviceId: reconfigureKind === "single" ? pinnedGpuIndex : null,
+          },
+        });
+      }
+      toast.success(
+        t("runtimeDefaults.reconfigureDone"),
+        t("runtimeDefaults.reconfigureDoneBody", { count: localModels.length }),
+      );
+      setReconfigureKind(null);
+    } catch (err) {
+      toast.error(
+        t("runtimeDefaults.saveFailed"),
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      setReconfiguring(false);
+    }
+  };
+  const toggleGpuDevice = (index: number) => {
+    const nextIds = selectedGpuIds.includes(index)
+      ? selectedGpuIds.filter((id) => id !== index)
+      : [...selectedGpuIds, index].sort((a, b) => a - b);
+    void persistDefaults({
+      ...defaults,
+      llamaGpuDeviceIds: nextIds.length > 0 ? nextIds : null,
+    });
+  };
+
   return (
     <div className="flex min-h-screen flex-col">
       <main className="flex-1 px-4 pb-24 pt-4">
         <div className="mx-auto w-full max-w-5xl space-y-6">
-          <div className="space-y-4">
+          <div className="space-y-4" data-tour-id="runtime-defaults-storage">
             <SectionHeading label={t("runtimeDefaults.storageSection")} />
             <p className="px-1 text-xs text-fg/50">{t("runtimeDefaults.storageDescription")}</p>
 
@@ -262,7 +480,7 @@ export function LocalRuntimeDefaultsPage() {
             </div>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-4" data-tour-id="runtime-defaults-llama">
             <SectionHeading label={t("runtimeDefaults.llamaSection")} />
             <p className="px-1 text-xs text-fg/50">{t("runtimeDefaults.llamaDescription")}</p>
 
@@ -313,6 +531,196 @@ export function LocalRuntimeDefaultsPage() {
                 <option value="q4_0">Q4_0</option>
               </select>
             </SettingRow>
+
+            <div data-tour-id="runtime-defaults-multigpu">
+            <SettingRow
+              icon={<Cpu className="h-4 w-4 text-warning/80" />}
+              iconClassName="border-warning/30 bg-warning/10"
+              title={t("runtimeDefaults.llamaMultiGpuTitle")}
+              description={t("runtimeDefaults.llamaMultiGpuDescription")}
+            >
+              <Switch
+                checked={defaults.llamaMultiGpuEnabled === true && multiGpuAvailable}
+                disabled={!multiGpuAvailable}
+                onChange={(next) => {
+                  void persistDefaults({
+                    ...defaults,
+                    llamaMultiGpuEnabled: next ? true : null,
+                  });
+                  void openReconfigureMenu(next ? "multi" : "single");
+                }}
+                aria-label={t("runtimeDefaults.llamaMultiGpuTitle")}
+              />
+            </SettingRow>
+            </div>
+
+            {!multiGpuAvailable && (
+              <p className="-mt-1 px-1 text-[11px] text-fg/45">
+                {t("runtimeDefaults.llamaMultiGpuRequiresTwo")}
+              </p>
+            )}
+
+            {defaults.llamaMultiGpuEnabled === true && multiGpuAvailable && (
+              <div className="rounded-xl border border-fg/10 bg-fg/5 px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="rounded-lg border border-warning/30 bg-warning/10 p-1.5">
+                      <Cpu className="h-4 w-4 text-warning/80" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-sm font-medium text-fg">
+                        {t("runtimeDefaults.llamaGpuDevicesTitle")}
+                      </span>
+                      <p className="text-[11px] text-fg/45">
+                        {t("runtimeDefaults.llamaGpuDevicesDescription")}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {eligibleGpuDevices.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-fg/10 bg-fg/[0.03] px-3 py-4 text-center text-[13px] text-fg/45">
+                      {t("runtimeDefaults.llamaGpuNone")}
+                    </p>
+                  ) : (
+                    eligibleGpuDevices.map((device) => {
+                      const checked = selectedGpuIds.includes(device.index);
+                      return (
+                        <button
+                          key={device.index}
+                          type="button"
+                          role="checkbox"
+                          aria-checked={checked}
+                          onClick={() => toggleGpuDevice(device.index)}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left",
+                            interactive.transition.default,
+                            checked
+                              ? "border-accent/40 bg-accent/10"
+                              : "border-fg/10 bg-fg/[0.04] hover:border-fg/20 hover:bg-fg/[0.07]",
+                          )}
+                        >
+                          <div className="min-w-0">
+                            <span className="block truncate text-sm font-medium text-fg/85">
+                              {device.description || device.name || `GPU ${device.index}`}
+                            </span>
+                            <span className="block font-mono text-[11px] text-fg/40">
+                              #{device.index} · {device.backend} ·{" "}
+                              {t("runtimeDefaults.llamaGpuMemory", {
+                                free: (device.memoryFree / 1024 ** 3).toFixed(1),
+                                total: (device.memoryTotal / 1024 ** 3).toFixed(1),
+                              })}
+                            </span>
+                          </div>
+                          <span
+                            className={cn(
+                              "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
+                              checked ? "border-accent bg-accent text-black" : "border-fg/15",
+                            )}
+                          >
+                            {checked && <Check className="h-3.5 w-3.5" />}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+
+                {selectedGpuIds.length === 1 && (
+                  <p className="mt-3 text-[11px] text-warning/80">
+                    {t("runtimeDefaults.llamaGpuMinTwo")}
+                  </p>
+                )}
+
+                <div className="mt-4 space-y-3 border-t border-fg/10 pt-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className="block text-sm font-medium text-fg">
+                        {t("runtimeDefaults.llamaDistributionTitle")}
+                      </span>
+                      <p className="text-[11px] text-fg/45">
+                        {t("runtimeDefaults.llamaDistributionDescription")}
+                      </p>
+                    </div>
+                    <SelectTrigger
+                      label={distributionLabel}
+                      onClick={() => setOpenMenu("distribution")}
+                      className="w-56"
+                    />
+                  </div>
+
+                  {defaults.llamaGpuDistributionMode === "priority" && (
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="block text-sm font-medium text-fg">
+                          {t("runtimeDefaults.llamaPriorityVramTitle")}
+                        </span>
+                        <p className="text-[11px] text-fg/45">
+                          {t("runtimeDefaults.llamaPriorityVramDescription")}
+                        </p>
+                      </div>
+                      <div className="w-28 shrink-0">
+                        <NumberInput
+                          min={0}
+                          max={1024}
+                          step={0.5}
+                          value={
+                            defaults.llamaPriorityVramLimitBytes != null
+                              ? Number(
+                                  (defaults.llamaPriorityVramLimitBytes / 1024 ** 3).toFixed(2),
+                                )
+                              : null
+                          }
+                          onChange={(next) =>
+                            void persistDefaults({
+                              ...defaults,
+                              llamaPriorityVramLimitBytes:
+                                next === null || next <= 0 ? null : Math.round(next * 1024 ** 3),
+                            })
+                          }
+                          placeholder={t("common.labels.auto")}
+                          className={controlClassName}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className="block text-sm font-medium text-fg">
+                        {t("runtimeDefaults.llamaKvPlacementTitle")}
+                      </span>
+                      <p className="text-[11px] text-fg/45">
+                        {t("runtimeDefaults.llamaKvPlacementDescription")}
+                      </p>
+                    </div>
+                    <SelectTrigger
+                      label={kvPlacementLabel}
+                      onClick={() => setOpenMenu("kvCache")}
+                      className="w-56"
+                    />
+                  </div>
+
+                  {defaults.llamaKvPlacement === "pin" && selectedEligibleDevices.length > 0 && (
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-sm font-medium text-fg">
+                        {t("runtimeDefaults.llamaPinnedGpu")}
+                      </span>
+                      <SelectTrigger
+                        label={pinnedGpuLabel}
+                        onClick={() => setOpenMenu("pinnedGpu")}
+                        className="w-64"
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-[11px] text-fg/40">
+                    {t("runtimeDefaults.llamaManualPerModelNote")}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </main>
@@ -357,6 +765,133 @@ export function LocalRuntimeDefaultsPage() {
           />
         </MenuButtonGroup>
       </BottomMenu>
+
+      <BottomMenu
+        isOpen={openMenu === "distribution"}
+        onClose={() => setOpenMenu(null)}
+        title={t("runtimeDefaults.llamaDistributionTitle")}
+      >
+        <MenuButtonGroup>
+          {distributionOptions.map((option) => (
+            <MenuButton
+              key={option.value}
+              icon={option.icon}
+              title={option.label}
+              description={option.description}
+              rightElement={
+                currentDistribution === option.value ? (
+                  <Check className="h-4 w-4 text-accent" />
+                ) : undefined
+              }
+              onClick={() => {
+                if (defaults) {
+                  void persistDefaults({ ...defaults, llamaGpuDistributionMode: option.value });
+                }
+                setOpenMenu(null);
+              }}
+            />
+          ))}
+        </MenuButtonGroup>
+      </BottomMenu>
+
+      <BottomMenu
+        isOpen={openMenu === "kvCache"}
+        onClose={() => setOpenMenu(null)}
+        title={t("runtimeDefaults.llamaKvPlacementTitle")}
+      >
+        <MenuButtonGroup>
+          {kvPlacementOptions.map((option) => (
+            <MenuButton
+              key={option.value}
+              icon={option.icon}
+              title={option.label}
+              description={option.description}
+              rightElement={
+                currentKvPlacement === option.value ? (
+                  <Check className="h-4 w-4 text-accent" />
+                ) : undefined
+              }
+              onClick={() => {
+                if (defaults) {
+                  void persistDefaults({ ...defaults, llamaKvPlacement: option.value });
+                }
+                setOpenMenu(null);
+              }}
+            />
+          ))}
+        </MenuButtonGroup>
+      </BottomMenu>
+
+      <BottomMenu
+        isOpen={openMenu === "pinnedGpu"}
+        onClose={() => setOpenMenu(null)}
+        title={t("runtimeDefaults.llamaPinnedGpu")}
+      >
+        <MenuButtonGroup>
+          {selectedEligibleDevices.map((device) => (
+            <MenuButton
+              key={device.index}
+              icon={Cpu}
+              title={device.description || device.name || `GPU ${device.index}`}
+              description={t("runtimeDefaults.llamaGpuMemory", {
+                free: (device.memoryFree / 1024 ** 3).toFixed(1),
+                total: (device.memoryTotal / 1024 ** 3).toFixed(1),
+              })}
+              rightElement={
+                pinnedGpuIndex === device.index ? (
+                  <Check className="h-4 w-4 text-accent" />
+                ) : undefined
+              }
+              onClick={() => {
+                if (defaults) {
+                  void persistDefaults({ ...defaults, llamaMainGpu: device.index });
+                }
+                setOpenMenu(null);
+              }}
+            />
+          ))}
+        </MenuButtonGroup>
+      </BottomMenu>
+
+      <BottomMenu
+        isOpen={reconfigureKind !== null}
+        onClose={() => {
+          if (!reconfiguring) setReconfigureKind(null);
+        }}
+        title={t("runtimeDefaults.reconfigureTitle")}
+      >
+        <p className="mb-5 text-[12.5px] leading-relaxed text-fg/55">
+          {reconfigureKind === "single"
+            ? t("runtimeDefaults.reconfigureBodySingle", { gpu: reconfigureGpuLabel })
+            : t("runtimeDefaults.reconfigureBodyMulti")}
+        </p>
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => void runReconfigure()}
+            disabled={reconfiguring}
+            className={cn(
+              "flex w-full items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent/15 px-4 py-3 text-sm font-medium text-accent transition",
+              reconfiguring ? "cursor-not-allowed opacity-70" : "hover:bg-accent/25 active:scale-[0.99]",
+            )}
+          >
+            {reconfiguring && <Loader2 className="h-4 w-4 animate-spin" />}
+            {reconfiguring
+              ? t("runtimeDefaults.reconfigureRunning")
+              : t("runtimeDefaults.reconfigureConfirm", { count: reconfigureCount })}
+          </button>
+          <button
+            type="button"
+            onClick={() => setReconfigureKind(null)}
+            disabled={reconfiguring}
+            className="w-full rounded-xl border border-fg/10 bg-fg/4 px-4 py-3 text-sm font-medium text-fg/70 transition hover:border-fg/20 hover:text-fg disabled:opacity-50"
+          >
+            {t("runtimeDefaults.reconfigureSkip")}
+          </button>
+        </div>
+      </BottomMenu>
+
+      {showTour && <GuidedTour tour="runtimeDefaults" onDismiss={dismissTour} />}
     </div>
   );
 }

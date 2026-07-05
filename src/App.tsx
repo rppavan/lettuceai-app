@@ -19,6 +19,7 @@ import { ModelsPage } from "./ui/pages/settings/ModelsPage";
 import { EditModelPage } from "./ui/pages/settings/EditModelPage";
 import { HuggingFaceBrowserPage } from "./ui/pages/settings/HuggingFaceBrowserPage";
 import { InstalledModelsPage } from "./ui/pages/settings/InstalledModelsPage";
+import PerformancePage from "./ui/pages/settings/PerformancePage";
 import { LocalRuntimeDefaultsPage } from "./ui/pages/settings/LocalRuntimeDefaultsPage";
 import { ImageGenerationPage } from "./ui/pages/settings/ImageGenerationPage";
 import { SystemPromptsPage } from "./ui/pages/settings/SystemPromptsPage";
@@ -119,14 +120,8 @@ import { V1UpgradeToast } from "./ui/components/V1UpgradeToast";
 import { V2UpgradeToast } from "./ui/components/V2UpgradeToast";
 import { V3UpgradeToast } from "./ui/components/V3UpgradeToast";
 import { ConfirmBottomMenuHost } from "./ui/components/ConfirmBottomMenu";
-import {
-  getLastSeenAppVersion,
-  isOnboardingCompleted,
-} from "./core/storage/appState";
-import {
-  WhatsNewDrawer,
-  WHATS_NEW_OPEN_EVENT,
-} from "./ui/pages/whats-new/WhatsNewPage";
+import { getLastSeenAppVersion, isOnboardingCompleted } from "./core/storage/appState";
+import { WhatsNewDrawer, WHATS_NEW_OPEN_EVENT } from "./ui/pages/whats-new/WhatsNewPage";
 import { TopNav, BottomNav, TitleBar, WindowResizeHandles } from "./ui/components/App";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, UnlistenFn } from "@tauri-apps/api/event";
@@ -277,7 +272,10 @@ type LlamaModelLoadProgressEvent = {
   stage?: number | null;
   status?: number | null;
   progress?: number | null;
+  gpus?: { label?: string | null; percent?: number | null }[] | null;
 };
+
+const LLAMA_MODEL_LOAD_TOAST_ID = "llama-model-load";
 
 const LLAMA_MODEL_LOAD_STATUS_LOADING = 0;
 const LLAMA_MODEL_LOAD_STATUS_RETRYING = 1;
@@ -472,11 +470,11 @@ function App() {
             return;
           }
           if (
-            kind === "modelLoad"
-            && typeof title === "string"
-            && typeof subtitle === "string"
-            && typeof modelName === "string"
-            && typeof progress === "number"
+            kind === "modelLoad" &&
+            typeof title === "string" &&
+            typeof subtitle === "string" &&
+            typeof modelName === "string" &&
+            typeof progress === "number"
           ) {
             toast.modelLoad({
               id: typeof id === "string" || typeof id === "number" ? id : undefined,
@@ -519,74 +517,60 @@ function App() {
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
+    const handleLlamaLoadProgress = (payload: LlamaModelLoadProgressEvent | null | undefined) => {
+      if (!payload || typeof payload !== "object") {
+        return;
+      }
+
+      const status =
+        typeof payload.status === "number" && Number.isFinite(payload.status)
+          ? payload.status
+          : LLAMA_MODEL_LOAD_STATUS_LOADING;
+      if (status === LLAMA_MODEL_LOAD_STATUS_LOADED || status === LLAMA_MODEL_LOAD_STATUS_FAILED) {
+        toast.dismiss(LLAMA_MODEL_LOAD_TOAST_ID);
+        return;
+      }
+
+      const modelName =
+        typeof payload.modelName === "string" && payload.modelName.trim()
+          ? payload.modelName
+          : "Local model";
+      const progress =
+        typeof payload.progress === "number" && Number.isFinite(payload.progress)
+          ? payload.progress
+          : 0;
+      const stage =
+        typeof payload.stage === "number" && Number.isFinite(payload.stage)
+          ? payload.stage
+          : undefined;
+      const copy = resolveLlamaModelLoadCopy(stage);
+      const gpus = Array.isArray(payload.gpus)
+        ? payload.gpus.flatMap((entry) => {
+            if (!entry || typeof entry !== "object") return [];
+            const label =
+              typeof entry.label === "string" && entry.label.trim() ? entry.label : null;
+            const percent =
+              typeof entry.percent === "number" && Number.isFinite(entry.percent)
+                ? Math.min(100, Math.max(0, entry.percent))
+                : null;
+            return label !== null && percent !== null ? [{ label, percent }] : [];
+          })
+        : undefined;
+
+      toast.modelLoad({
+        id: LLAMA_MODEL_LOAD_TOAST_ID,
+        title: copy.title,
+        subtitle:
+          status === LLAMA_MODEL_LOAD_STATUS_RETRYING ? "Switching to CPU fallback" : copy.subtitle,
+        modelName,
+        progress,
+        gpus: gpus && gpus.length > 0 ? gpus : undefined,
+      });
+    };
     (async () => {
       try {
-        unlisten = await listen<LlamaModelLoadProgressEvent>(
-          "llama-model-load-progress",
-          (event) => {
-            const payload = event.payload;
-            if (!payload || typeof payload !== "object") {
-              return;
-            }
-
-            const requestId =
-              typeof payload.requestId === "string" && payload.requestId.trim()
-                ? payload.requestId
-                : null;
-            const modelPath =
-              typeof payload.modelPath === "string" && payload.modelPath.trim()
-                ? payload.modelPath
-                : null;
-            const requestToastId = requestId;
-            const pathToastId = modelPath ? `llama-model-load:${modelPath}` : null;
-            const toastId = pathToastId ?? requestToastId;
-            if (!toastId) {
-              return;
-            }
-
-            const status =
-              typeof payload.status === "number" && Number.isFinite(payload.status)
-                ? payload.status
-                : LLAMA_MODEL_LOAD_STATUS_LOADING;
-            if (
-              status === LLAMA_MODEL_LOAD_STATUS_LOADED ||
-              status === LLAMA_MODEL_LOAD_STATUS_FAILED
-            ) {
-              toast.dismiss(toastId);
-              if (requestToastId && requestToastId !== toastId) {
-                toast.dismiss(requestToastId);
-              }
-              if (pathToastId && pathToastId !== toastId) {
-                toast.dismiss(pathToastId);
-              }
-              return;
-            }
-
-            const modelName =
-              typeof payload.modelName === "string" && payload.modelName.trim()
-                ? payload.modelName
-                : "Local model";
-            const progress =
-              typeof payload.progress === "number" && Number.isFinite(payload.progress)
-                ? payload.progress
-                : 0;
-            const stage =
-              typeof payload.stage === "number" && Number.isFinite(payload.stage)
-                ? payload.stage
-                : undefined;
-            const copy = resolveLlamaModelLoadCopy(stage);
-
-            toast.modelLoad({
-              id: toastId,
-              title: copy.title,
-              subtitle:
-                status === LLAMA_MODEL_LOAD_STATUS_RETRYING
-                  ? "Switching to CPU fallback"
-                  : copy.subtitle,
-              modelName,
-              progress,
-            });
-          },
+        unlisten = await listen<LlamaModelLoadProgressEvent>("llama-model-load-progress", (event) =>
+          handleLlamaLoadProgress(event.payload),
         );
       } catch (err) {
         console.error("Failed to attach llama model load progress listener:", err);
@@ -618,10 +602,7 @@ function App() {
               }}
             />
             <ConfirmBottomMenuHost />
-            <WhatsNewDrawer
-              isOpen={whatsNewOpen}
-              onClose={() => setWhatsNewOpen(false)}
-            />
+            <WhatsNewDrawer isOpen={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
             <DownloadQueueProvider>
               <AppUpdateNotifier />
               <AppContent />
@@ -899,8 +880,7 @@ function AppContent() {
     !isDiscoverySubRoute;
 
   const [showCreateMenu, setShowCreateMenu] = useState(false);
-  const { shouldShow: showGuidedTour, dismiss: dismissGuidedTour } =
-    useGuidedTour("appShell");
+  const { shouldShow: showGuidedTour, dismiss: dismissGuidedTour } = useGuidedTour("appShell");
 
   useEffect(() => {
     const globalWindow = window as Window & {
@@ -1039,9 +1019,8 @@ function AppContent() {
                 : isCharacterEditRoute
                   ? () => navigate("/", { replace: true })
                   : isSettingRoute &&
-                      isLgViewport &&
                       (location.pathname === "/settings" ||
-                        location.pathname === "/settings/about")
+                        (isLgViewport && /^\/settings\/[^/]+$/.test(location.pathname)))
                     ? () => {
                         const target = preSettingsPathRef.current || "/";
                         navigate(target.startsWith("/settings") ? "/" : target);
@@ -1072,26 +1051,26 @@ function AppContent() {
             location.pathname === "/welcome"
               ? "overflow-hidden px-0 pt-0 pb-0"
               : isOnboardingRoute
-              ? `overflow-y-auto ${isDesktop ? "" : "px-0 pt-5 pb-5"}`
-              : isChatDetailRoute
-                ? "overflow-hidden px-0 pt-0 pb-0"
-                : isCreateRoute
+                ? `overflow-y-auto ${isDesktop ? "" : "px-0 pt-5 pb-5"}`
+                : isChatDetailRoute
                   ? "overflow-hidden px-0 pt-0 pb-0"
-                  : isSearchRoute
+                  : isCreateRoute
                     ? "overflow-hidden px-0 pt-0 pb-0"
-                    : isLogsRoute
+                    : isSearchRoute
                       ? "overflow-hidden px-0 pt-0 pb-0"
-                      : isLorebookEditorRoute
+                      : isLogsRoute
                         ? "overflow-hidden px-0 pt-0 pb-0"
-                        : isPersonaEditRoute
-                        ? "overflow-hidden px-0 pt-0 pb-0"
-                        : isTemplateEditorRoute
+                        : isLorebookEditorRoute
                           ? "overflow-hidden px-0 pt-0 pb-0"
-                          : isDiscoveryRoute
+                          : isPersonaEditRoute
                             ? "overflow-hidden px-0 pt-0 pb-0"
-                            : isSettingRoute
-                              ? "overflow-y-auto px-4 pt-4 pb-6 lg:overflow-hidden lg:p-0 lg:mt-(--topnav-h,72px)"
-                              : `overflow-y-auto px-4 pt-4 ${showBottomNav ? "pb-[calc(96px+env(safe-area-inset-bottom))]" : "pb-6"}`
+                            : isTemplateEditorRoute
+                              ? "overflow-hidden px-0 pt-0 pb-0"
+                              : isDiscoveryRoute
+                                ? "overflow-hidden px-0 pt-0 pb-0"
+                                : isSettingRoute
+                                  ? "overflow-y-auto px-4 pt-4 pb-6 lg:overflow-hidden lg:p-0 lg:mt-(--topnav-h,72px)"
+                                  : `overflow-y-auto px-4 pt-4 ${showBottomNav ? "pb-[calc(96px+env(safe-area-inset-bottom))]" : "pb-6"}`
           }`}
         >
           <div
@@ -1145,87 +1124,88 @@ function AppContent() {
                 path="/library/lorebooks/:lorebookId/preview"
                 element={<LorebookTriggerPreviewPage />}
               />
-              <Route
-                path="/library/lorebook/generate"
-                element={<LorebookGeneratorFlowPage />}
-              />
+              <Route path="/library/lorebook/generate" element={<LorebookGeneratorFlowPage />} />
               <Route element={<SettingsLayout />}>
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/settings/providers" element={<ProvidersPage />} />
-              <Route path="/settings/models" element={<ModelsPage />} />
-              <Route path="/settings/models/new" element={<EditModelPage />} />
-              <Route path="/settings/models/browse" element={<HuggingFaceBrowserPage />} />
-              <Route path="/settings/models/installed" element={<InstalledModelsPage />} />
-              <Route
-                path="/settings/models/runtime-defaults"
-                element={<LocalRuntimeDefaultsPage />}
-              />
-              <Route path="/settings/models/:modelId" element={<EditModelPage />} />
-              <Route path="/settings/voices" element={<VoicesPage />} />
-              <Route
-                path="/settings/voices/kokoro/:providerId"
-                element={<KokoroStudioPage />}
-              />
-              <Route
-                path="/settings/voices/kokoro/:providerId/blend"
-                element={<KokoroBlendEditorPage />}
-              />
-              <Route
-                path="/settings/voices/kokoro/:providerId/blend/:blendId"
-                element={<KokoroBlendEditorPage />}
-              />
-              <Route path="/settings/image-generation" element={<ImageGenerationPage />} />
-              <Route path="/settings/prompts" element={<SystemPromptsPage />} />
-              <Route path="/settings/prompts/new" element={<EditPromptTemplate />} />
-              <Route path="/settings/prompts/:id" element={<EditPromptTemplate />} />
-              <Route path="/settings/security" element={<SecurityPage />} />
-              <Route path="/settings/usage" element={<UsagePage />} />
-              <Route path="/settings/usage/activity" element={<UsageActivityPage />} />
-              <Route path="/settings/customization" element={<CustomizationPage />} />
-              <Route path="/settings/speech-recognition" element={<SpeechRecognitionPage />} />
-              <Route path="/settings/customization/colors" element={<ColorCustomizationPage />} />
-              <Route path="/settings/customization/chat" element={<ChatAppearancePage />} />
-              <Route path="/settings/logs" element={<LogsPage />} />
-              <Route path="/settings/about" element={<AboutPage />} />
-              <Route path="/settings/advanced" element={<AdvancedPage />} />
-              <Route path="/settings/advanced/memory" element={<DynamicMemoryPage />} />
-              <Route path="/settings/advanced/companions" element={<CompanionsHubPage />} />
-              <Route path="/settings/advanced/creation-helper" element={<AICreationHelperPage />} />
-              <Route path="/settings/advanced/help-me-reply" element={<HelpMeReplyPage />} />
-              <Route path="/settings/advanced/lorebooks" element={<LorebooksPage />} />
-              <Route
-                path="/settings/advanced/companion-soul-writer"
-                element={<CompanionsHubPage />}
-              />
-              <Route path="/settings/advanced/host-api" element={<HostApiPage />} />
-              <Route path="/settings/embedding-download" element={<EmbeddingDownloadPage />} />
-              <Route path="/settings/companion-download" element={<CompanionDownloadPage />} />
-              <Route
-                path="/settings/companion-download-queue"
-                element={<CompanionDownloadQueuePage />}
-              />
-              <Route path="/settings/embedding-test" element={<EmbeddingTestPage />} />
-              <Route path="/settings/developer/kokoro-test" element={<KokoroTestPage />} />
-              <Route path="/settings/changelog" element={<ChangelogPage />} />
-              <Route path="/settings/help" element={<HelpPage />} />
-              <Route path="/settings/developer" element={<DeveloperPage />} />
-              <Route path="/settings/reset" element={<ResetPage />} />
-              <Route path="/settings/backup" element={<BackupRestorePage />} />
-              <Route path="/settings/sync" element={<SyncPage />} />
-              <Route path="/settings/engine/:credentialId" element={<EngineHomePage />} />
-              <Route path="/settings/engine/:credentialId/setup" element={<EngineSetupWizard />} />
-              <Route
-                path="/settings/engine/:credentialId/providers"
-                element={<EngineProvidersConfigPage />}
-              />
-              <Route
-                path="/settings/engine/:credentialId/settings"
-                element={<EngineSettingsConfigPage />}
-              />
-              <Route
-                path="/settings/engine/:credentialId/character/new"
-                element={<EngineCharacterCreate />}
-              />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/settings/providers" element={<ProvidersPage />} />
+                <Route path="/settings/models" element={<ModelsPage />} />
+                <Route path="/settings/models/new" element={<EditModelPage />} />
+                <Route path="/settings/models/browse" element={<HuggingFaceBrowserPage />} />
+                <Route path="/settings/models/installed" element={<InstalledModelsPage />} />
+                <Route
+                  path="/settings/models/runtime-defaults"
+                  element={<LocalRuntimeDefaultsPage />}
+                />
+                <Route path="/settings/models/:modelId" element={<EditModelPage />} />
+                <Route path="/settings/voices" element={<VoicesPage />} />
+                <Route path="/settings/voices/kokoro/:providerId" element={<KokoroStudioPage />} />
+                <Route
+                  path="/settings/voices/kokoro/:providerId/blend"
+                  element={<KokoroBlendEditorPage />}
+                />
+                <Route
+                  path="/settings/voices/kokoro/:providerId/blend/:blendId"
+                  element={<KokoroBlendEditorPage />}
+                />
+                <Route path="/settings/image-generation" element={<ImageGenerationPage />} />
+                <Route path="/settings/prompts" element={<SystemPromptsPage />} />
+                <Route path="/settings/prompts/new" element={<EditPromptTemplate />} />
+                <Route path="/settings/prompts/:id" element={<EditPromptTemplate />} />
+                <Route path="/settings/security" element={<SecurityPage />} />
+                <Route path="/settings/usage" element={<UsagePage />} />
+                <Route path="/settings/usage/activity" element={<UsageActivityPage />} />
+                <Route path="/settings/performance" element={<PerformancePage />} />
+                <Route path="/settings/customization" element={<CustomizationPage />} />
+                <Route path="/settings/speech-recognition" element={<SpeechRecognitionPage />} />
+                <Route path="/settings/customization/colors" element={<ColorCustomizationPage />} />
+                <Route path="/settings/customization/chat" element={<ChatAppearancePage />} />
+                <Route path="/settings/logs" element={<LogsPage />} />
+                <Route path="/settings/about" element={<AboutPage />} />
+                <Route path="/settings/advanced" element={<AdvancedPage />} />
+                <Route path="/settings/advanced/memory" element={<DynamicMemoryPage />} />
+                <Route path="/settings/advanced/companions" element={<CompanionsHubPage />} />
+                <Route
+                  path="/settings/advanced/creation-helper"
+                  element={<AICreationHelperPage />}
+                />
+                <Route path="/settings/advanced/help-me-reply" element={<HelpMeReplyPage />} />
+                <Route path="/settings/advanced/lorebooks" element={<LorebooksPage />} />
+                <Route
+                  path="/settings/advanced/companion-soul-writer"
+                  element={<CompanionsHubPage />}
+                />
+                <Route path="/settings/advanced/host-api" element={<HostApiPage />} />
+                <Route path="/settings/embedding-download" element={<EmbeddingDownloadPage />} />
+                <Route path="/settings/companion-download" element={<CompanionDownloadPage />} />
+                <Route
+                  path="/settings/companion-download-queue"
+                  element={<CompanionDownloadQueuePage />}
+                />
+                <Route path="/settings/embedding-test" element={<EmbeddingTestPage />} />
+                <Route path="/settings/developer/kokoro-test" element={<KokoroTestPage />} />
+                <Route path="/settings/changelog" element={<ChangelogPage />} />
+                <Route path="/settings/help" element={<HelpPage />} />
+                <Route path="/settings/developer" element={<DeveloperPage />} />
+                <Route path="/settings/reset" element={<ResetPage />} />
+                <Route path="/settings/backup" element={<BackupRestorePage />} />
+                <Route path="/settings/sync" element={<SyncPage />} />
+                <Route path="/settings/engine/:credentialId" element={<EngineHomePage />} />
+                <Route
+                  path="/settings/engine/:credentialId/setup"
+                  element={<EngineSetupWizard />}
+                />
+                <Route
+                  path="/settings/engine/:credentialId/providers"
+                  element={<EngineProvidersConfigPage />}
+                />
+                <Route
+                  path="/settings/engine/:credentialId/settings"
+                  element={<EngineSettingsConfigPage />}
+                />
+                <Route
+                  path="/settings/engine/:credentialId/character/new"
+                  element={<EngineCharacterCreate />}
+                />
               </Route>
               <Route path="/engine-chat/:credentialId/:slug" element={<EngineChatPage />} />
               <Route path="/chat" element={<ChatPage />} />
@@ -1354,7 +1334,7 @@ function OnboardingCheck() {
         if (lastSeen !== currentVersion) {
           window.dispatchEvent(new Event(WHATS_NEW_OPEN_EVENT));
         }
-      } catch { }
+      } catch {}
 
       if (!cancelled) setIsChecking(false);
     };

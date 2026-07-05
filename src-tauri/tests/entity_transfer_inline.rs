@@ -1,7 +1,7 @@
 //! Gathered from inline tests in src/storage_manager/entity_transfer/mod.rs.
 
 use lettuceai_lib::storage_manager::entity_transfer::{
-    normalize_uec_for_read, parse_uec_character, stringify_v2_uec,
+    convert_export_to_uec, normalize_uec_for_read, parse_uec_character, stringify_v2_uec,
     UEC_SCHEMA_VERSION as SCHEMA_VERSION, UEC_SCHEMA_VERSION_V2 as SCHEMA_VERSION_V2,
 };
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
@@ -351,4 +351,185 @@ fn parse_uec_character_expands_v2_scene_variants_into_scenes() {
         package.character.default_scene_id.as_deref(),
         Some("scene-3")
     );
+}
+
+#[test]
+fn convert_export_to_uec_keeps_companion_data_in_app_specific_settings() {
+    let legacy = json!({
+        "version": 1,
+        "exportedAt": 1234,
+        "character": {
+            "name": "Aster Vale",
+            "description": "Long-running companion.",
+            "definition": "Aster keeps continuity across chats.",
+            "rules": [],
+            "scenes": [],
+            "defaultSceneId": null,
+            "defaultModelId": null,
+            "mode": "companion",
+            "companion": {
+                "soul": {
+                    "essence": "Wry, loyal, hard to impress.",
+                    "traits": "Observant and careful.",
+                    "baselineAffect": {
+                        "warmth": 0.6,
+                        "trust": 0.4,
+                        "calm": 0.5,
+                        "vulnerability": 0.2,
+                        "longing": 0.1,
+                        "hurt": 0.0,
+                        "tension": 0.05,
+                        "irritation": 0.0,
+                        "affectionIntensity": 0.3,
+                        "reassuranceNeed": 0.15
+                    },
+                    "regulationStyle": {
+                        "suppression": 0.3,
+                        "volatility": 0.2,
+                        "recoverySpeed": 0.6,
+                        "conflictAvoidance": 0.4,
+                        "reassuranceSeeking": 0.2,
+                        "protestBehavior": 0.1,
+                        "emotionalTransparency": 0.5,
+                        "attachmentActivation": 0.4,
+                        "pride": 0.3
+                    }
+                },
+                "relationshipDefaults": {
+                    "closeness": 0.2,
+                    "trust": 0.3,
+                    "affection": 0.15,
+                    "tension": 0.0
+                },
+                "memory": {
+                    "enabled": true,
+                    "retrievalLimit": 8,
+                    "maxEntries": 120,
+                    "prioritizeRelationship": true,
+                    "prioritizeEpisodic": true,
+                    "useEmotionalSnapshots": true,
+                    "sharedAcrossSessions": true
+                },
+                "prompting": {
+                    "promptTemplateId": "prompt-companion",
+                    "styleNotes": "Keep the edge."
+                },
+                "timeAwareness": true
+            },
+            "companionScheduledNotes": [
+                {
+                    "id": "note-old",
+                    "characterId": "char-old",
+                    "label": "Anniversary",
+                    "content": "Remember the bridge conversation.",
+                    "availableAt": 2000,
+                    "recurrence": "yearly",
+                    "enabled": true,
+                    "createdAt": 1000,
+                    "updatedAt": 1500
+                }
+            ],
+            "companionSharedMemory": {
+                "memories": [
+                    { "id": "mem-1", "text": "Aster and the user chose a meeting place." }
+                ],
+                "memorySummary": "They have one shared plan.",
+                "memorySummaryTokenCount": 7,
+                "memoryToolEvents": [],
+                "createdAt": 1000,
+                "updatedAt": 1500
+            },
+            "memoryType": "dynamic",
+            "activeLorebookIds": [],
+            "lorebooks": [],
+            "promptTemplateId": null,
+            "systemPrompt": null,
+            "voiceConfig": null,
+            "voiceAutoplay": false,
+            "disableAvatarGradient": false,
+            "avatarCrop": null,
+            "bannerCrop": null,
+            "customGradientEnabled": false,
+            "customGradientColors": null,
+            "customTextColor": null,
+            "customTextSecondary": null,
+            "chatTemplates": [],
+            "defaultChatTemplateId": null
+        },
+        "avatarData": null,
+        "backgroundImageData": null
+    });
+
+    let uec: JsonValue = serde_json::from_str(
+        &convert_export_to_uec(legacy.to_string()).expect("legacy export converts to UEC"),
+    )
+    .expect("UEC JSON");
+
+    let payload = uec
+        .get("payload")
+        .and_then(JsonValue::as_object)
+        .expect("payload object");
+    assert!(payload.get("companion").is_none());
+    assert!(payload.get("companionScheduledNotes").is_none());
+    assert!(payload.get("companionSharedMemory").is_none());
+
+    let app_specific = uec
+        .get("app_specific_settings")
+        .and_then(JsonValue::as_object)
+        .expect("app-specific settings");
+    assert_eq!(
+        app_specific
+            .get("interaction_mode")
+            .and_then(JsonValue::as_str),
+        Some("companion")
+    );
+    assert_eq!(
+        app_specific
+            .get("companion")
+            .and_then(|value| value.get("soul"))
+            .and_then(|value| value.get("essence"))
+            .and_then(JsonValue::as_str),
+        Some("Wry, loyal, hard to impress.")
+    );
+    assert_eq!(
+        app_specific
+            .get("companion")
+            .and_then(|value| value.get("prompting"))
+            .and_then(|value| value.get("promptTemplateId"))
+            .and_then(JsonValue::as_str),
+        Some("prompt-companion")
+    );
+    assert_eq!(
+        app_specific
+            .get("companionScheduledNotes")
+            .and_then(JsonValue::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        app_specific
+            .get("companionSharedMemory")
+            .and_then(|value| value.get("memorySummary"))
+            .and_then(JsonValue::as_str),
+        Some("They have one shared plan.")
+    );
+}
+
+#[test]
+fn parse_uec_character_prefers_interaction_mode_app_setting() {
+    let card = json!({
+        "schema": { "name": "UEC", "version": SCHEMA_VERSION },
+        "kind": "character",
+        "payload": {
+            "id": "char-v1",
+            "name": "Aster Vale"
+        },
+        "app_specific_settings": {
+            "interaction_mode": "companion",
+            "mode": "roleplay"
+        }
+    });
+
+    let package = parse_uec_character(&card).expect("character should parse");
+    assert_eq!(package.character.mode.as_deref(), Some("companion"));
 }

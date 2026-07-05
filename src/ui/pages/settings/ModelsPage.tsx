@@ -32,6 +32,7 @@ import {
 } from "../../../core/storage/modelTransfer";
 import { addOrUpdateModel } from "../../../core/storage/repo";
 import { getModelUsage, describeUsage } from "../../../core/storage/usage";
+import { getPlatform } from "../../../core/utils/platform";
 import type { Model } from "../../../core/storage/schemas";
 import type { ModelExportFormat } from "../../components/ModelExportMenu";
 
@@ -120,6 +121,13 @@ export function ModelsPage() {
     handleDelete,
   } = useModelsController();
 
+  const showBrowseOnMobile = useMemo(
+    () =>
+      getPlatform().type === "mobile" &&
+      providers.some((provider) => provider.providerId === "ollama"),
+    [providers],
+  );
+
   const EmptyState = ({ onCreate }: { onCreate: () => void }) => (
     <div className="flex h-64 flex-col items-center justify-center">
       <EthernetPort className="mb-3 h-12 w-12 text-fg/20" />
@@ -134,7 +142,10 @@ export function ModelsPage() {
         </button>
         <button
           onClick={() => navigate(Routes.settingsModelsBrowse)}
-          className="hidden items-center justify-center gap-2 rounded-full border border-fg/15 bg-fg/5 px-6 py-2 text-sm font-medium text-fg/70 transition hover:bg-fg/10 active:scale-[0.99] md:flex"
+          className={cn(
+            "items-center justify-center gap-2 rounded-full border border-fg/15 bg-fg/5 px-6 py-2 text-sm font-medium text-fg/70 transition hover:bg-fg/10 active:scale-[0.99]",
+            showBrowseOnMobile ? "flex" : "hidden md:flex",
+          )}
         >
           <Download size={14} />
           {t("hfBrowser.title")}
@@ -377,7 +388,9 @@ export function ModelsPage() {
 
         {/* Browse GGUF Models + Runtime Defaults */}
         {models.length > 0 && (
-          <div className="hidden gap-3 md:grid md:grid-cols-2">
+          <div
+            className={cn("gap-3 md:grid md:grid-cols-2", showBrowseOnMobile ? "grid" : "hidden")}
+          >
             <button
               onClick={() => navigate(Routes.settingsModelsBrowse)}
               className={cn(
@@ -401,6 +414,7 @@ export function ModelsPage() {
               className={cn(
                 "group w-full rounded-xl border border-dashed border-fg/15 bg-fg/2 px-4 py-3 text-left transition",
                 "hover:border-fg/25 hover:bg-fg/5 active:scale-[0.995]",
+                showBrowseOnMobile && "hidden md:block",
               )}
             >
               <div className="flex items-center gap-3">

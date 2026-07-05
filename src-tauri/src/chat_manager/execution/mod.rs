@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-use super::types::{Model, Session, Settings};
+use super::types::{GpuLayerAssignment, Model, Session, Settings};
 
 const FALLBACK_MAX_OUTPUT_TOKENS: u32 = 4096;
 const DEFAULT_LLAMA_SAMPLER_PROFILE: &str = "balanced";
@@ -311,6 +311,226 @@ pub(super) fn resolve_llama_gpu_layers(
                 .and_then(|cfg| cfg.llama_gpu_layers)
         })
         .or(settings.advanced_model_settings.llama_gpu_layers)
+}
+
+pub(super) fn resolve_llama_multi_gpu_enabled(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<bool> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_multi_gpu_enabled)
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_multi_gpu_enabled)
+        })
+        .or(settings.advanced_model_settings.llama_multi_gpu_enabled)
+}
+
+pub(super) fn resolve_llama_gpu_device_ids(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<Vec<usize>> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_gpu_device_ids.clone())
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_gpu_device_ids.clone())
+        })
+        .or_else(|| {
+            settings
+                .advanced_model_settings
+                .llama_gpu_device_ids
+                .clone()
+        })
+        .map(|ids| {
+            let mut deduped = Vec::new();
+            for id in ids {
+                if !deduped.contains(&id) {
+                    deduped.push(id);
+                }
+            }
+            deduped
+        })
+        .filter(|ids| !ids.is_empty())
+}
+
+pub(super) fn resolve_llama_gpu_distribution_mode(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<String> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_gpu_distribution_mode.clone())
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_gpu_distribution_mode.clone())
+        })
+        .or_else(|| {
+            settings
+                .advanced_model_settings
+                .llama_gpu_distribution_mode
+                .clone()
+        })
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| {
+            matches!(
+                v.as_str(),
+                "balanced" | "proportional" | "priority" | "manual"
+            )
+        })
+}
+
+pub(super) fn resolve_llama_gpu_manual_layers(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<Vec<GpuLayerAssignment>> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_gpu_manual_layers.clone())
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_gpu_manual_layers.clone())
+        })
+        .or_else(|| {
+            settings
+                .advanced_model_settings
+                .llama_gpu_manual_layers
+                .clone()
+        })
+        .filter(|layers| !layers.is_empty())
+}
+
+pub(super) fn resolve_llama_kv_placement(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<String> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_kv_placement.clone())
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_kv_placement.clone())
+        })
+        .or_else(|| settings.advanced_model_settings.llama_kv_placement.clone())
+        .map(|v| v.trim().to_string())
+        .filter(|v| matches!(v.as_str(), "auto" | "split" | "systemRam" | "pin"))
+}
+
+pub(super) fn resolve_llama_main_gpu(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<i32> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_main_gpu)
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_main_gpu)
+        })
+        .or(settings.advanced_model_settings.llama_main_gpu)
+}
+
+pub(super) fn resolve_llama_multi_gpu_enabled_leveled(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<(bool, u8)> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_multi_gpu_enabled)
+        .map(|value| (value, 2))
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_multi_gpu_enabled)
+                .map(|value| (value, 1))
+        })
+        .or(settings
+            .advanced_model_settings
+            .llama_multi_gpu_enabled
+            .map(|value| (value, 0)))
+}
+
+pub(super) fn resolve_llama_single_gpu_device_id_leveled(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<(usize, u8)> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_single_gpu_device_id)
+        .map(|value| (value, 2))
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_single_gpu_device_id)
+                .map(|value| (value, 1))
+        })
+        .or(settings
+            .advanced_model_settings
+            .llama_single_gpu_device_id
+            .map(|value| (value, 0)))
+}
+
+pub(crate) fn llama_pin_overridden_by_multi_gpu(
+    multi_gpu: Option<(bool, u8)>,
+    pin: Option<(usize, u8)>,
+) -> bool {
+    matches!(
+        (multi_gpu, pin),
+        (Some((true, multi_level)), Some((_, pin_level))) if multi_level >= pin_level
+    )
+}
+
+pub(super) fn resolve_llama_priority_vram_limit_bytes(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<u64> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_priority_vram_limit_bytes)
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_priority_vram_limit_bytes)
+        })
+        .or(settings
+            .advanced_model_settings
+            .llama_priority_vram_limit_bytes)
+        .filter(|v| *v > 0)
 }
 
 pub(super) fn resolve_llama_threads(
@@ -947,3 +1167,46 @@ pub(crate) use model_resolution::find_model_with_credential;
 
 mod provider_fields;
 pub(crate) use provider_fields::{build_provider_extra_fields, RequestSettings};
+
+#[cfg(test)]
+mod gpu_pin_tests {
+    use super::llama_pin_overridden_by_multi_gpu;
+
+    #[test]
+    fn multi_gpu_at_same_or_higher_level_suppresses_pin() {
+        assert!(llama_pin_overridden_by_multi_gpu(
+            Some((true, 0)),
+            Some((1, 0))
+        ));
+        assert!(llama_pin_overridden_by_multi_gpu(
+            Some((true, 1)),
+            Some((1, 0))
+        ));
+        assert!(llama_pin_overridden_by_multi_gpu(
+            Some((true, 2)),
+            Some((1, 1))
+        ));
+    }
+
+    #[test]
+    fn more_specific_pin_beats_multi_gpu() {
+        assert!(!llama_pin_overridden_by_multi_gpu(
+            Some((true, 0)),
+            Some((1, 1))
+        ));
+        assert!(!llama_pin_overridden_by_multi_gpu(
+            Some((true, 1)),
+            Some((1, 2))
+        ));
+    }
+
+    #[test]
+    fn disabled_or_absent_multi_gpu_never_suppresses() {
+        assert!(!llama_pin_overridden_by_multi_gpu(
+            Some((false, 2)),
+            Some((1, 0))
+        ));
+        assert!(!llama_pin_overridden_by_multi_gpu(None, Some((1, 0))));
+        assert!(!llama_pin_overridden_by_multi_gpu(Some((true, 2)), None));
+    }
+}

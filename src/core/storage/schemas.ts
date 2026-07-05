@@ -279,6 +279,16 @@ export const PromptParameterEngineSchema = z.object({
 });
 export type PromptParameterEngine = z.infer<typeof PromptParameterEngineSchema>;
 
+export const MtpStatsSchema = z.object({
+  draftTokens: z.number().int().nonnegative().nullable().optional(),
+  rounds: z.number().int().nonnegative().nullable().optional(),
+  drafted: z.number().int().nonnegative().nullable().optional(),
+  accepted: z.number().int().nonnegative().nullable().optional(),
+  tokensPerRound: z.number().nonnegative().nullable().optional(),
+  draftAcceptance: z.number().nonnegative().nullable().optional(),
+});
+export type MtpStats = z.infer<typeof MtpStatsSchema>;
+
 export const UsageSummarySchema = z.object({
   promptTokens: OptionalTokenCount,
   completionTokens: OptionalTokenCount,
@@ -288,6 +298,7 @@ export const UsageSummarySchema = z.object({
   audioTokens: OptionalTokenCount,
   firstTokenMs: OptionalMsCount,
   tokensPerSecond: OptionalPositiveNumber,
+  mtpStats: MtpStatsSchema.nullable().optional(),
 });
 export type UsageSummary = z.infer<typeof UsageSummarySchema>;
 
@@ -326,6 +337,10 @@ export const LlamaLastRuntimeReportSchema = z.object({
   smartOffloadEstimatedKvBytes: z.number().int().nonnegative().nullable().optional(),
   smartOffloadRuntimeReserveBytes: z.number().int().nonnegative().nullable().optional(),
   smartOffloadEffectiveVramBudgetBytes: z.number().int().nonnegative().nullable().optional(),
+  smartOffloadSidecarVramReserveBytes: z.number().int().nonnegative().nullable().optional(),
+  smartOffloadCacheHit: z.boolean().nullable().optional(),
+  smartOffloadCachedGpuLayers: z.number().int().min(0).nullable().optional(),
+  smartOffloadPlanningConfig: z.string().trim().min(1).nullable().optional(),
   actualKvTypeUsed: z.string().trim().min(1).nullable().optional(),
   actualOffloadKqvMode: z.string().trim().min(1).nullable().optional(),
   flashAttentionPolicy: z.string().trim().min(1).nullable().optional(),
@@ -335,6 +350,16 @@ export const LlamaLastRuntimeReportSchema = z.object({
   availableMemoryBytes: z.number().int().nonnegative().nullable().optional(),
   availableVramBytes: z.number().int().nonnegative().nullable().optional(),
   modelSizeBytes: z.number().int().nonnegative().nullable().optional(),
+  llamaMultiGpuEnabled: z.boolean().nullable().optional(),
+  selectedGpuDeviceIds: z.array(z.number().int().min(0)).nullable().optional(),
+  multiGpuEnabled: z.boolean().nullable().optional(),
+  multiGpuDeviceIds: z.array(z.number().int().min(0)).nullable().optional(),
+  strictModeEnabled: z.boolean().nullable().optional(),
+  llamaGpuDistributionMode: z.string().trim().min(1).nullable().optional(),
+  llamaKvPlacement: z.string().trim().min(1).nullable().optional(),
+  llamaMainGpu: z.number().int().min(0).nullable().optional(),
+  singleGpuDeviceId: z.number().int().min(0).nullable().optional(),
+  gpuDeviceLayerPlacement: z.array(z.number().int().min(0)).nullable().optional(),
   promptTokens: z.number().int().nonnegative().nullable().optional(),
   promptPositions: z.number().int().nonnegative().nullable().optional(),
   targetNewTokens: z.number().int().nonnegative().nullable().optional(),
@@ -343,9 +368,44 @@ export const LlamaLastRuntimeReportSchema = z.object({
   firstTokenMs: z.number().int().nonnegative().nullable().optional(),
   tokensPerSecond: z.number().nonnegative().nullable().optional(),
   promptTemplateSource: z.string().trim().min(1).nullable().optional(),
+  mtpStats: MtpStatsSchema.nullable().optional(),
   suggestedSettings: LlamaRuntimeSuggestedSettingsSchema.nullish().optional(),
 });
 export type LlamaLastRuntimeReport = z.infer<typeof LlamaLastRuntimeReportSchema>;
+
+export const LlmMetricSampleSchema = z.object({
+  tMs: z.number().nonnegative(),
+  tokens: z.number().int().nonnegative(),
+  tps: z.number().nonnegative(),
+  ctxFill: z.number().min(0).max(1),
+});
+export type LlmMetricSample = z.infer<typeof LlmMetricSampleSchema>;
+
+export const LlmMetricSummarySchema = z.object({
+  id: z.string(),
+  createdAt: z.number().int().nonnegative(),
+  modelName: z.string().nullable().optional(),
+  backend: z.string().nullable().optional(),
+  gpuLayers: z.number().int().nonnegative().nullable().optional(),
+  nCtx: z.number().int().nonnegative().nullable().optional(),
+  nBatch: z.number().int().nonnegative().nullable().optional(),
+  kvType: z.string().nullable().optional(),
+  modelSizeBytes: z.number().int().nonnegative().nullable().optional(),
+  promptTokens: z.number().int().nonnegative().nullable().optional(),
+  completionTokens: z.number().int().nonnegative().nullable().optional(),
+  totalTokens: z.number().int().nonnegative().nullable().optional(),
+  ttftMs: z.number().nonnegative().nullable().optional(),
+  decodeTokensPerSecond: z.number().nonnegative().nullable().optional(),
+  generationElapsedMs: z.number().nonnegative().nullable().optional(),
+  finishReason: z.string().nullable().optional(),
+  mtpStats: MtpStatsSchema.nullable().optional(),
+});
+export type LlmMetricSummary = z.infer<typeof LlmMetricSummarySchema>;
+
+export const LlmMetricDetailSchema = LlmMetricSummarySchema.extend({
+  samples: z.array(LlmMetricSampleSchema).default([]),
+});
+export type LlmMetricDetail = z.infer<typeof LlmMetricDetailSchema>;
 
 export const AdvancedModelSettingsSchema = z.object({
   temperature: z.number().min(0).max(2).nullable().optional(),
@@ -368,6 +428,21 @@ export const AdvancedModelSettingsSchema = z.object({
   sdPromptWriterInstructions: z.string().trim().min(1).nullable().optional(),
   // llama.cpp specific settings
   llamaGpuLayers: z.number().int().min(0).max(512).nullable().optional(),
+  llamaMultiGpuEnabled: z.boolean().nullable().optional(),
+  llamaGpuDeviceIds: z.array(z.number().int().min(0)).nullable().optional(),
+  llamaGpuDistributionMode: z
+    .enum(["balanced", "proportional", "priority", "manual"])
+    .nullable()
+    .optional(),
+  llamaGpuManualLayers: z
+    .array(z.object({ deviceId: z.number().int().min(0), layers: z.number().int().min(0).max(512) }))
+    .nullable()
+    .optional(),
+  llamaCpuLayers: z.number().int().min(0).max(512).nullable().optional(),
+  llamaKvPlacement: z.enum(["auto", "split", "systemRam", "pin"]).nullable().optional(),
+  llamaMainGpu: z.number().int().min(0).nullable().optional(),
+  llamaSingleGpuDeviceId: z.number().int().min(0).nullable().optional(),
+  llamaPriorityVramLimitBytes: z.number().int().nonnegative().nullable().optional(),
   llamaThreads: z.number().int().min(1).max(256).nullable().optional(),
   llamaThreadsBatch: z.number().int().min(1).max(256).nullable().optional(),
   llamaSeed: z.number().int().min(0).max(2_147_483_647).nullable().optional(),
@@ -446,6 +521,14 @@ export const AdvancedModelSettingsSchema = z.object({
   // Caching settings
   promptCachingEnabled: z.boolean().nullable().optional(),
   promptCachingTtl: z.string().nullish().optional(),
+  openRouterProvider: z
+    .object({
+      id: z.string().trim().min(1),
+      name: z.string().trim().min(1),
+      logoUrl: z.string().url().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export type AdvancedModelSettings = z.infer<typeof AdvancedModelSettingsSchema>;
@@ -1927,6 +2010,15 @@ export const PROVIDER_PARAMETER_SUPPORT = {
       presencePenalty: true,
       topK: true,
       llamaGpuLayers: true,
+      llamaMultiGpuEnabled: true,
+      llamaGpuDeviceIds: true,
+      llamaGpuDistributionMode: true,
+      llamaGpuManualLayers: true,
+      llamaCpuLayers: true,
+      llamaKvPlacement: true,
+      llamaMainGpu: true,
+      llamaSingleGpuDeviceId: true,
+      llamaPriorityVramLimitBytes: true,
       llamaThreads: true,
       llamaThreadsBatch: true,
       llamaSeed: true,
@@ -2331,6 +2423,8 @@ export const GroupMemoryEmbeddingSchema = z.object({
   id: z.string(),
   text: z.string(),
   embedding: z.array(z.number()),
+  embeddingSourceVersion: z.string().nullable().optional(),
+  embeddingDimensions: z.number().int().nullable().optional(),
   createdAt: z.number().int(),
   tokenCount: z.number().int().nonnegative().default(0),
   isCold: z.boolean().default(false),
@@ -2775,6 +2869,7 @@ export const ChatAppearanceSettingsSchema = z.object({
   showMessageTotalTokens: z.boolean().default(false),
   showMessageTtft: z.boolean().default(false),
   showMessageTokensPerSecond: z.boolean().default(false),
+  showMessageMtp: z.boolean().default(false),
   messageInfoPlacement: z
     .enum(["belowHeader", "belowHeaderOutside", "insideBubble", "belowBubble"])
     .default("belowBubble"),
@@ -2835,8 +2930,23 @@ export const ChatAppearanceSettingsSchema = z.object({
 });
 export type ChatAppearanceSettings = z.infer<typeof ChatAppearanceSettingsSchema>;
 
-export const ChatAppearanceOverrideSchema = ChatAppearanceSettingsSchema.partial();
-export type ChatAppearanceOverride = z.infer<typeof ChatAppearanceOverrideSchema>;
+function stripDefaultsToOptional(schema: z.ZodObject<z.ZodRawShape>) {
+  const shape = schema.shape;
+  const next: Record<string, z.ZodTypeAny> = {};
+  for (const key of Object.keys(shape)) {
+    let field = shape[key] as z.ZodTypeAny;
+    let def = field.def as { type: string; innerType?: z.ZodTypeAny };
+    while (def?.innerType && ["default", "optional", "nullable", "nullish"].includes(def.type)) {
+      field = def.innerType;
+      def = field.def as { type: string; innerType?: z.ZodTypeAny };
+    }
+    next[key] = field.optional();
+  }
+  return z.object(next);
+}
+
+export const ChatAppearanceOverrideSchema = stripDefaultsToOptional(ChatAppearanceSettingsSchema);
+export type ChatAppearanceOverride = Partial<ChatAppearanceSettings>;
 
 export function createDefaultChatAppearanceSettings(): ChatAppearanceSettings {
   return {
@@ -2856,6 +2966,7 @@ export function createDefaultChatAppearanceSettings(): ChatAppearanceSettings {
     showMessageTotalTokens: false,
     showMessageTtft: false,
     showMessageTokensPerSecond: false,
+    showMessageMtp: false,
     messageInfoPlacement: "belowBubble",
     messageInfoSize: "small",
     messageGap: "relaxed",
@@ -2995,6 +3106,7 @@ export const SettingsSchema = z.object({
       chatAppearance: ChatAppearanceSettingsSchema.optional(),
     })
     .optional(),
+  advancedModelSettings: AdvancedModelSettingsSchema.optional(),
   promptTemplateId: z.string().nullish().optional(),
   systemPrompt: z.string().nullish().optional(), // Deprecated
   migrationVersion: z.number().int().default(0),
@@ -3030,6 +3142,7 @@ export function createDefaultSettings(): Settings {
       },
       accessibility: createDefaultAccessibilitySettings(),
     },
+    advancedModelSettings: createDefaultAdvancedModelSettings(),
     promptTemplateId: null,
     systemPrompt: null,
     migrationVersion: 0,
@@ -3501,6 +3614,8 @@ export const SessionSchema = z.object({
         id: z.string(),
         text: z.string(),
         embedding: z.array(z.number()),
+        embeddingSourceVersion: z.string().nullable().optional(),
+        embeddingDimensions: z.number().int().nullable().optional(),
         createdAt: z.number().int(),
         tokenCount: z.number().int().nonnegative().default(0),
         isCold: z.boolean().default(false),

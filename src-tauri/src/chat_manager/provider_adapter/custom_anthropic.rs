@@ -98,8 +98,16 @@ impl ProviderAdapter for CustomAnthropicAdapter {
     fn endpoint(&self, base_url: &str) -> String {
         let path = self
             .config_value("chatEndpoint")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "/v1/messages".to_string());
-        format!("{}{}", base_url.trim_end_matches('/'), path)
+        if path.starts_with("http://") || path.starts_with("https://") {
+            path
+        } else if path.starts_with('/') {
+            format!("{}{}", base_url.trim_end_matches('/'), path)
+        } else {
+            format!("{}/{}", base_url.trim_end_matches('/'), path)
+        }
     }
 
     fn system_role(&self) -> Cow<'static, str> {

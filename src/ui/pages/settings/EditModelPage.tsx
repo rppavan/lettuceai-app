@@ -42,6 +42,7 @@ import {
   ADVANCED_OLLAMA_SEED_RANGE,
 } from "../../components/AdvancedModelSettingsForm";
 import { BottomMenu, MenuButton, MenuSection } from "../../components/BottomMenu";
+import { GuidedTour, useGuidedTour } from "../../components/GuidedTour";
 import { ModelSelectionBottomMenu } from "../../components/ModelSelectionBottomMenu";
 import { NumberInput } from "../../components/NumberInput";
 import {
@@ -62,6 +63,17 @@ import {
   Maximize2,
   SendHorizontal,
   X,
+  Scale,
+  Gauge,
+  ListOrdered,
+  SlidersHorizontal,
+  Sparkles,
+  Layers,
+  MemoryStick,
+  Pin,
+  ArrowUpDown,
+  Cpu,
+  type LucideIcon,
 } from "lucide-react";
 import { ProviderParameterSupportInfo } from "../../components/ProviderParameterSupportInfo";
 import { LlamaSamplerOrderEditor } from "../../components/LlamaSamplerOrderEditor";
@@ -69,7 +81,7 @@ import { toast } from "../../components/toast";
 import { useModelEditorController } from "./hooks/useModelEditorController";
 import { useNavigationManager } from "../../navigation";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { addOrUpdateModel } from "../../../core/storage/repo";
+import { addOrUpdateModel, readSettings, readSettingsCached } from "../../../core/storage/repo";
 import type { LlamaLastRuntimeReport, ReasoningSupport } from "../../../core/storage/schemas";
 import {
   getProviderReasoningSupport,
@@ -93,6 +105,21 @@ type DownloadedGgufModel = {
 };
 
 type LocalLibraryPickerMode = "model" | "mmproj" | "mtp";
+
+type OpenRouterEndpoint = {
+  id: string;
+  name: string;
+  logoUrl?: string | null;
+  promptPrice: string;
+  completionPrice: string;
+  contextLength?: number | null;
+  uptimeLast30m?: number | null;
+  supportsPromptCaching: boolean;
+  cacheReadPrice?: string | null;
+  cacheWritePrice?: string | null;
+};
+
+type ProviderSortMode = "price" | "uptime" | "caching" | "alphabetical";
 
 type SdModelRole =
   | "checkpoint"
@@ -174,6 +201,19 @@ type LlamaCppContextInfo = {
   modelSizeBytes?: number | null;
   layerCount?: number | null;
   supportsGpuOffload?: boolean | null;
+  selectedGpuDeviceIds?: number[] | null;
+  perDeviceVram?: { index: number; memoryFree: number; memoryTotal: number }[] | null;
+  estimatedPlacement?: { totalGpuLayers: number; perDeviceLayers: number[] } | null;
+};
+
+type LlamaGpuDevice = {
+  index: number;
+  name: string;
+  description: string;
+  backend: string;
+  memoryTotal: number;
+  memoryFree: number;
+  deviceType: string;
 };
 
 function formatRuntimeNumber(value?: number | null): string | null {
@@ -403,6 +443,11 @@ export function EditModelPage() {
     "balanced" | "throughput" | "vram" | "cpu_ram" | null
   >(null);
   const [showPlatformSelector, setShowPlatformSelector] = useState(false);
+  const [showProviderPicker, setShowProviderPicker] = useState(false);
+  const [openRouterEndpoints, setOpenRouterEndpoints] = useState<OpenRouterEndpoint[]>([]);
+  const [providerEndpointsLoading, setProviderEndpointsLoading] = useState(false);
+  const [providerEndpointsError, setProviderEndpointsError] = useState<string | null>(null);
+  const [providerSortMode, setProviderSortMode] = useState<ProviderSortMode>("price");
   const [sdEntries, setSdEntries] = useState<SdModelEntry[] | null>(null);
   const [showSdModelPicker, setShowSdModelPicker] = useState(false);
   const [sdFilesDraft, setSdFilesDraft] = useState<Record<string, string>>({});
@@ -412,6 +457,26 @@ export function EditModelPage() {
   const [llamaContextInfo, setLlamaContextInfo] = useState<LlamaCppContextInfo | null>(null);
   const [llamaContextError, setLlamaContextError] = useState<string | null>(null);
   const [llamaContextLoading, setLlamaContextLoading] = useState(false);
+  const [llamaGpuDevices, setLlamaGpuDevices] = useState<LlamaGpuDevice[]>([]);
+  const [globalMultiGpuDefault, setGlobalMultiGpuDefault] = useState<boolean>(
+    () => readSettingsCached()?.advancedModelSettings?.llamaMultiGpuEnabled === true,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void readSettings()
+      .then((settings) => {
+        if (!cancelled) {
+          setGlobalMultiGpuDefault(settings.advancedModelSettings?.llamaMultiGpuEnabled === true);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const { shouldShow: showEditModelTour, dismiss: dismissEditModelTour } =
+    useGuidedTour("editModelLlama");
   const [showLocalModelPicker, setShowLocalModelPicker] = useState(false);
   const [localLibraryPickerMode, setLocalLibraryPickerMode] =
     useState<LocalLibraryPickerMode>("model");
@@ -428,6 +493,10 @@ export function EditModelPage() {
     null,
   );
   const [showLlamaRuntimeReport, setShowLlamaRuntimeReport] = useState(false);
+  const [showDistributionMenu, setShowDistributionMenu] = useState(false);
+  const [showKvCacheMenu, setShowKvCacheMenu] = useState(false);
+  const [showPinnedGpuMenu, setShowPinnedGpuMenu] = useState(false);
+  const [showSingleGpuMenu, setShowSingleGpuMenu] = useState(false);
   const [showTemplateOverlay, setShowTemplateOverlay] = useState(false);
   const [templateOverlayDraft, setTemplateOverlayDraft] = useState("");
   const [showEmbeddedTemplateViewer, setShowEmbeddedTemplateViewer] = useState(false);
@@ -542,6 +611,67 @@ export function EditModelPage() {
   const isOnboardingReturnFlow = !!returnTo?.startsWith("/onboarding");
   const isLocalModel = editorModel?.providerId === "llamacpp";
   const isOllamaModel = editorModel?.providerId === "ollama";
+  const pinnedOpenRouterProvider = modelAdvancedDraft.openRouterProvider ?? null;
+  const sortedOpenRouterEndpoints = useMemo(() => {
+    const endpoints = [...openRouterEndpoints];
+    if (providerSortMode === "alphabetical") {
+      return endpoints.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+    }
+    if (providerSortMode === "uptime") {
+      return endpoints.sort(
+        (a, b) =>
+          (b.uptimeLast30m ?? -1) - (a.uptimeLast30m ?? -1) || a.name.localeCompare(b.name),
+      );
+    }
+    const totalPrice = (endpoint: OpenRouterEndpoint) =>
+      Number(endpoint.promptPrice || 0) + Number(endpoint.completionPrice || 0);
+    if (providerSortMode === "caching") {
+      return endpoints.sort(
+        (a, b) =>
+          Number(b.supportsPromptCaching) - Number(a.supportsPromptCaching) ||
+          totalPrice(a) - totalPrice(b) ||
+          a.name.localeCompare(b.name),
+      );
+    }
+    return endpoints.sort(
+      (a, b) => totalPrice(a) - totalPrice(b) || a.name.localeCompare(b.name),
+    );
+  }, [openRouterEndpoints, providerSortMode]);
+
+  const cycleProviderSortMode = () => {
+    setProviderSortMode((current) =>
+      current === "price"
+        ? "uptime"
+        : current === "uptime"
+          ? "caching"
+          : current === "caching"
+            ? "alphabetical"
+            : "price",
+    );
+  };
+
+  const clearPinnedOpenRouterProvider = () => {
+    if (!modelAdvancedDraft.openRouterProvider) return;
+    setModelAdvancedDraft({ ...modelAdvancedDraft, openRouterProvider: null });
+  };
+
+  const openProviderPicker = async () => {
+    if (!editorModel?.name.trim()) return;
+    setShowProviderPicker(true);
+    setProviderEndpointsLoading(true);
+    setProviderEndpointsError(null);
+    try {
+      const endpoints = await invoke<OpenRouterEndpoint[]>("get_openrouter_endpoints", {
+        modelId: editorModel.name.trim(),
+      });
+      setOpenRouterEndpoints(endpoints);
+    } catch (error) {
+      setOpenRouterEndpoints([]);
+      setProviderEndpointsError(String(error));
+    } finally {
+      setProviderEndpointsLoading(false);
+    }
+  };
   const llamaRuntimeReport = modelAdvancedDraft.llamaLastRuntimeReport ?? null;
   const llamaRuntimeFacts = useMemo(() => {
     if (!llamaRuntimeReport) {
@@ -1054,9 +1184,10 @@ export function EditModelPage() {
   }, [searchQuery]);
 
   const isOpenRouterProvider = editorModel?.providerId === "openrouter";
-  const formatOpenRouterPricePerMillion = (price?: number) => {
-    if (typeof price !== "number" || !Number.isFinite(price)) return null;
-    const perMillion = price * 1_000_000;
+  const formatOpenRouterPricePerMillion = (price?: number | string | null) => {
+    const numericPrice = typeof price === "string" ? Number(price) : price;
+    if (typeof numericPrice !== "number" || !Number.isFinite(numericPrice)) return null;
+    const perMillion = numericPrice * 1_000_000;
     if (perMillion <= 0) return t("editModel.pricing.free");
     if (perMillion >= 100) return `$${perMillion.toFixed(0)}/M`;
     if (perMillion >= 10) return `$${perMillion.toFixed(1)}/M`;
@@ -1522,6 +1653,136 @@ export function EditModelPage() {
       [key]: value,
     });
   }
+
+  function updateLlamaGpuDeviceSelection(index: number) {
+    const selected = modelAdvancedDraft.llamaGpuDeviceIds ?? [];
+    const next = selected.includes(index)
+      ? selected.filter((id) => id !== index)
+      : [...selected, index].sort((a, b) => a - b);
+    setModelAdvancedDraft({
+      ...modelAdvancedDraft,
+      llamaGpuDeviceIds: next.length > 0 ? next : null,
+    });
+  }
+
+  function updateLlamaManualLayers(deviceId: number, layers: number | null) {
+    const current = modelAdvancedDraft.llamaGpuManualLayers ?? [];
+    const others = current.filter((entry) => entry.deviceId !== deviceId);
+    const next =
+      layers === null || layers < 0
+        ? others
+        : [...others, { deviceId, layers: Math.trunc(layers) }].sort(
+          (a, b) => a.deviceId - b.deviceId,
+        );
+    setModelAdvancedDraft({
+      ...modelAdvancedDraft,
+      llamaGpuManualLayers: next.length > 0 ? next : null,
+    });
+  }
+  const eligibleGpuDevices = llamaGpuDevices.filter(
+    (device) => device.deviceType !== "IntegratedGpu",
+  );
+  const multiGpuAvailable = eligibleGpuDevices.length >= 2;
+  const effectiveMultiGpuEnabled =
+    modelAdvancedDraft.llamaMultiGpuEnabled === true ||
+    (modelAdvancedDraft.llamaMultiGpuEnabled == null && globalMultiGpuDefault);
+  const selectedGpuDeviceIds = modelAdvancedDraft.llamaGpuDeviceIds ?? [];
+  const selectedEligibleDevices = eligibleGpuDevices.filter((device) =>
+    selectedGpuDeviceIds.includes(device.index),
+  );
+  const llamaDistributionMode = modelAdvancedDraft.llamaGpuDistributionMode ?? "balanced";
+  const distributionOptions: {
+    value: NonNullable<typeof modelAdvancedDraft.llamaGpuDistributionMode>;
+    label: string;
+    description: string;
+    icon: LucideIcon;
+  }[] = [
+    {
+      value: "balanced",
+      label: t("runtimeDefaults.llamaDistBalanced"),
+      description: t("runtimeDefaults.llamaDistBalancedDesc"),
+      icon: Scale,
+    },
+    {
+      value: "proportional",
+      label: t("runtimeDefaults.llamaDistProportional"),
+      description: t("runtimeDefaults.llamaDistProportionalDesc"),
+      icon: Gauge,
+    },
+    {
+      value: "priority",
+      label: t("runtimeDefaults.llamaDistPriority"),
+      description: t("runtimeDefaults.llamaDistPriorityDesc"),
+      icon: ListOrdered,
+    },
+    {
+      value: "manual",
+      label: t("runtimeDefaults.llamaDistManual"),
+      description: t("runtimeDefaults.llamaDistManualDesc"),
+      icon: SlidersHorizontal,
+    },
+  ];
+  const kvPlacementOptions: {
+    value: NonNullable<typeof modelAdvancedDraft.llamaKvPlacement>;
+    label: string;
+    description: string;
+    icon: LucideIcon;
+  }[] = [
+    {
+      value: "auto",
+      label: t("runtimeDefaults.llamaKvAuto"),
+      description: t("runtimeDefaults.llamaKvAutoDesc"),
+      icon: Sparkles,
+    },
+    {
+      value: "split",
+      label: t("runtimeDefaults.llamaKvSplit"),
+      description: t("runtimeDefaults.llamaKvSplitDesc"),
+      icon: Layers,
+    },
+    {
+      value: "systemRam",
+      label: t("runtimeDefaults.llamaKvSystemRam"),
+      description: t("runtimeDefaults.llamaKvSystemRamDesc"),
+      icon: MemoryStick,
+    },
+    {
+      value: "pin",
+      label: t("runtimeDefaults.llamaKvPin"),
+      description: t("runtimeDefaults.llamaKvPinDesc"),
+      icon: Pin,
+    },
+  ];
+  const currentKvPlacement = modelAdvancedDraft.llamaKvPlacement ?? "auto";
+  const distributionMenuLabel =
+    distributionOptions.find((opt) => opt.value === llamaDistributionMode)?.label ?? "Balanced";
+  const kvPlacementMenuLabel =
+    kvPlacementOptions.find((opt) => opt.value === currentKvPlacement)?.label ?? "Auto";
+  const pinnedGpuIndex =
+    modelAdvancedDraft.llamaMainGpu ?? selectedEligibleDevices[0]?.index ?? 0;
+  const pinnedGpuDevice = selectedEligibleDevices.find(
+    (device) => device.index === pinnedGpuIndex,
+  );
+  const pinnedGpuMenuLabel = pinnedGpuDevice
+    ? pinnedGpuDevice.description || pinnedGpuDevice.name || `GPU ${pinnedGpuDevice.index}`
+    : "";
+  const singleGpuDeviceId = modelAdvancedDraft.llamaSingleGpuDeviceId ?? null;
+  const singleGpuDevice = eligibleGpuDevices.find((device) => device.index === singleGpuDeviceId);
+  const singleGpuMenuLabel =
+    singleGpuDeviceId !== null
+      ? singleGpuDevice?.description || singleGpuDevice?.name || `GPU ${singleGpuDeviceId}`
+      : t("runtimeDefaults.llamaSingleGpuAuto");
+  const manualLayerByDevice = (deviceId: number): number | null =>
+    modelAdvancedDraft.llamaGpuManualLayers?.find((entry) => entry.deviceId === deviceId)?.layers ??
+    null;
+  const manualGpuLayerTotal = selectedEligibleDevices.reduce(
+    (sum, device) => sum + (manualLayerByDevice(device.index) ?? 0),
+    0,
+  );
+  const manualCpuLayers = modelAdvancedDraft.llamaCpuLayers ?? 0;
+  const totalModelLayers = llamaContextInfo?.layerCount ?? null;
+  const manualLayerSumValid =
+    totalModelLayers === null || manualGpuLayerTotal + manualCpuLayers === totalModelLayers;
   const generationSummary = isFixedImageProvider
     ? [
       modelAdvancedDraft.sdSteps != null ? `Steps ${modelAdvancedDraft.sdSteps}` : null,
@@ -1672,6 +1933,12 @@ export function EditModelPage() {
   }, [showLlamaRuntimeReport]);
 
   useEffect(() => {
+    invoke<LlamaGpuDevice[]>("llamacpp_backend_devices")
+      .then(setLlamaGpuDevices)
+      .catch(() => setLlamaGpuDevices([]));
+  }, []);
+
+  useEffect(() => {
     if (!isLocalModel) {
       setLlamaContextInfo(null);
       setLlamaContextError(null);
@@ -1698,6 +1965,14 @@ export function EditModelPage() {
           llamaOffloadKqv: modelAdvancedDraft.llamaOffloadKqv ?? null,
           llamaKvType: modelAdvancedDraft.llamaKvType ?? null,
           llamaGpuLayers: modelAdvancedDraft.llamaGpuLayers ?? null,
+          llamaMultiGpuEnabled: modelAdvancedDraft.llamaMultiGpuEnabled ?? null,
+          llamaGpuDeviceIds: modelAdvancedDraft.llamaGpuDeviceIds ?? null,
+          llamaGpuDistributionMode: modelAdvancedDraft.llamaGpuDistributionMode ?? null,
+          llamaGpuManualLayers: modelAdvancedDraft.llamaGpuManualLayers ?? null,
+          llamaMainGpu: modelAdvancedDraft.llamaMainGpu ?? null,
+          llamaSingleGpuDeviceId: modelAdvancedDraft.llamaSingleGpuDeviceId ?? null,
+          llamaKvPlacement: modelAdvancedDraft.llamaKvPlacement ?? null,
+          llamaPriorityVramLimitBytes: modelAdvancedDraft.llamaPriorityVramLimitBytes ?? null,
           llamaMmprojPath: modelAdvancedDraft.llamaMmprojPath ?? null,
           llamaMtpEnabled: modelAdvancedDraft.llamaMtpEnabled ?? null,
           llamaMtpModelPath: modelAdvancedDraft.llamaMtpModelPath ?? null,
@@ -1732,6 +2007,14 @@ export function EditModelPage() {
     modelAdvancedDraft.llamaOffloadKqv,
     modelAdvancedDraft.llamaKvType,
     modelAdvancedDraft.llamaGpuLayers,
+    modelAdvancedDraft.llamaMultiGpuEnabled,
+    modelAdvancedDraft.llamaGpuDeviceIds,
+    modelAdvancedDraft.llamaGpuDistributionMode,
+    modelAdvancedDraft.llamaGpuManualLayers,
+    modelAdvancedDraft.llamaMainGpu,
+    modelAdvancedDraft.llamaSingleGpuDeviceId,
+    modelAdvancedDraft.llamaKvPlacement,
+    modelAdvancedDraft.llamaPriorityVramLimitBytes,
     modelAdvancedDraft.llamaMmprojPath,
     modelAdvancedDraft.llamaMtpEnabled,
     modelAdvancedDraft.llamaMtpModelPath,
@@ -1864,6 +2147,9 @@ export function EditModelPage() {
 
   const handleSelectModel = (modelId: string, displayName?: string) => {
     const fetchedModel = fetchedModels.find((model) => model.id === modelId);
+    if (modelId !== editorModel?.name) {
+      clearPinnedOpenRouterProvider();
+    }
     handleModelNameChange(modelId);
     if (displayName) {
       handleDisplayNameChange(displayName);
@@ -1916,6 +2202,7 @@ export function EditModelPage() {
                     <button
                       type="button"
                       onClick={() => setShowLlamaRuntimeReport(true)}
+                      data-tour-id="model-runtime-report"
                       className="flex w-full items-center justify-between gap-4 rounded-lg border border-fg/10 bg-surface-el/20 px-4 py-3 text-left transition hover:bg-surface-el/30"
                     >
                       <div className="flex min-w-0 items-center gap-3">
@@ -2242,6 +2529,17 @@ export function EditModelPage() {
                         label={modelIdLabel}
                         action={
                           <div className="flex flex-wrap items-center justify-end gap-2">
+                            {isOpenRouterProvider && editorModel.name.trim() && (
+                              <button
+                                type="button"
+                                onClick={() => void openProviderPicker()}
+                                className="text-[13px] font-medium text-accent/80 transition hover:text-accent"
+                              >
+                                {pinnedOpenRouterProvider
+                                  ? t("editModel.providerPin.change")
+                                  : t("editModel.providerPin.action")}
+                              </button>
+                            )}
                             {fetchedModels.length > 0 && modelFetchEnabledForSelectedProvider && (
                               <button
                                 type="button"
@@ -2381,7 +2679,12 @@ export function EditModelPage() {
                             <input
                               type="text"
                               value={editorModel.name}
-                              onChange={(e) => handleModelNameChange(e.target.value)}
+                              onChange={(e) => {
+                                if (e.target.value !== editorModel.name) {
+                                  clearPinnedOpenRouterProvider();
+                                }
+                                handleModelNameChange(e.target.value);
+                              }}
                               placeholder={modelIdPlaceholder}
                               className="w-full rounded-lg border border-fg/10 bg-surface-el/20 px-4 py-3 font-mono text-[13px] text-fg placeholder-fg/40 transition focus:border-fg/30 focus:outline-none"
                             />
@@ -2394,6 +2697,197 @@ export function EditModelPage() {
                               )}
                           </>
                         )}
+
+                        {isOpenRouterProvider && pinnedOpenRouterProvider && (
+                          <button
+                            type="button"
+                            onClick={() => void openProviderPicker()}
+                            className="mt-2 flex w-full items-center gap-3 rounded-lg border border-fg/10 bg-fg/[0.035] px-3 py-2.5 text-left transition hover:border-fg/20 hover:bg-fg/[0.06]"
+                          >
+                            <span className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-fg/10 bg-surface-el text-[11px] font-semibold text-fg/55">
+                              {pinnedOpenRouterProvider.name.slice(0, 2).toUpperCase()}
+                              {pinnedOpenRouterProvider.logoUrl && (
+                                <img
+                                  src={pinnedOpenRouterProvider.logoUrl}
+                                  alt=""
+                                  className="absolute inset-0 h-full w-full bg-surface-el object-contain p-1"
+                                  onError={(event) => {
+                                    event.currentTarget.style.display = "none";
+                                  }}
+                                />
+                              )}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-[12px] text-fg/40">
+                                {t("editModel.providerPin.pinned")}
+                              </span>
+                              <span className="block truncate text-[13px] font-medium text-fg/85">
+                                {pinnedOpenRouterProvider.name}
+                              </span>
+                            </span>
+                            <Pin className="h-4 w-4 shrink-0 text-accent/70" />
+                          </button>
+                        )}
+
+                        <BottomMenu
+                          isOpen={showProviderPicker}
+                          onClose={() => setShowProviderPicker(false)}
+                          title={t("editModel.providerPin.title")}
+                          leftAction={
+                            pinnedOpenRouterProvider ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  clearPinnedOpenRouterProvider();
+                                  setShowProviderPicker(false);
+                                }}
+                                className="text-[13px] font-medium text-fg/55 transition hover:text-fg"
+                              >
+                                {t("editModel.providerPin.clear")}
+                              </button>
+                            ) : null
+                          }
+                          rightAction={
+                            <button
+                              type="button"
+                              onClick={cycleProviderSortMode}
+                              className="inline-flex items-center gap-1.5 rounded-md border border-fg/10 bg-fg/5 px-2.5 py-1.5 text-[12px] font-medium text-fg/65 transition hover:border-fg/20 hover:bg-fg/10 hover:text-fg"
+                              title={t("editModel.providerPin.sortButtonHint")}
+                            >
+                              <ArrowUpDown className="h-3.5 w-3.5" />
+                              {t(`editModel.providerPin.sort.${providerSortMode}`)}
+                            </button>
+                          }
+                        >
+                          <div className="max-h-[50vh] space-y-2 overflow-y-auto">
+                            {providerEndpointsLoading ? (
+                              <div className="flex items-center justify-center gap-2 py-12 text-fg/50">
+                                <Loader className="h-4 w-4 animate-spin" />
+                                <span className="text-[13px]">{t("editModel.providerPin.loading")}</span>
+                              </div>
+                            ) : providerEndpointsError ? (
+                              <div className="px-4 py-10 text-center">
+                                <p className="text-[13px] text-danger/80">
+                                  {t("editModel.providerPin.error")}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => void openProviderPicker()}
+                                  className="mt-3 text-[13px] font-medium text-accent"
+                                >
+                                  {t("common.buttons.retry")}
+                                </button>
+                              </div>
+                            ) : openRouterEndpoints.length === 0 ? (
+                              <p className="px-4 py-12 text-center text-[13px] text-fg/45">
+                                {t("editModel.providerPin.empty")}
+                              </p>
+                            ) : (
+                              sortedOpenRouterEndpoints.map((endpoint) => {
+                                const inputPrice = formatOpenRouterPricePerMillion(
+                                  endpoint.promptPrice,
+                                );
+                                const outputPrice = formatOpenRouterPricePerMillion(
+                                  endpoint.completionPrice,
+                                );
+                                const cacheReadPrice = formatOpenRouterPricePerMillion(
+                                  endpoint.cacheReadPrice,
+                                );
+                                const cacheWritePrice = formatOpenRouterPricePerMillion(
+                                  endpoint.cacheWritePrice,
+                                );
+                                const isSelected = pinnedOpenRouterProvider?.id === endpoint.id;
+                                return (
+                                  <button
+                                    key={endpoint.id}
+                                    type="button"
+                                    className={cn(
+                                      "flex w-full items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition",
+                                      isSelected
+                                        ? "border-accent/40 bg-accent/10"
+                                        : "border-fg/10 bg-fg/5 hover:bg-fg/10",
+                                    )}
+                                    onClick={() => {
+                                      setModelAdvancedDraft({
+                                        ...modelAdvancedDraft,
+                                        openRouterProvider: {
+                                          id: endpoint.id,
+                                          name: endpoint.name,
+                                          logoUrl: endpoint.logoUrl ?? null,
+                                        },
+                                      });
+                                      setShowProviderPicker(false);
+                                    }}
+                                  >
+                                    <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-fg/10 bg-surface-el text-[10px] font-semibold text-fg/50">
+                                        {endpoint.name.slice(0, 2).toUpperCase()}
+                                        {endpoint.logoUrl && (
+                                          <img
+                                            src={endpoint.logoUrl}
+                                            alt=""
+                                            className="absolute inset-0 h-full w-full bg-surface-el object-contain p-1"
+                                            onError={(event) => {
+                                              event.currentTarget.style.display = "none";
+                                            }}
+                                          />
+                                        )}
+                                    </span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm text-fg">
+                                        {endpoint.name}
+                                      </span>
+                                      <span className="block truncate text-xs text-fg/40">
+                                        {endpoint.id}
+                                      </span>
+                                      <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-fg/35">
+                                        {inputPrice && (
+                                          <span>
+                                            {t("editModel.pricing.input", { price: inputPrice })}
+                                          </span>
+                                        )}
+                                        {outputPrice && (
+                                          <span>
+                                            {t("editModel.pricing.output", { price: outputPrice })}
+                                          </span>
+                                        )}
+                                        {cacheReadPrice && (
+                                          <span className="text-accent/70">
+                                            {t("editModel.pricing.cacheRead", {
+                                              price: cacheReadPrice,
+                                            })}
+                                          </span>
+                                        )}
+                                        {cacheWritePrice && (
+                                          <span className="text-accent/70">
+                                            {t("editModel.pricing.cacheWrite", {
+                                              price: cacheWritePrice,
+                                            })}
+                                          </span>
+                                        )}
+                                        {endpoint.contextLength && (
+                                          <span>{endpoint.contextLength.toLocaleString()} ctx</span>
+                                        )}
+                                        {endpoint.uptimeLast30m != null && (
+                                          <span>{endpoint.uptimeLast30m.toFixed(1)}% uptime</span>
+                                        )}
+                                        {endpoint.supportsPromptCaching &&
+                                          !cacheReadPrice &&
+                                          !cacheWritePrice && (
+                                          <span className="font-medium text-accent/70">
+                                            {t("editModel.providerPin.cacheSupported")}
+                                          </span>
+                                        )}
+                                      </span>
+                                    </span>
+                                    {isSelected && (
+                                      <Check className="h-4 w-4 shrink-0 text-accent/80" />
+                                    )}
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        </BottomMenu>
                       </FieldBlock>
                     </div>
                   )}
@@ -3181,7 +3675,7 @@ export function EditModelPage() {
                                 </div>
 
                                 {/* Context Length */}
-                                <div className="space-y-4">
+                                <div className="space-y-4" data-tour-id="model-runtime-context">
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
                                       <div className="space-y-0.5">
@@ -3665,7 +4159,7 @@ export function EditModelPage() {
                                     </div>
                                   </div>
 
-                                  <div className="space-y-3">
+                                  <div className="space-y-3" data-tour-id="model-runtime-presets">
                                     <span className="block text-[13px] font-medium text-fg/70">
                                       {t("editModel.layerPlacement.quickPresets")}
                                     </span>
@@ -3715,6 +4209,7 @@ export function EditModelPage() {
                                     )}
                                   </div>
 
+                                  {!(effectiveMultiGpuEnabled && multiGpuAvailable) && (
                                   <div className="space-y-4">
                                     <div className="flex items-center justify-between">
                                       <div className="space-y-0.5">
@@ -3756,6 +4251,603 @@ export function EditModelPage() {
                                         isCpuOnlyLlamaBackend && "cursor-not-allowed opacity-60",
                                       )}
                                     />
+                                    {eligibleGpuDevices.length > 0 && (
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="space-y-0.5">
+                                          <span className="block text-[13px] font-medium text-fg/70">
+                                            {t("runtimeDefaults.llamaSingleGpuTitle")}
+                                          </span>
+                                          <span className="block text-[13px] text-fg/40">
+                                            {t("runtimeDefaults.llamaSingleGpuDescription")}
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowSingleGpuMenu(true)}
+                                          disabled={isCpuOnlyLlamaBackend}
+                                          className={cn(
+                                            selectInputClassName,
+                                            "flex w-48 items-center justify-between gap-2 py-2.5 text-left",
+                                            isCpuOnlyLlamaBackend && "cursor-not-allowed opacity-60",
+                                          )}
+                                        >
+                                          <span className="truncate">{singleGpuMenuLabel}</span>
+                                          <ChevronDown className="h-4 w-4 shrink-0 text-fg/40" />
+                                        </button>
+                                      </div>
+                                    )}
+                                    <BottomMenu
+                                      isOpen={showSingleGpuMenu}
+                                      onClose={() => setShowSingleGpuMenu(false)}
+                                      title={t("runtimeDefaults.llamaSingleGpuTitle")}
+                                    >
+                                      <MenuSection>
+                                        <MenuButton
+                                          icon={Cpu}
+                                          title={t("runtimeDefaults.llamaSingleGpuAuto")}
+                                          description={t("runtimeDefaults.llamaSingleGpuAutoDesc")}
+                                          rightElement={
+                                            singleGpuDeviceId === null ? (
+                                              <Check className="h-4 w-4 text-accent" />
+                                            ) : undefined
+                                          }
+                                          onClick={() => {
+                                            setModelAdvancedDraft({
+                                              ...modelAdvancedDraft,
+                                              llamaSingleGpuDeviceId: null,
+                                            });
+                                            setShowSingleGpuMenu(false);
+                                          }}
+                                        />
+                                        {eligibleGpuDevices.map((device) => (
+                                          <MenuButton
+                                            key={device.index}
+                                            icon={Cpu}
+                                            title={
+                                              device.description ||
+                                              device.name ||
+                                              `GPU ${device.index}`
+                                            }
+                                            description={t("runtimeDefaults.llamaGpuMemory", {
+                                              free: (device.memoryFree / 1024 ** 3).toFixed(1),
+                                              total: (device.memoryTotal / 1024 ** 3).toFixed(1),
+                                            })}
+                                            rightElement={
+                                              singleGpuDeviceId === device.index ? (
+                                                <Check className="h-4 w-4 text-accent" />
+                                              ) : undefined
+                                            }
+                                            onClick={() => {
+                                              setModelAdvancedDraft({
+                                                ...modelAdvancedDraft,
+                                                llamaSingleGpuDeviceId: device.index,
+                                              });
+                                              setShowSingleGpuMenu(false);
+                                            }}
+                                          />
+                                        ))}
+                                      </MenuSection>
+                                    </BottomMenu>
+                                  </div>
+                                  )}
+
+                                  <div
+                                    className="space-y-4 border-t border-fg/8 pt-4"
+                                    data-tour-id="model-runtime-gpu"
+                                  >
+                                    <div className="flex items-center justify-between gap-4">
+                                      <div className="space-y-0.5">
+                                        <span className="block text-[13px] font-medium text-fg/70">
+                                          {t("runtimeDefaults.llamaMultiGpuTitle")}
+                                        </span>
+                                        <span className="block text-[13px] text-fg/40">
+                                          {multiGpuAvailable
+                                            ? t("runtimeDefaults.llamaMultiGpuSplitHint")
+                                            : t("runtimeDefaults.llamaMultiGpuRequiresTwo")}
+                                        </span>
+                                        {modelAdvancedDraft.llamaMultiGpuEnabled == null &&
+                                          globalMultiGpuDefault &&
+                                          multiGpuAvailable && (
+                                            <span className="block text-[12px] text-accent/75">
+                                              {t(
+                                                "editModel.layerPlacement.multiGpuGlobalDefaultOn",
+                                              )}
+                                            </span>
+                                          )}
+                                      </div>
+                                      <select
+                                        value={
+                                          modelAdvancedDraft.llamaMultiGpuEnabled === true
+                                            ? "enabled"
+                                            : modelAdvancedDraft.llamaMultiGpuEnabled === false
+                                              ? "disabled"
+                                              : "inherit"
+                                        }
+                                        onChange={(event) => {
+                                          const value = event.target.value;
+                                          const nextEnabled =
+                                            value === "inherit" ? null : value === "enabled";
+                                          setModelAdvancedDraft({
+                                            ...modelAdvancedDraft,
+                                            llamaMultiGpuEnabled: nextEnabled,
+                                            llamaSingleGpuDeviceId:
+                                              nextEnabled === true
+                                                ? null
+                                                : modelAdvancedDraft.llamaSingleGpuDeviceId,
+                                            llamaGpuLayers:
+                                              nextEnabled === true
+                                                ? null
+                                                : modelAdvancedDraft.llamaGpuLayers,
+                                          });
+                                        }}
+                                        disabled={isCpuOnlyLlamaBackend || !multiGpuAvailable}
+                                        className={cn(
+                                          selectInputClassName,
+                                          "w-40",
+                                          (isCpuOnlyLlamaBackend || !multiGpuAvailable) &&
+                                            "cursor-not-allowed opacity-60",
+                                        )}
+                                      >
+                                        <option value="inherit" className="bg-[#16171d]">
+                                          {t("runtimeDefaults.llamaMultiGpuInherit")}
+                                        </option>
+                                        <option value="enabled" className="bg-[#16171d]">
+                                          {t("runtimeDefaults.llamaMultiGpuEnabled")}
+                                        </option>
+                                        <option value="disabled" className="bg-[#16171d]">
+                                          {t("runtimeDefaults.llamaMultiGpuDisabled")}
+                                        </option>
+                                      </select>
+                                    </div>
+
+                                    {effectiveMultiGpuEnabled &&
+                                      multiGpuAvailable &&
+                                      modelAdvancedDraft.llamaGpuLayers != null && (
+                                        <div className="rounded-lg border border-amber-400/20 bg-amber-500/5 px-3 py-2.5">
+                                          <div className="flex items-start gap-2">
+                                            <AlertTriangle
+                                              size={13}
+                                              className="mt-0.5 shrink-0 text-amber-300"
+                                            />
+                                            <div className="min-w-0 flex-1 space-y-1.5">
+                                              <p className="text-[12px] leading-relaxed text-amber-300/90">
+                                                {t("editModel.layerPlacement.multiGpuFixedLayers", {
+                                                  layers: modelAdvancedDraft.llamaGpuLayers,
+                                                })}
+                                              </p>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setModelAdvancedDraft({
+                                                    ...modelAdvancedDraft,
+                                                    llamaGpuLayers: null,
+                                                  })
+                                                }
+                                                className="rounded-md border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 text-[11.5px] font-medium text-amber-200 transition hover:bg-amber-500/20"
+                                              >
+                                                {t(
+                                                  "editModel.layerPlacement.multiGpuFixedLayersReset",
+                                                )}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                    {modelAdvancedDraft.llamaMultiGpuEnabled == null &&
+                                      globalMultiGpuDefault &&
+                                      multiGpuAvailable &&
+                                      modelAdvancedDraft.llamaSingleGpuDeviceId != null && (
+                                        <div className="rounded-lg border border-amber-400/20 bg-amber-500/5 px-3 py-2.5">
+                                          <div className="flex items-start gap-2">
+                                            <AlertTriangle
+                                              size={13}
+                                              className="mt-0.5 shrink-0 text-amber-300"
+                                            />
+                                            <div className="min-w-0 flex-1 space-y-1.5">
+                                              <p className="text-[12px] leading-relaxed text-amber-300/90">
+                                                {t("editModel.layerPlacement.multiGpuPinnedNotice", {
+                                                  device:
+                                                    eligibleGpuDevices.find(
+                                                      (device) =>
+                                                        device.index ===
+                                                        modelAdvancedDraft.llamaSingleGpuDeviceId,
+                                                    )?.description ||
+                                                    `GPU ${modelAdvancedDraft.llamaSingleGpuDeviceId}`,
+                                                })}
+                                              </p>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setModelAdvancedDraft({
+                                                    ...modelAdvancedDraft,
+                                                    llamaSingleGpuDeviceId: null,
+                                                  })
+                                                }
+                                                className="rounded-md border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 text-[11.5px] font-medium text-amber-200 transition hover:bg-amber-500/20"
+                                              >
+                                                {t(
+                                                  "editModel.layerPlacement.multiGpuPinnedRemove",
+                                                )}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                    {effectiveMultiGpuEnabled &&
+                                      multiGpuAvailable && (
+                                        <div className="space-y-4">
+                                          <div className="flex items-center justify-between gap-3">
+                                            <div className="space-y-0.5">
+                                              <span className="block text-[13px] font-medium text-fg/60">
+                                                {t("runtimeDefaults.llamaDistributionTitle")}
+                                              </span>
+                                              <span className="block text-[12px] text-fg/40">
+                                                {t("runtimeDefaults.llamaDistributionDescription")}
+                                              </span>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => setShowDistributionMenu(true)}
+                                              className={cn(
+                                                selectInputClassName,
+                                                "flex w-48 items-center justify-between gap-2 py-2.5 text-left",
+                                              )}
+                                            >
+                                              <span className="truncate">{distributionMenuLabel}</span>
+                                              <ChevronDown className="h-4 w-4 shrink-0 text-fg/40" />
+                                            </button>
+                                          </div>
+                                          <BottomMenu
+                                            isOpen={showDistributionMenu}
+                                            onClose={() => setShowDistributionMenu(false)}
+                                            title={t("runtimeDefaults.llamaDistributionTitle")}
+                                          >
+                                            <MenuSection>
+                                              {distributionOptions.map((option) => (
+                                                <MenuButton
+                                                  key={option.value}
+                                                  icon={option.icon}
+                                                  title={option.label}
+                                                  description={option.description}
+                                                  rightElement={
+                                                    llamaDistributionMode === option.value ? (
+                                                      <Check className="h-4 w-4 text-accent" />
+                                                    ) : undefined
+                                                  }
+                                                  onClick={() => {
+                                                    setModelAdvancedDraft({
+                                                      ...modelAdvancedDraft,
+                                                      llamaGpuDistributionMode: option.value,
+                                                    });
+                                                    setShowDistributionMenu(false);
+                                                  }}
+                                                />
+                                              ))}
+                                            </MenuSection>
+                                          </BottomMenu>
+
+                                          <div className="space-y-2">
+                                            {eligibleGpuDevices.length === 0 ? (
+                                              <div className="rounded-lg border border-fg/10 bg-surface-el/20 px-3 py-2 text-[13px] text-fg/45">
+                                                {t("runtimeDefaults.llamaGpuNone")}
+                                              </div>
+                                            ) : (
+                                              eligibleGpuDevices.map((device) => {
+                                                const checked = selectedGpuDeviceIds.includes(
+                                                  device.index,
+                                                );
+                                                return (
+                                                  <label
+                                                    key={device.index}
+                                                    className={cn(
+                                                      "flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 transition",
+                                                      checked
+                                                        ? "border-accent/25 bg-accent/10"
+                                                        : "border-fg/10 bg-surface-el/20 hover:bg-surface-el/30",
+                                                    )}
+                                                  >
+                                                    <div className="min-w-0">
+                                                      <span className="block truncate text-[13px] font-medium text-fg/75">
+                                                        {device.description ||
+                                                          device.name ||
+                                                          `GPU ${device.index}`}
+                                                      </span>
+                                                      <span className="block font-mono text-[11px] text-fg/38">
+                                                        #{device.index} · {device.backend} ·{" "}
+                                                        {t("runtimeDefaults.llamaGpuMemory", {
+                                                          free: (
+                                                            device.memoryFree /
+                                                            1024 ** 3
+                                                          ).toFixed(1),
+                                                          total: (
+                                                            device.memoryTotal /
+                                                            1024 ** 3
+                                                          ).toFixed(1),
+                                                        })}
+                                                      </span>
+                                                    </div>
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={checked}
+                                                      onChange={() =>
+                                                        updateLlamaGpuDeviceSelection(device.index)
+                                                      }
+                                                      className="h-4 w-4 accent-current"
+                                                    />
+                                                  </label>
+                                                );
+                                              })
+                                            )}
+                                          </div>
+
+                                          {selectedGpuDeviceIds.length === 1 && (
+                                            <p className="text-[12px] text-warning/80">
+                                              {t("runtimeDefaults.llamaGpuMinTwo")}
+                                            </p>
+                                          )}
+
+                                          {llamaDistributionMode === "priority" && (
+                                            <div className="space-y-2">
+                                              <div className="space-y-0.5">
+                                                <span className="block text-[13px] font-medium text-fg/60">
+                                                  {t("runtimeDefaults.llamaPriorityVramTitle")}
+                                                </span>
+                                                <span className="block text-[12px] text-fg/40">
+                                                  {t("runtimeDefaults.llamaPriorityVramDescription")}
+                                                </span>
+                                              </div>
+                                              <NumberInput
+                                                min={0}
+                                                max={1024}
+                                                step={0.5}
+                                                value={
+                                                  modelAdvancedDraft.llamaPriorityVramLimitBytes !=
+                                                  null
+                                                    ? Number(
+                                                        (
+                                                          modelAdvancedDraft.llamaPriorityVramLimitBytes /
+                                                          1024 ** 3
+                                                        ).toFixed(2),
+                                                      )
+                                                    : null
+                                                }
+                                                onChange={(next) =>
+                                                  setModelAdvancedDraft({
+                                                    ...modelAdvancedDraft,
+                                                    llamaPriorityVramLimitBytes:
+                                                      next === null || next <= 0
+                                                        ? null
+                                                        : Math.round(next * 1024 ** 3),
+                                                  })
+                                                }
+                                                placeholder={t("common.labels.auto")}
+                                                className={numberInputClassName}
+                                              />
+                                            </div>
+                                          )}
+
+                                          {llamaDistributionMode === "manual" && (
+                                            <div className="space-y-2">
+                                              {selectedEligibleDevices.length === 0 ? (
+                                                <p className="text-[12px] text-fg/40">
+                                                  {t("runtimeDefaults.llamaManualAssignHint")}
+                                                </p>
+                                              ) : (
+                                                selectedEligibleDevices.map((device) => (
+                                                  <div
+                                                    key={device.index}
+                                                    className="flex items-center justify-between gap-3"
+                                                  >
+                                                    <span className="min-w-0 truncate text-[13px] text-fg/65">
+                                                      {device.description ||
+                                                        device.name ||
+                                                        `GPU ${device.index}`}
+                                                    </span>
+                                                    <div className="w-28">
+                                                      <NumberInput
+                                                        min={0}
+                                                        max={ADVANCED_LLAMA_GPU_LAYERS_RANGE.max}
+                                                        step={1}
+                                                        value={manualLayerByDevice(device.index)}
+                                                        onChange={(next) =>
+                                                          updateLlamaManualLayers(
+                                                            device.index,
+                                                            next === null || next < 0
+                                                              ? null
+                                                              : Math.trunc(next),
+                                                          )
+                                                        }
+                                                        placeholder="0"
+                                                        className={numberInputClassName}
+                                                      />
+                                                    </div>
+                                                  </div>
+                                                ))
+                                              )}
+                                              <div className="flex items-center justify-between gap-3">
+                                                <span className="text-[13px] text-fg/65">
+                                                  {t("runtimeDefaults.llamaCpuLayers")}
+                                                </span>
+                                                <div className="w-28">
+                                                  <NumberInput
+                                                    min={0}
+                                                    max={ADVANCED_LLAMA_GPU_LAYERS_RANGE.max}
+                                                    step={1}
+                                                    value={modelAdvancedDraft.llamaCpuLayers ?? null}
+                                                    onChange={(next) =>
+                                                      setModelAdvancedDraft({
+                                                        ...modelAdvancedDraft,
+                                                        llamaCpuLayers:
+                                                          next === null || next < 0
+                                                            ? null
+                                                            : Math.trunc(next),
+                                                      })
+                                                    }
+                                                    placeholder="0"
+                                                    className={numberInputClassName}
+                                                  />
+                                                </div>
+                                              </div>
+                                              <p
+                                                className={cn(
+                                                  "text-[12px]",
+                                                  manualLayerSumValid
+                                                    ? "text-fg/34"
+                                                    : "text-warning/80",
+                                                )}
+                                              >
+                                                {totalModelLayers === null
+                                                  ? t("runtimeDefaults.llamaManualPlacementBrief", {
+                                                      gpu: manualGpuLayerTotal.toLocaleString(),
+                                                      cpu: manualCpuLayers.toLocaleString(),
+                                                    })
+                                                  : `${t("runtimeDefaults.llamaManualPlacementFull", {
+                                                      gpu: manualGpuLayerTotal.toLocaleString(),
+                                                      cpu: manualCpuLayers.toLocaleString(),
+                                                      total: totalModelLayers.toLocaleString(),
+                                                    })}${
+                                                      manualLayerSumValid
+                                                        ? ""
+                                                        : ` — ${t("runtimeDefaults.llamaManualSumWarning")}`
+                                                    }`}
+                                              </p>
+                                            </div>
+                                          )}
+
+                                          {llamaDistributionMode !== "manual" &&
+                                            llamaContextInfo?.estimatedPlacement &&
+                                            selectedEligibleDevices.length >= 2 && (
+                                              <p className="text-[12px] text-fg/34">
+                                                {t("runtimeDefaults.llamaEstimatedPlacement", {
+                                                  breakdown: selectedEligibleDevices
+                                                    .map(
+                                                      (device, idx) =>
+                                                        `${
+                                                          device.description ||
+                                                          device.name ||
+                                                          `GPU ${device.index}`
+                                                        } ${(
+                                                          llamaContextInfo.estimatedPlacement
+                                                            ?.perDeviceLayers[idx] ?? 0
+                                                        ).toLocaleString()}`,
+                                                    )
+                                                    .join(" • "),
+                                                  total:
+                                                    llamaContextInfo.estimatedPlacement.totalGpuLayers.toLocaleString(),
+                                                })}
+                                              </p>
+                                            )}
+
+                                          <div className="space-y-2 border-t border-fg/8 pt-3">
+                                            <div className="flex items-center justify-between gap-3">
+                                              <div className="space-y-0.5">
+                                                <span className="block text-[13px] font-medium text-fg/60">
+                                                  {t("runtimeDefaults.llamaKvPlacementTitle")}
+                                                </span>
+                                                <span className="block text-[12px] text-fg/40">
+                                                  {t("runtimeDefaults.llamaKvPlacementDescription")}
+                                                </span>
+                                              </div>
+                                              <button
+                                                type="button"
+                                                onClick={() => setShowKvCacheMenu(true)}
+                                                className={cn(
+                                                  selectInputClassName,
+                                                  "flex w-48 items-center justify-between gap-2 py-2.5 text-left",
+                                                )}
+                                              >
+                                                <span className="truncate">{kvPlacementMenuLabel}</span>
+                                                <ChevronDown className="h-4 w-4 shrink-0 text-fg/40" />
+                                              </button>
+                                            </div>
+                                            <BottomMenu
+                                              isOpen={showKvCacheMenu}
+                                              onClose={() => setShowKvCacheMenu(false)}
+                                              title={t("runtimeDefaults.llamaKvPlacementTitle")}
+                                            >
+                                              <MenuSection>
+                                                {kvPlacementOptions.map((option) => (
+                                                  <MenuButton
+                                                    key={option.value}
+                                                    icon={option.icon}
+                                                    title={option.label}
+                                                    description={option.description}
+                                                    rightElement={
+                                                      currentKvPlacement === option.value ? (
+                                                        <Check className="h-4 w-4 text-accent" />
+                                                      ) : undefined
+                                                    }
+                                                    onClick={() => {
+                                                      setModelAdvancedDraft({
+                                                        ...modelAdvancedDraft,
+                                                        llamaKvPlacement: option.value,
+                                                      });
+                                                      setShowKvCacheMenu(false);
+                                                    }}
+                                                  />
+                                                ))}
+                                              </MenuSection>
+                                            </BottomMenu>
+                                            {modelAdvancedDraft.llamaKvPlacement === "pin" && (
+                                              <div className="flex items-center justify-between gap-3">
+                                                <span className="text-[13px] text-fg/65">
+                                                  {t("runtimeDefaults.llamaPinnedGpu")}
+                                                </span>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setShowPinnedGpuMenu(true)}
+                                                  className={cn(
+                                                    selectInputClassName,
+                                                    "flex w-48 items-center justify-between gap-2 py-2.5 text-left",
+                                                  )}
+                                                >
+                                                  <span className="truncate">{pinnedGpuMenuLabel}</span>
+                                                  <ChevronDown className="h-4 w-4 shrink-0 text-fg/40" />
+                                                </button>
+                                              </div>
+                                            )}
+                                            <BottomMenu
+                                              isOpen={showPinnedGpuMenu}
+                                              onClose={() => setShowPinnedGpuMenu(false)}
+                                              title={t("runtimeDefaults.llamaPinnedGpu")}
+                                            >
+                                              <MenuSection>
+                                                {selectedEligibleDevices.map((device) => (
+                                                  <MenuButton
+                                                    key={device.index}
+                                                    icon={Cpu}
+                                                    title={
+                                                      device.description ||
+                                                      device.name ||
+                                                      `GPU ${device.index}`
+                                                    }
+                                                    description={t("runtimeDefaults.llamaGpuMemory", {
+                                                      free: (device.memoryFree / 1024 ** 3).toFixed(1),
+                                                      total: (device.memoryTotal / 1024 ** 3).toFixed(
+                                                        1,
+                                                      ),
+                                                    })}
+                                                    rightElement={
+                                                      pinnedGpuIndex === device.index ? (
+                                                        <Check className="h-4 w-4 text-accent" />
+                                                      ) : undefined
+                                                    }
+                                                    onClick={() => {
+                                                      setModelAdvancedDraft({
+                                                        ...modelAdvancedDraft,
+                                                        llamaMainGpu: device.index,
+                                                      });
+                                                      setShowPinnedGpuMenu(false);
+                                                    }}
+                                                  />
+                                                ))}
+                                              </MenuSection>
+                                            </BottomMenu>
+                                          </div>
+                                        </div>
+                                      )}
                                   </div>
 
                                   <div className="grid grid-cols-2 gap-6">
@@ -5588,6 +6680,10 @@ export function EditModelPage() {
           </div>
         );
       })()}
+
+      {showEditModelTour && isLocalModel && activeDetailPanel === "runtime" && (
+        <GuidedTour tour="editModelLlama" onDismiss={dismissEditModelTour} />
+      )}
     </div>
   );
 }

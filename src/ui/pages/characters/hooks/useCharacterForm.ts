@@ -1,4 +1,5 @@
 import { useReducer, useEffect, useCallback } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   readSettings,
   saveCharacter,
@@ -33,6 +34,11 @@ import {
   createDefaultCompanionConfig,
   withCompanionPromptTemplate,
 } from "../utils/companionDefaults";
+import {
+  buildModelRequirementsQueuePath,
+  getMissingModelRequirements,
+} from "../../../modelRequirements";
+import { buildCharacterCreateLibraryReturnKey } from "../../../components/AvatarPicker/librarySelection";
 export enum Step {
   Identity = 1,
   Description = 2,
@@ -294,6 +300,8 @@ function characterFormReducer(
 
 export function useCharacterForm(draftCharacter?: any) {
   const [state, dispatch] = useReducer(characterFormReducer, initialState);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   // Load models and prompt templates on mount
   useEffect(() => {
@@ -920,6 +928,26 @@ export function useCharacterForm(draftCharacter?: any) {
       return;
     }
 
+    if (state.mode === "companion") {
+      const missing = await getMissingModelRequirements({ requireCompanion: true });
+      if (missing.length > 0) {
+        const returnTo = `${location.pathname}${location.search}`;
+        sessionStorage.setItem(buildCharacterCreateLibraryReturnKey(returnTo), "true");
+        dispatch({
+          type: "SET_ERROR",
+          payload: "Companion mode needs local analysis models before this character can be saved.",
+        });
+        toast.warning(
+          "Companion setup required",
+          missing.length === 1
+            ? "One local companion model is missing."
+            : `${missing.length} local companion models are missing.`,
+        );
+        navigate(buildModelRequirementsQueuePath(missing, returnTo));
+        return false;
+      }
+    }
+
     const resolveErrorMessage = (err: unknown, fallback: string) => {
       if (typeof err === "string") return err;
       if (!err || typeof err !== "object") return fallback;
@@ -1158,6 +1186,9 @@ export function useCharacterForm(draftCharacter?: any) {
     state.voiceConfig,
     state.voiceAutoplay,
     state.saving,
+    location.pathname,
+    location.search,
+    navigate,
   ]);
 
   // Computed values

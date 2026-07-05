@@ -98,6 +98,7 @@ export function readWindowCorners(): WindowCorners {
 
 async function applyDecorations(design: TitleBarDesign) {
   if (!isDesktop) return;
+  if (isMacOS) return;
   try {
     await getCurrentWindow().setDecorations(design === "native");
   } catch {

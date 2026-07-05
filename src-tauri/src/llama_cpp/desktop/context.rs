@@ -1,9 +1,10 @@
 use super::engine::{shared_backend, using_rocm_backend};
 use super::offload::{
-    compute_recommended_context_for_gpu_layers, load_model_metadata, plan_smart_gpu_offload,
-    LlamaModelMetadata,
+    compute_recommended_context_for_gpu_layers, load_model_metadata, plan_multi_gpu_distribution,
+    plan_smart_gpu_offload, LlamaModelMetadata,
 };
 use super::*;
+use crate::chat_manager::types::GpuLayerAssignment;
 use llama_cpp_sys_2::{
     ggml_backend_dev_count, ggml_backend_dev_get, ggml_backend_dev_memory, ggml_backend_dev_type,
     GGML_BACKEND_DEVICE_TYPE_ACCEL, GGML_BACKEND_DEVICE_TYPE_GPU, GGML_BACKEND_DEVICE_TYPE_IGPU,
@@ -25,6 +26,37 @@ pub(crate) struct LlamaCppContextInfo {
     available_vram_bytes: Option<u64>,
     model_size_bytes: Option<u64>,
     layer_count: Option<u32>,
+    supports_gpu_offload: Option<bool>,
+    selected_gpu_device_ids: Option<Vec<usize>>,
+    per_device_vram: Option<Vec<PerDeviceVram>>,
+    estimated_placement: Option<EstimatedPlacement>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PerDeviceVram {
+    index: usize,
+    memory_free: u64,
+    memory_total: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EstimatedPlacement {
+    total_gpu_layers: u32,
+    per_device_layers: Vec<u32>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LlamaGpuDeviceInfo {
+    pub(crate) index: usize,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    backend: String,
+    memory_total: u64,
+    memory_free: u64,
+    device_type: String,
 }
 
 fn push_unique_u32(out: &mut Vec<u32>, value: u32) {
@@ -240,6 +272,101 @@ fn windows_local_vram_cap_bytes() -> Option<u64> {
 
 pub(crate) fn get_available_vram_bytes() -> Option<u64> {
     choose_effective_vram_bytes(ggml_available_vram_bytes(), windows_local_vram_cap_bytes())
+}
+
+pub(crate) fn list_gpu_devices() -> Vec<LlamaGpuDeviceInfo> {
+    llama_cpp_2::list_llama_ggml_backend_devices()
+        .into_iter()
+        .filter(|device| {
+            matches!(
+                device.device_type,
+                llama_cpp_2::LlamaBackendDeviceType::Gpu
+                    | llama_cpp_2::LlamaBackendDeviceType::Accelerator
+            )
+        })
+        .map(|device| LlamaGpuDeviceInfo {
+            index: device.index,
+            name: device.name,
+            description: device.description,
+            backend: device.backend,
+            memory_total: device.memory_total as u64,
+            memory_free: device.memory_free as u64,
+            device_type: format!("{:?}", device.device_type),
+        })
+        .collect()
+}
+
+/// Per-device free/total VRAM for the explicitly selected device ids, preserving
+/// the caller's order. Integrated GPUs are skipped (never used for multi-GPU).
+/// Each tuple is `(device_id, free_bytes, total_bytes)`.
+pub(crate) fn get_per_device_free_vram(device_ids: &[usize]) -> Vec<(usize, u64, u64)> {
+    let mut out = Vec::new();
+    unsafe {
+        let count = ggml_backend_dev_count();
+        for device_id in device_ids {
+            if *device_id >= count {
+                continue;
+            }
+            let dev = ggml_backend_dev_get(*device_id);
+            if dev.is_null() {
+                continue;
+            }
+            let dev_type = ggml_backend_dev_type(dev);
+            let is_gpu_like = dev_type == GGML_BACKEND_DEVICE_TYPE_GPU
+                || dev_type == GGML_BACKEND_DEVICE_TYPE_ACCEL;
+            if !is_gpu_like {
+                continue;
+            }
+            let mut free: usize = 0;
+            let mut total: usize = 0;
+            ggml_backend_dev_memory(dev, &mut free, &mut total);
+            if free == 0 && total == 0 {
+                // Device is genuinely inaccessible — skip.
+                continue;
+            }
+            // Some GPUs (Blackwell + CUDA 13.x) report total=0 while free is
+            // correct. Use free as a conservative capacity stand-in so the
+            // device is not silently dropped from multi-GPU VRAM planning.
+            let effective_total = if total == 0 { free } else { total };
+            out.push((*device_id, free as u64, effective_total as u64));
+        }
+    }
+    out
+}
+
+pub(crate) fn get_aligned_per_device_vram(device_ids: &[usize]) -> Vec<(usize, u64, u64)> {
+    let per_device = get_per_device_free_vram(device_ids);
+    align_per_device_vram(device_ids, &per_device)
+}
+
+pub(crate) fn align_per_device_vram(
+    device_ids: &[usize],
+    per_device_vram: &[(usize, u64, u64)],
+) -> Vec<(usize, u64, u64)> {
+    let impute_capacity = per_device_vram
+        .iter()
+        .map(|(_, free, total)| (*free).max(*total))
+        .min()
+        .unwrap_or(0);
+
+    device_ids
+        .iter()
+        .map(|id| {
+            per_device_vram
+                .iter()
+                .find(|(dev, _, _)| dev == id)
+                .copied()
+                .unwrap_or((*id, impute_capacity, impute_capacity))
+        })
+        .collect()
+}
+
+pub(crate) fn combined_effective_vram_bytes(per_device_vram: &[(usize, u64, u64)]) -> Option<u64> {
+    let combined: u64 = per_device_vram
+        .iter()
+        .map(|(_, free, total)| (*free).max(*total))
+        .sum();
+    (combined > 0).then_some(combined)
 }
 
 /// Detect if the system uses unified memory (shared RAM/VRAM).
@@ -460,7 +587,10 @@ fn compute_cpu_safe_recommended_context_for_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_effective_vram_bytes, cpu_fallback_headroom_bytes};
+    use super::{
+        align_per_device_vram, choose_effective_vram_bytes, combined_effective_vram_bytes,
+        cpu_fallback_headroom_bytes,
+    };
 
     #[test]
     fn cpu_fallback_headroom_does_not_exceed_budget() {
@@ -502,6 +632,50 @@ mod tests {
             Some(3_u64 * 1024 * 1024 * 1024)
         );
     }
+
+    #[test]
+    fn combined_effective_vram_prefers_reported_capacity_per_device() {
+        let per_device = vec![(0, 10, 12), (1, 14, 0)];
+
+        assert_eq!(combined_effective_vram_bytes(&per_device), Some(26));
+    }
+
+    #[test]
+    fn combined_effective_vram_budgets_capacity_over_current_free() {
+        let gib = 1024_u64 * 1024 * 1024;
+        let per_device = vec![(0, 4 * gib, 24 * gib)];
+
+        assert_eq!(combined_effective_vram_bytes(&per_device), Some(24 * gib));
+    }
+
+    #[test]
+    fn aligned_per_device_vram_imputes_missing_selected_devices() {
+        let aligned = align_per_device_vram(&[0, 1], &[(0, 10, 12)]);
+
+        assert_eq!(aligned, vec![(0, 10, 12), (1, 12, 12)]);
+    }
+
+    #[test]
+    fn aligned_per_device_vram_imputes_unreported_device_from_reported_sibling() {
+        let gib = 1024_u64 * 1024 * 1024;
+        let aligned = align_per_device_vram(&[0, 1], &[(0, 20 * gib, 24 * gib)]);
+
+        assert_eq!(
+            aligned,
+            vec![(0, 20 * gib, 24 * gib), (1, 24 * gib, 24 * gib)]
+        );
+    }
+
+    #[test]
+    fn aligned_per_device_vram_imputes_from_smallest_reported_device() {
+        let gib = 1024_u64 * 1024 * 1024;
+        let aligned = align_per_device_vram(
+            &[0, 1, 2],
+            &[(0, 20 * gib, 24 * gib), (1, 6 * gib, 8 * gib)],
+        );
+
+        assert_eq!(aligned[2], (2, 8 * gib, 8 * gib));
+    }
 }
 
 pub(crate) async fn llamacpp_context_info(
@@ -510,11 +684,20 @@ pub(crate) async fn llamacpp_context_info(
     llama_offload_kqv: Option<bool>,
     llama_kv_type: Option<String>,
     llama_gpu_layers: Option<u32>,
+    llama_multi_gpu_enabled: Option<bool>,
+    llama_gpu_device_ids: Option<Vec<usize>>,
+    llama_gpu_distribution_mode: Option<String>,
+    llama_gpu_manual_layers: Option<Vec<GpuLayerAssignment>>,
+    llama_main_gpu: Option<i32>,
+    llama_single_gpu_device_id: Option<usize>,
+    llama_kv_placement: Option<String>,
+    llama_priority_vram_limit_bytes: Option<u64>,
     llama_mmproj_path: Option<String>,
     llama_mtp_enabled: Option<bool>,
     llama_mtp_model_path: Option<String>,
 ) -> Result<LlamaCppContextInfo, String> {
     let _ = app;
+    let _ = llama_main_gpu;
     if model_path.trim().is_empty() {
         return Err(crate::utils::err_msg(
             module_path!(),
@@ -533,7 +716,26 @@ pub(crate) async fn llamacpp_context_info(
     let metadata = load_model_metadata(&model_path)?;
     let max_ctx = metadata.max_context_length.max(1);
     let available_memory_bytes = get_available_memory_bytes();
-    let available_vram_bytes = get_available_vram_bytes();
+    let selected_gpu_device_ids = llama_gpu_device_ids.unwrap_or_default();
+    let multi_gpu_active = llama_multi_gpu_enabled == Some(true)
+        && selected_gpu_device_ids.len() >= 2
+        && llama_single_gpu_device_id.is_none();
+    let aligned_per_device_vram = if multi_gpu_active {
+        get_aligned_per_device_vram(&selected_gpu_device_ids)
+    } else {
+        Vec::new()
+    };
+    let available_vram_bytes = if multi_gpu_active {
+        combined_effective_vram_bytes(&aligned_per_device_vram).or_else(get_available_vram_bytes)
+    } else if let Some(device_id) = llama_single_gpu_device_id {
+        get_aligned_per_device_vram(&[device_id])
+            .first()
+            .map(|(_, free, _)| *free)
+            .filter(|free| *free > 0)
+            .or_else(get_available_vram_bytes)
+    } else {
+        get_available_vram_bytes()
+    };
     let supports_gpu_offload = shared_backend()?.supports_gpu_offload();
     let sidecar_vram_reserve_bytes = if supports_gpu_offload {
         let mmproj_reserve = llama_mmproj_path
@@ -556,7 +758,18 @@ pub(crate) async fn llamacpp_context_info(
     } else {
         0
     };
-    let resolved_offload_kqv = if llama_offload_kqv.is_some() {
+    let kv_placement_offload_kqv: Option<bool> = if multi_gpu_active {
+        match llama_kv_placement.as_deref() {
+            Some("split") | Some("pin") => Some(true),
+            Some("systemRam") => Some(false),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let resolved_offload_kqv = if let Some(placement) = kv_placement_offload_kqv {
+        Some(placement)
+    } else if llama_offload_kqv.is_some() {
         llama_offload_kqv
     } else if !supports_gpu_offload || using_rocm_backend() {
         Some(false)
@@ -609,6 +822,79 @@ pub(crate) async fn llamacpp_context_info(
         )
     };
 
+    let (per_device_vram, estimated_placement) = if multi_gpu_active && supports_gpu_offload {
+        let per_dev = aligned_per_device_vram.clone();
+        let device_free_aligned: Vec<u64> = per_dev.iter().map(|(_, free, _)| *free).collect();
+        let dist_mode = llama_gpu_distribution_mode.as_deref().unwrap_or("balanced");
+        let dist = if dist_mode == "manual" {
+            let manual_aligned: Vec<u32> = selected_gpu_device_ids
+                .iter()
+                .map(|id| {
+                    llama_gpu_manual_layers
+                        .as_ref()
+                        .and_then(|m| m.iter().find(|a| a.device_id == *id))
+                        .map(|a| a.layers)
+                        .unwrap_or(0)
+                })
+                .collect();
+            plan_multi_gpu_distribution(
+                "manual",
+                &device_free_aligned,
+                metadata.layer_count.max(1),
+                0,
+                0,
+                0,
+                Some(&manual_aligned),
+                None,
+            )
+        } else {
+            let flash_attention_policy = if using_rocm_backend() {
+                llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_DISABLED
+            } else {
+                llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_AUTO
+            };
+            let plan = plan_smart_gpu_offload(
+                &model_path,
+                available_memory_bytes,
+                available_vram_bytes,
+                None,
+                512,
+                resolved_offload_kqv,
+                llama_kv_type.as_deref(),
+                flash_attention_policy,
+                sidecar_vram_reserve_bytes,
+            )?;
+            let kv_bytes_per_layer = plan.kv_bytes_per_layer;
+            plan_multi_gpu_distribution(
+                dist_mode,
+                &device_free_aligned,
+                plan.total_layers,
+                plan.bytes_per_layer,
+                kv_bytes_per_layer,
+                plan.estimated_gpu_layers,
+                None,
+                llama_priority_vram_limit_bytes,
+            )
+        };
+        let vram = per_dev
+            .into_iter()
+            .map(|(index, free, total)| PerDeviceVram {
+                index,
+                memory_free: free,
+                memory_total: total,
+            })
+            .collect();
+        (
+            Some(vram),
+            Some(EstimatedPlacement {
+                total_gpu_layers: dist.n_gpu_layers,
+                per_device_layers: dist.per_device_layers,
+            }),
+        )
+    } else {
+        (None, None)
+    };
+
     Ok(LlamaCppContextInfo {
         max_context_length: max_ctx,
         recommended_context_length,
@@ -616,5 +902,13 @@ pub(crate) async fn llamacpp_context_info(
         available_vram_bytes,
         model_size_bytes: Some(metadata.model_size_bytes),
         layer_count: Some(metadata.layer_count),
+        supports_gpu_offload: Some(supports_gpu_offload),
+        selected_gpu_device_ids: if multi_gpu_active {
+            Some(selected_gpu_device_ids)
+        } else {
+            None
+        },
+        per_device_vram,
+        estimated_placement,
     })
 }

@@ -20,6 +20,10 @@ mod util;
 
 use specs::*;
 
+pub(crate) async fn ensure_onnxruntime_loaded(app: &AppHandle) -> Result<(), String> {
+    ort_runtime::ensure_ort_init(app).await
+}
+
 const MAX_SEQ_LENGTH_V1: usize = 512;
 const MAX_SEQ_LENGTH_MODERN: usize = 4096;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -120,15 +124,13 @@ pub fn embedding_model_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn resolve_selected_source_version(
-    app: &AppHandle,
+    preferred: Option<&str>,
     _has_v1: bool,
     _has_v2: bool,
     has_v3: bool,
     has_v4: bool,
 ) -> Option<EmbeddingSourceVersion> {
-    let preferred = settings::read_embedding_preferences(app).preferred_source_version;
-
-    match preferred.as_deref() {
+    match preferred {
         Some("v4") if has_v4 => Some(EmbeddingSourceVersion::V4),
         Some("v3") if has_v3 => Some(EmbeddingSourceVersion::V3),
         _ => {
@@ -186,8 +188,9 @@ fn resolve_runtime_model(app: &AppHandle) -> Result<ActiveEmbeddingConfig, Strin
     let model_dir = embedding_model_dir(app)?;
     layout::migrate_legacy_layout(&model_dir)?;
     let installed = layout::detect_installed_sources(&model_dir);
+    let prefs = settings::read_embedding_preferences(app);
     let source = resolve_selected_source_version(
-        app,
+        prefs.preferred_source_version.as_deref(),
         installed.has_v1,
         installed.has_v2,
         installed.has_v3,
@@ -204,12 +207,10 @@ fn resolve_runtime_model(app: &AppHandle) -> Result<ActiveEmbeddingConfig, Strin
     let (model_path, tokenizer_path, mut max_seq_length, label) =
         resolve_model_paths(&model_dir, source);
     if source != EmbeddingSourceVersion::V1 {
-        let settings_max_tokens = settings::read_embedding_preferences(app).max_tokens;
-        let resolved_max_tokens = settings_max_tokens.unwrap_or(MAX_SEQ_LENGTH_MODERN);
+        let resolved_max_tokens = prefs.max_tokens.unwrap_or(MAX_SEQ_LENGTH_MODERN);
         max_seq_length = resolved_max_tokens.clamp(512, MAX_SEQ_LENGTH_MODERN);
     }
 
-    let prefs = settings::read_embedding_preferences(app);
     let embedding_dimensions =
         resolve_target_embedding_dimensions(source, prefs.embedding_dimensions);
 
@@ -231,6 +232,37 @@ pub(crate) fn resolve_active_embedding_signature(
         active.source.as_str().to_string(),
         active.embedding_dimensions,
     ))
+}
+
+fn fallback_embedding_signature(app: &AppHandle) -> (String, usize) {
+    match detect_model_version(app).ok().flatten() {
+        Some(version @ EmbeddingModelVersion::V4) => {
+            (version.label().to_string(), EMBEDDING_DIM_V4)
+        }
+        Some(version) => (version.label().to_string(), EMBEDDING_DIM_LEGACY),
+        None => ("v4".to_string(), EMBEDDING_DIM_V4),
+    }
+}
+
+pub(crate) fn embedding_signature_for_result(
+    app: &AppHandle,
+    embedding: Option<&Vec<f32>>,
+) -> (String, usize) {
+    match embedding {
+        Some(vector) => {
+            let version = if vector.len() == EMBEDDING_DIM_V4 {
+                "v4".to_string()
+            } else {
+                resolve_active_embedding_signature(app)
+                    .map(|(version, _)| version)
+                    .unwrap_or_else(|_| fallback_embedding_signature(app).0)
+            };
+            (version, vector.len())
+        }
+        None => {
+            resolve_active_embedding_signature(app).unwrap_or_else(|_| fallback_embedding_signature(app))
+        }
+    }
 }
 
 #[tauri::command]
@@ -291,8 +323,9 @@ pub fn get_embedding_model_info(app: AppHandle) -> Result<EmbeddingModelInfo, St
         available_versions.push("v4".to_string());
     }
 
+    let preferred_source_version = settings::read_embedding_preferences(&app).preferred_source_version;
     let selected_source = resolve_selected_source_version(
-        &app,
+        preferred_source_version.as_deref(),
         installed.has_v1,
         installed.has_v2,
         installed.has_v3,

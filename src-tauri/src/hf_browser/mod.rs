@@ -11,6 +11,8 @@ use tokio::sync::Mutex as TokioMutex;
 
 use crate::utils::{log_info, log_info_global, log_warn_global};
 
+mod sprout;
+
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct HfModelEntry {
@@ -1389,17 +1391,46 @@ pub(crate) fn llama_runtime_defaults(app: &AppHandle) -> LlamaRuntimeDefaults {
     }
 }
 
+async fn resolve_runnability_hardware(
+    sprout_url: Option<&str>,
+    sprout_api_key: Option<&str>,
+) -> Result<(Option<u64>, Option<u64>, bool, Option<bool>), String> {
+    if let Some(url) = sprout_url.filter(|url| !url.trim().is_empty()) {
+        let hardware = sprout::fetch_sprout_hardware(url, sprout_api_key).await?;
+        return Ok((
+            Some(hardware.available_ram),
+            hardware.available_vram,
+            hardware.supports_gpu_offload,
+            Some(hardware.unified),
+        ));
+    }
+
+    let supports_gpu_offload = crate::llama_cpp::supports_gpu_offload();
+    let available_vram = if supports_gpu_offload {
+        crate::llama_cpp::available_vram_bytes()
+    } else {
+        None
+    };
+    Ok((
+        crate::llama_cpp::available_memory_bytes(),
+        available_vram,
+        supports_gpu_offload,
+        None,
+    ))
+}
+
 fn compute_scores(
     files: &[RunabilityFileInput],
     model_id: &str,
     meta: Option<&GgufModelMeta>,
     available_ram: Option<u64>,
     available_vram: Option<u64>,
+    unified_override: Option<bool>,
     defaults: &LlamaRuntimeDefaults,
 ) -> Vec<RunabilityScore> {
     let ram = available_ram.unwrap_or(0);
     let vram = available_vram.unwrap_or(0);
-    let unified = crate::llama_cpp::is_unified_memory();
+    let unified = unified_override.unwrap_or_else(crate::llama_cpp::is_unified_memory);
     let total_available = resolve_total_available(ram, vram, unified);
 
     let default_ctx = defaults.context_length;
@@ -1623,9 +1654,10 @@ fn build_recommendation(
     available_ram: u64,
     available_vram: u64,
     supports_gpu_offload: bool,
+    unified_override: Option<bool>,
     default_context_cap: u64,
 ) -> RecommendationData {
-    let unified = crate::llama_cpp::is_unified_memory();
+    let unified = unified_override.unwrap_or_else(crate::llama_cpp::is_unified_memory);
     let total_available = resolve_total_available(available_ram, available_vram, unified);
     let kv_base = meta.and_then(kv_base_per_token);
     let model_max_ctx = meta.and_then(|m| m.context_length).unwrap_or(8192);
@@ -3113,6 +3145,8 @@ pub async fn hf_compute_runability(
     app: AppHandle,
     model_id: String,
     files: Vec<RunabilityFileInput>,
+    sprout_url: Option<String>,
+    sprout_api_key: Option<String>,
 ) -> Result<Vec<RunabilityScore>, String> {
     if files.is_empty() {
         return Ok(vec![]);
@@ -3130,20 +3164,18 @@ pub async fn hf_compute_runability(
 
     let meta = fetch_gguf_meta(&app, &model_id, &files).await;
 
-    let available_ram = crate::llama_cpp::available_memory_bytes();
-    let supports_gpu_offload = crate::llama_cpp::supports_gpu_offload();
-    let available_vram = if supports_gpu_offload {
-        crate::llama_cpp::available_vram_bytes()
-    } else {
-        Some(0)
-    };
+    let (available_ram, available_vram, supports_gpu_offload, unified_override) =
+        resolve_runnability_hardware(sprout_url.as_deref(), sprout_api_key.as_deref()).await?;
 
     log_info(
         &app,
         "hf_browser",
         format!(
-            "system: RAM={:?} VRAM={:?} supports_gpu_offload={}",
-            available_ram, available_vram, supports_gpu_offload
+            "system: RAM={:?} VRAM={:?} supports_gpu_offload={} sprout={}",
+            available_ram,
+            available_vram,
+            supports_gpu_offload,
+            sprout_url.is_some()
         ),
     );
 
@@ -3154,6 +3186,7 @@ pub async fn hf_compute_runability(
         meta.as_ref(),
         available_ram,
         available_vram,
+        unified_override,
         &defaults,
     ))
 }
@@ -3291,6 +3324,8 @@ pub async fn hf_get_recommendation_data(
     app: AppHandle,
     model_id: String,
     files: Vec<RunabilityFileInput>,
+    sprout_url: Option<String>,
+    sprout_api_key: Option<String>,
 ) -> Result<RecommendationData, String> {
     if files.is_empty() {
         return Ok(RecommendationData {
@@ -3319,13 +3354,10 @@ pub async fn hf_get_recommendation_data(
     );
 
     let meta = fetch_gguf_meta(&app, &model_id, &files).await;
-    let available_ram = crate::llama_cpp::available_memory_bytes().unwrap_or(0);
-    let supports_gpu_offload = crate::llama_cpp::supports_gpu_offload();
-    let available_vram = if supports_gpu_offload {
-        crate::llama_cpp::available_vram_bytes().unwrap_or(0)
-    } else {
-        0
-    };
+    let (available_ram_opt, available_vram_opt, supports_gpu_offload, unified_override) =
+        resolve_runnability_hardware(sprout_url.as_deref(), sprout_api_key.as_deref()).await?;
+    let available_ram = available_ram_opt.unwrap_or(0);
+    let available_vram = available_vram_opt.unwrap_or(0);
 
     let defaults = llama_runtime_defaults(&app);
     Ok(build_recommendation(
@@ -3335,6 +3367,7 @@ pub async fn hf_get_recommendation_data(
         available_ram,
         available_vram,
         supports_gpu_offload,
+        unified_override,
         defaults.context_length,
     ))
 }

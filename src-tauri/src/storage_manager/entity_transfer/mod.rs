@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::fs;
@@ -76,6 +76,10 @@ pub struct CharacterExportData {
     pub mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub companion: Option<JsonValue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub companion_scheduled_notes: Vec<CompanionScheduledNoteExport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub companion_shared_memory: Option<CompanionSharedMemoryExport>,
     #[serde(default)]
     pub memory_type: Option<String>,
     #[serde(default)]
@@ -98,6 +102,62 @@ pub struct CharacterExportData {
     pub chat_templates: Vec<ChatTemplateExport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_chat_template_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionScheduledNoteExport {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub character_id: Option<String>,
+    #[serde(default)]
+    pub label: String,
+    pub content: String,
+    pub available_at: i64,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+    #[serde(default = "default_companion_recurrence")]
+    pub recurrence: String,
+    #[serde(default)]
+    pub recurrence_window_ms: Option<i64>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub created_at: i64,
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionSharedMemoryExport {
+    #[serde(default)]
+    pub memories: JsonValue,
+    #[serde(default)]
+    pub memory_summary: Option<String>,
+    #[serde(default)]
+    pub memory_summary_token_count: i64,
+    #[serde(default)]
+    pub memory_tool_events: JsonValue,
+    #[serde(default)]
+    pub memory_status: Option<String>,
+    #[serde(default)]
+    pub memory_error: Option<String>,
+    #[serde(default)]
+    pub memory_progress_step: Option<i64>,
+    #[serde(default)]
+    pub created_at: i64,
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
+fn default_companion_recurrence() -> String {
+    "none".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -665,14 +725,37 @@ pub fn parse_uec_character(value: &JsonValue) -> Result<CharacterExportPackage, 
     let memory_type = app_specific
         .and_then(|map| map.get("memoryType").and_then(|v| v.as_str()))
         .map(|value| value.to_string());
-    let mode = app_specific
-        .and_then(|map| map.get("mode").and_then(|v| v.as_str()))
-        .or_else(|| payload.get("mode").and_then(|v| v.as_str()))
-        .map(|value| value.to_string());
+    let mode = Some(
+        app_specific
+            .and_then(|map| map.get("interaction_mode").and_then(|v| v.as_str()))
+            .or_else(|| app_specific.and_then(|map| map.get("mode").and_then(|v| v.as_str())))
+            .or_else(|| payload.get("mode").and_then(|v| v.as_str()))
+            .map(|value| {
+                if value.eq_ignore_ascii_case("companion") {
+                    "companion".to_string()
+                } else {
+                    "roleplay".to_string()
+                }
+            })
+            .unwrap_or_else(|| "roleplay".to_string()),
+    );
     let companion = app_specific
         .and_then(|map| map.get("companion"))
         .or_else(|| payload.get("companion"))
         .cloned();
+    let companion_scheduled_notes = app_specific
+        .and_then(|map| map.get("companionScheduledNotes"))
+        .or_else(|| payload.get("companionScheduledNotes"))
+        .and_then(|value| {
+            serde_json::from_value::<Vec<CompanionScheduledNoteExport>>(value.clone()).ok()
+        })
+        .unwrap_or_default();
+    let companion_shared_memory = app_specific
+        .and_then(|map| map.get("companionSharedMemory"))
+        .or_else(|| payload.get("companionSharedMemory"))
+        .and_then(|value| {
+            serde_json::from_value::<CompanionSharedMemoryExport>(value.clone()).ok()
+        });
     let active_lorebook_ids = app_specific
         .and_then(|map| map.get("activeLorebookIds"))
         .or_else(|| payload.get("activeLorebookIds"))
@@ -747,6 +830,8 @@ pub fn parse_uec_character(value: &JsonValue) -> Result<CharacterExportPackage, 
             default_model_id,
             mode,
             companion,
+            companion_scheduled_notes,
+            companion_shared_memory,
             memory_type,
             active_lorebook_ids,
             lorebooks,
@@ -1071,6 +1156,122 @@ fn parse_character_import_payload(
             )
         })?;
     Ok((legacy, CharacterFileFormat::LegacyJson))
+}
+
+fn json_string_to_value(raw: &str, default: JsonValue) -> JsonValue {
+    serde_json::from_str::<JsonValue>(raw).unwrap_or(default)
+}
+
+fn json_value_to_storage_string(value: &JsonValue, default: &str) -> String {
+    if value.is_null() {
+        default.to_string()
+    } else {
+        serde_json::to_string(value).unwrap_or_else(|_| default.to_string())
+    }
+}
+
+fn export_companion_scheduled_notes(
+    conn: &rusqlite::Connection,
+    character_id: &str,
+) -> Result<Vec<CompanionScheduledNoteExport>, String> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT id, character_id, label, content, available_at, expires_at, recurrence,
+                   recurrence_window_ms, enabled, created_at, updated_at
+            FROM companion_scheduled_notes
+            WHERE character_id = ?1
+            ORDER BY available_at ASC, id ASC
+            "#,
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let rows = stmt
+        .query_map(params![character_id], |row| {
+            Ok(CompanionScheduledNoteExport {
+                id: row.get(0)?,
+                character_id: row.get(1)?,
+                label: row.get(2)?,
+                content: row.get(3)?,
+                available_at: row.get(4)?,
+                expires_at: row.get(5)?,
+                recurrence: row.get(6)?,
+                recurrence_window_ms: row.get(7)?,
+                enabled: row.get::<_, i64>(8)? != 0,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
+}
+
+fn export_companion_shared_memory(
+    conn: &rusqlite::Connection,
+    character_id: &str,
+) -> Result<Option<CompanionSharedMemoryExport>, String> {
+    let row: Option<(
+        String,
+        Option<String>,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        i64,
+        i64,
+    )> = conn
+        .query_row(
+            r#"
+            SELECT memories, memory_summary, memory_summary_token_count, memory_tool_events,
+                   memory_status, memory_error, memory_progress_step, created_at, updated_at
+            FROM companion_shared_memory_state
+            WHERE character_id = ?1
+            "#,
+            params![character_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+
+    Ok(row.map(
+        |(
+            memories,
+            memory_summary,
+            memory_summary_token_count,
+            memory_tool_events,
+            memory_status,
+            memory_error,
+            memory_progress_step,
+            created_at,
+            updated_at,
+        )| CompanionSharedMemoryExport {
+            memories: json_string_to_value(&memories, JsonValue::Array(Vec::new())),
+            memory_summary,
+            memory_summary_token_count,
+            memory_tool_events: json_string_to_value(
+                &memory_tool_events,
+                JsonValue::Array(Vec::new()),
+            ),
+            memory_status,
+            memory_error,
+            memory_progress_step,
+            created_at,
+            updated_at,
+        },
+    ))
 }
 
 fn is_http_url(value: &str) -> bool {
@@ -1423,6 +1624,8 @@ fn load_character_export_snapshot(
         (Some(x), Some(y), Some(scale)) => Some(AvatarCrop { x, y, scale }),
         _ => None,
     };
+    let companion_scheduled_notes = export_companion_scheduled_notes(&conn, character_id)?;
+    let companion_shared_memory = export_companion_shared_memory(&conn, character_id)?;
 
     let package = CharacterExportPackage {
         version: 1,
@@ -1445,6 +1648,8 @@ fn load_character_export_snapshot(
             default_model_id,
             mode,
             companion,
+            companion_scheduled_notes,
+            companion_shared_memory,
             memory_type: Some(memory_value),
             active_lorebook_ids,
             lorebooks,
@@ -1585,10 +1790,24 @@ fn build_uec_from_package(
         JsonValue::Bool(package.character.disable_avatar_gradient),
     );
     if let Some(mode) = package.character.mode.clone() {
+        app_specific.insert("interaction_mode".into(), JsonValue::String(mode.clone()));
         app_specific.insert("mode".into(), JsonValue::String(mode));
     }
     if let Some(companion) = package.character.companion.clone() {
         app_specific.insert("companion".into(), companion);
+    }
+    if !package.character.companion_scheduled_notes.is_empty() {
+        app_specific.insert(
+            "companionScheduledNotes".into(),
+            serde_json::to_value(&package.character.companion_scheduled_notes)
+                .unwrap_or(JsonValue::Array(Vec::new())),
+        );
+    }
+    if let Some(shared_memory) = package.character.companion_shared_memory.clone() {
+        app_specific.insert(
+            "companionSharedMemory".into(),
+            serde_json::to_value(shared_memory).unwrap_or(JsonValue::Object(JsonMap::new())),
+        );
     }
     app_specific.insert("memoryType".into(), JsonValue::String(memory_value));
     if !package.character.active_lorebook_ids.is_empty() {
@@ -1903,6 +2122,117 @@ fn import_lorebooks_for_character_package(
                 .unwrap_or_else(|| id.clone())
         })
         .collect())
+}
+
+fn normalize_companion_note_recurrence(value: &str) -> &str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "daily" => "daily",
+        "weekly" => "weekly",
+        "monthly" => "monthly",
+        "yearly" => "yearly",
+        _ => "none",
+    }
+}
+
+fn import_companion_app_specific_for_character(
+    tx: &rusqlite::Transaction<'_>,
+    package: &CharacterExportPackage,
+    new_character_id: &str,
+    now: i64,
+) -> Result<(), String> {
+    for note in &package.character.companion_scheduled_notes {
+        let content = note.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let note_id = uuid::Uuid::new_v4().to_string();
+        let created_at = if note.created_at > 0 {
+            note.created_at
+        } else {
+            now
+        };
+        let updated_at = if note.updated_at > 0 {
+            note.updated_at
+        } else {
+            now
+        };
+        tx.execute(
+            r#"
+            INSERT INTO companion_scheduled_notes (
+                id, character_id, label, content, available_at, expires_at, recurrence,
+                recurrence_window_ms, enabled, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "#,
+            params![
+                note_id,
+                new_character_id,
+                note.label.trim(),
+                content,
+                note.available_at.max(0),
+                note.expires_at.map(|value| value.max(0)),
+                normalize_companion_note_recurrence(&note.recurrence),
+                note.recurrence_window_ms.map(|value| value.max(0)),
+                if note.enabled { 1 } else { 0 },
+                created_at,
+                updated_at,
+            ],
+        )
+        .map_err(|e| {
+            crate::utils::err_msg(
+                module_path!(),
+                line!(),
+                format!("Failed to import companion scheduled note: {}", e),
+            )
+        })?;
+    }
+
+    if let Some(shared_memory) = &package.character.companion_shared_memory {
+        let memories = json_value_to_storage_string(&shared_memory.memories, "[]");
+        let memory_tool_events =
+            json_value_to_storage_string(&shared_memory.memory_tool_events, "[]");
+        let created_at = if shared_memory.created_at > 0 {
+            shared_memory.created_at
+        } else {
+            now
+        };
+        let updated_at = if shared_memory.updated_at > 0 {
+            shared_memory.updated_at
+        } else {
+            now
+        };
+        tx.execute(
+            r#"
+            INSERT OR REPLACE INTO companion_shared_memory_state (
+                character_id, memories, memory_summary, memory_summary_token_count,
+                memory_tool_events, memory_status, memory_error, memory_progress_step,
+                created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "#,
+            params![
+                new_character_id,
+                memories,
+                shared_memory.memory_summary.as_deref(),
+                shared_memory.memory_summary_token_count.max(0),
+                memory_tool_events,
+                shared_memory.memory_status.as_deref(),
+                shared_memory.memory_error.as_deref(),
+                shared_memory.memory_progress_step,
+                created_at,
+                updated_at,
+            ],
+        )
+        .map_err(|e| {
+            crate::utils::err_msg(
+                module_path!(),
+                line!(),
+                format!("Failed to import companion shared memory: {}", e),
+            )
+        })?;
+    }
+
+    Ok(())
 }
 
 /// Import a character from a JSON package
@@ -2260,6 +2590,8 @@ pub fn character_import(app: tauri::AppHandle, import_json: String) -> Result<St
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
+    import_companion_app_specific_for_character(&tx, &package, &new_character_id, now)?;
+
     tx.commit()
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
@@ -2513,10 +2845,25 @@ pub fn convert_export_to_uec(import_json: String) -> Result<String, String> {
                 JsonValue::Bool(package.character.disable_avatar_gradient),
             );
             if let Some(mode) = package.character.mode.clone() {
+                app_specific.insert("interaction_mode".into(), JsonValue::String(mode.clone()));
                 app_specific.insert("mode".into(), JsonValue::String(mode));
             }
             if let Some(companion) = package.character.companion.clone() {
                 app_specific.insert("companion".into(), companion);
+            }
+            if !package.character.companion_scheduled_notes.is_empty() {
+                app_specific.insert(
+                    "companionScheduledNotes".into(),
+                    serde_json::to_value(&package.character.companion_scheduled_notes)
+                        .unwrap_or(JsonValue::Array(Vec::new())),
+                );
+            }
+            if let Some(shared_memory) = package.character.companion_shared_memory.clone() {
+                app_specific.insert(
+                    "companionSharedMemory".into(),
+                    serde_json::to_value(shared_memory)
+                        .unwrap_or(JsonValue::Object(JsonMap::new())),
+                );
             }
             let memory_type = package
                 .character

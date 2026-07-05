@@ -46,6 +46,7 @@ type ModelLoadToastOptions = {
   modelName: string;
   progress: number;
   progressLabel?: string;
+  gpus?: { label: string; percent: number }[];
   duration?: number | typeof Infinity;
 };
 
@@ -138,12 +139,34 @@ function showModelLoadToast(options: ModelLoadToastOptions) {
           <span>{options.progressLabel ?? "Startup progress"}</span>
           <span className="shrink-0 font-medium tabular-nums text-fg/72">{percent}%</span>
         </div>
-        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-fg/10">
-          <div
-            className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
-            style={{ width: `${percent}%` }}
-          />
-        </div>
+        {options.gpus && options.gpus.length > 0 ? (
+          <div className="mt-1.5 space-y-1.5">
+            {options.gpus.map((gpu, index) => {
+              const gpuPercent = Math.round(Math.min(100, Math.max(0, gpu.percent)));
+              return (
+                <div key={`${gpu.label}-${index}`}>
+                  <div className="flex items-center justify-between gap-3 text-[10px] text-fg/50">
+                    <span className="min-w-0 truncate">{gpu.label}</span>
+                    <span className="shrink-0 tabular-nums">{gpuPercent}%</span>
+                  </div>
+                  <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-fg/10">
+                    <div
+                      className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
+                      style={{ width: `${gpuPercent}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-fg/10">
+            <div
+              className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+        )}
       </div>
     </div>,
     {

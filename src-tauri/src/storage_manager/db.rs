@@ -191,7 +191,13 @@ pub fn reload_database(app: &tauri::AppHandle) -> Result<(), String> {
 
     drop(conn);
 
-    let swappable = app.state::<SwappablePool>();
+    let swappable = app.try_state::<SwappablePool>().ok_or_else(|| {
+        crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            "Database pool is not initialized yet",
+        )
+    })?;
     swappable.swap(new_pool)?;
 
     migrations::run_migrations(app)?;
@@ -266,7 +272,13 @@ pub fn init_pool(app: &tauri::AppHandle) -> Result<DbPool, String> {
 }
 
 pub fn open_db(app: &tauri::AppHandle) -> Result<DbConnection, String> {
-    let swappable = app.state::<SwappablePool>();
+    let swappable = app.try_state::<SwappablePool>().ok_or_else(|| {
+        crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            "Database pool is not initialized yet",
+        )
+    })?;
     swappable.get_connection()
 }
 
@@ -318,6 +330,17 @@ pub fn init_db(_app: &tauri::AppHandle, conn: &Connection) -> Result<(), String>
           prompt_template_id TEXT,
           system_prompt TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS llm_generation_metrics (
+          id TEXT PRIMARY KEY,
+          created_at INTEGER NOT NULL,
+          model_name TEXT,
+          summary_json TEXT NOT NULL,
+          samples_json TEXT NOT NULL DEFAULT '[]'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_llm_generation_metrics_created_at
+          ON llm_generation_metrics(created_at);
 
         CREATE TABLE IF NOT EXISTS asr_vocabulary_terms (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -662,6 +685,7 @@ pub fn init_db(_app: &tauri::AppHandle, conn: &Connection) -> Result<(), String>
           total_tokens INTEGER,
           first_token_ms INTEGER,
           tokens_per_second REAL,
+          mtp_stats TEXT,
           model_id TEXT,
           selected_variant_id TEXT,
           is_pinned INTEGER NOT NULL DEFAULT 0,
@@ -740,6 +764,7 @@ pub fn init_db(_app: &tauri::AppHandle, conn: &Connection) -> Result<(), String>
           total_tokens INTEGER,
           first_token_ms INTEGER,
           tokens_per_second REAL,
+          mtp_stats TEXT,
           reasoning TEXT,
           FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
         );
@@ -929,6 +954,7 @@ pub fn init_db(_app: &tauri::AppHandle, conn: &Connection) -> Result<(), String>
           total_tokens INTEGER,
           first_token_ms INTEGER,
           tokens_per_second REAL,
+          mtp_stats TEXT,
           selected_variant_id TEXT,
           is_pinned INTEGER NOT NULL DEFAULT 0,
           attachments TEXT NOT NULL DEFAULT '[]',
@@ -952,6 +978,7 @@ pub fn init_db(_app: &tauri::AppHandle, conn: &Connection) -> Result<(), String>
           total_tokens INTEGER,
           first_token_ms INTEGER,
           tokens_per_second REAL,
+          mtp_stats TEXT,
           reasoning TEXT,
           selection_reasoning TEXT,
           model_id TEXT,
@@ -1034,6 +1061,16 @@ pub fn init_db(_app: &tauri::AppHandle, conn: &Connection) -> Result<(), String>
       "#,
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+
+    let _ = conn.execute(
+        "ALTER TABLE llm_generation_metrics ADD COLUMN message_id TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_llm_generation_metrics_message_id
+           ON llm_generation_metrics(message_id)",
+        [],
+    );
 
     // Backward-compatible group chat schema bootstrap for existing databases:
     // older DBs have group_sessions but not group_character_id yet.
@@ -1215,19 +1252,23 @@ pub fn init_db(_app: &tauri::AppHandle, conn: &Connection) -> Result<(), String>
     }
 
     if reset_sync_state {
-        conn.execute("DELETE FROM sync_changes", [])
-            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
-        conn.execute("DELETE FROM sync_entity_heads", [])
-            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
-        conn.execute("DELETE FROM sync_peer_cursors", [])
-            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        conn.execute_batch(&format!(
+            "BEGIN IMMEDIATE;
+             DELETE FROM sync_changes;
+             DELETE FROM sync_entity_heads;
+             DELETE FROM sync_peer_cursors;
+             INSERT OR REPLACE INTO sync_local_state (key, value) VALUES ('sync_state_schema_version', '{}');
+             COMMIT;",
+            LOCAL_SYNC_STATE_VERSION
+        ))
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    } else {
+        conn.execute(
+            "INSERT OR REPLACE INTO sync_local_state (key, value) VALUES ('sync_state_schema_version', ?1)",
+            params![LOCAL_SYNC_STATE_VERSION.to_string()],
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     }
-
-    conn.execute(
-        "INSERT OR REPLACE INTO sync_local_state (key, value) VALUES ('sync_state_schema_version', ?1)",
-        params![LOCAL_SYNC_STATE_VERSION.to_string()],
-    )
-    .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
     // Migrations: add reasoning_tokens and image_tokens to usage_records if missing
     let mut stmt = conn

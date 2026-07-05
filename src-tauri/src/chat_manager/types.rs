@@ -585,6 +585,13 @@ fn default_context_enrichment() -> bool {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct GpuLayerAssignment {
+    pub device_id: usize,
+    pub layers: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AdvancedModelSettings {
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
@@ -614,6 +621,24 @@ pub struct AdvancedModelSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sd_prompt_writer_instructions: Option<String>,
     pub llama_gpu_layers: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_multi_gpu_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_gpu_device_ids: Option<Vec<usize>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_gpu_distribution_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_gpu_manual_layers: Option<Vec<GpuLayerAssignment>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_cpu_layers: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_kv_placement: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_main_gpu: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_single_gpu_device_id: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_priority_vram_limit_bytes: Option<u64>,
     pub llama_threads: Option<u32>,
     pub llama_threads_batch: Option<u32>,
     pub llama_seed: Option<u32>,
@@ -696,6 +721,17 @@ pub struct AdvancedModelSettings {
     #[serde(default)]
     pub prompt_caching_enabled: Option<bool>,
     pub prompt_caching_ttl: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_router_provider: Option<OpenRouterPinnedProvider>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenRouterPinnedProvider {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo_url: Option<String>,
 }
 
 impl Default for AdvancedModelSettings {
@@ -719,6 +755,15 @@ impl Default for AdvancedModelSettings {
             sd_denoising_strength: None,
             sd_size: None,
             llama_gpu_layers: None,
+            llama_multi_gpu_enabled: None,
+            llama_gpu_device_ids: None,
+            llama_gpu_distribution_mode: None,
+            llama_gpu_manual_layers: None,
+            llama_cpu_layers: None,
+            llama_kv_placement: None,
+            llama_main_gpu: None,
+            llama_single_gpu_device_id: None,
+            llama_priority_vram_limit_bytes: None,
             llama_threads: None,
             llama_threads_batch: None,
             llama_seed: None,
@@ -771,6 +816,7 @@ impl Default for AdvancedModelSettings {
             force_send_thinking_state: None,
             prompt_caching_enabled: Some(false),
             prompt_caching_ttl: Some("5min".to_string()),
+            open_router_provider: None,
         }
     }
 }
@@ -1111,6 +1157,17 @@ pub struct Persona {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct MtpStats {
+    pub draft_tokens: u32,
+    pub rounds: u64,
+    pub drafted: u64,
+    pub accepted: u64,
+    pub tokens_per_round: f64,
+    pub draft_acceptance: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct UsageSummary {
     pub prompt_tokens: Option<u64>,
     pub completion_tokens: Option<u64>,
@@ -1137,6 +1194,8 @@ pub struct UsageSummary {
     pub tokens_per_second: Option<f64>,
     #[serde(default)]
     pub finish_reason: Option<String>,
+    #[serde(default)]
+    pub mtp_stats: Option<MtpStats>,
 }
 
 #[derive(Serialize)]

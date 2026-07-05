@@ -15,9 +15,13 @@ import {
   Paintbrush,
   Image,
   HeartPulse,
+  Activity,
   type LucideIcon,
 } from "lucide-react";
 import { BottomMenu } from "../../../components/BottomMenu";
+import { GenerationDetailContent } from "../../../components/GenerationDetailView";
+import { getLlmMetricByMessage } from "../../../../core/storage/metrics";
+import type { LlmMetricDetail } from "../../../../core/storage/schemas";
 import type {
   StoredMessage,
   Settings,
@@ -212,6 +216,23 @@ export function MessageActionsBottomSheet({
   const [companionEffect, setCompanionEffect] = useState<CompanionTurnEffect | null>(null);
   const [companionEffectLoading, setCompanionEffectLoading] = useState(false);
   const [companionEffectError, setCompanionEffectError] = useState<string | null>(null);
+  const [perfDetail, setPerfDetail] = useState<LlmMetricDetail | null>(null);
+  const [perfOpen, setPerfOpen] = useState(false);
+
+  useEffect(() => {
+    const message = messageAction?.message;
+    if (!message || message.role !== "assistant") {
+      setPerfDetail(null);
+      return;
+    }
+    let cancelled = false;
+    void getLlmMetricByMessage(message.id).then((detail) => {
+      if (!cancelled) setPerfDetail(detail);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [messageAction?.message?.id, messageAction?.message?.role]);
   const isSceneMessage = messageAction?.message.role === "scene";
   const isVisibleSystemMessage =
     messageAction?.message.role === "system" && Boolean(messageAction.message.visibleInChat);
@@ -314,6 +335,7 @@ export function MessageActionsBottomSheet({
   const usedLorebookEntries = messageAction?.message.usedLorebookEntries ?? [];
   const firstTokenMs = messageAction?.message.usage?.firstTokenMs;
   const tokensPerSecond = messageAction?.message.usage?.tokensPerSecond;
+  const mtpStats = messageAction?.message.usage?.mtpStats;
   const loadedEditAttachments = useSessionAttachments(editAttachments);
   const editingAttachment =
     loadedEditAttachments.find((attachment) => attachment.id === editingAttachmentId) ?? null;
@@ -387,7 +409,9 @@ export function MessageActionsBottomSheet({
                   </span>
                 </div>
               </div>
-              {(typeof firstTokenMs === "number" || typeof tokensPerSecond === "number") && (
+              {(typeof firstTokenMs === "number" ||
+                typeof tokensPerSecond === "number" ||
+                typeof mtpStats?.tokensPerRound === "number") && (
                   <div className="flex items-center gap-3 text-[11px] text-white/45 tabular-nums">
                     {typeof firstTokenMs === "number" && (
                       <span title={t("chats.actions.timeToFirstToken")}>TTFT {firstTokenMs}ms</span>
@@ -395,6 +419,20 @@ export function MessageActionsBottomSheet({
                     {typeof tokensPerSecond === "number" && (
                       <span title={t("chats.actions.completionTokenSpeed")}>
                         {tokensPerSecond.toFixed(1)} tok/s
+                      </span>
+                    )}
+                    {typeof mtpStats?.tokensPerRound === "number" && (
+                      <span
+                        title={t("chats.actions.mtpBreakdown", {
+                          rounds: mtpStats.rounds ?? 0,
+                          drafted: mtpStats.drafted ?? 0,
+                          accepted: mtpStats.accepted ?? 0,
+                        })}
+                      >
+                        MTP {mtpStats.tokensPerRound.toFixed(2)}&#215;
+                        {typeof mtpStats.draftAcceptance === "number"
+                          ? ` · ${Math.round(mtpStats.draftAcceptance * 100)}%`
+                          : ""}
                       </span>
                     )}
                   </div>
@@ -639,6 +677,15 @@ export function MessageActionsBottomSheet({
                   label={t("chats.actions.copy")}
                   iconBg="bg-violet-500/20"
                   onClick={() => void handleCopy()}
+                />
+              )}
+
+              {perfDetail && (
+                <ActionRow
+                  icon={Activity}
+                  label={t("chats.actions.performance")}
+                  iconBg="bg-emerald-500/20"
+                  onClick={() => setPerfOpen(true)}
                 />
               )}
 
@@ -929,6 +976,16 @@ export function MessageActionsBottomSheet({
             </div>
           </div>
         )}
+      </BottomMenu>
+
+      <BottomMenu
+        isOpen={perfOpen}
+        onClose={() => setPerfOpen(false)}
+        title={t("performance.charts.detailTitle")}
+      >
+        <div className="text-white">
+          {perfDetail && <GenerationDetailContent detail={perfDetail} />}
+        </div>
       </BottomMenu>
     </>
   );

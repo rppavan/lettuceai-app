@@ -7,7 +7,7 @@ use crate::storage_manager::settings::{read_settings_typed, write_settings_typed
 use crate::utils::log_info;
 
 /// Current migration version
-pub const CURRENT_MIGRATION_VERSION: u32 = 75;
+pub const CURRENT_MIGRATION_VERSION: u32 = 77;
 
 pub fn run_migrations(app: &AppHandle) -> Result<(), String> {
     log_info(app, "migrations", "Starting migration check");
@@ -789,6 +789,26 @@ pub fn run_migrations(app: &AppHandle) -> Result<(), String> {
         version = 75;
     }
 
+    if version < 76 {
+        log_info(
+            app,
+            "migrations",
+            "Running migration v75 -> v76: Add MTP stats to messages and variants",
+        );
+        migrate_v75_to_v76(app)?;
+        version = 76;
+    }
+
+    if version < 77 {
+        log_info(
+            app,
+            "migrations",
+            "Running migration v76 -> v77: Install missing v4 embedding tokenizer for 2.0.0 upgrades",
+        );
+        migrate_v76_to_v77(app)?;
+        version = 77;
+    }
+
     // Update the stored version
     set_migration_version(app, version)?;
 
@@ -803,6 +823,16 @@ pub fn run_migrations(app: &AppHandle) -> Result<(), String> {
 
     cleanup_legacy_files(app);
 
+    Ok(())
+}
+
+/// Migration v76 -> v77: one-time repair for 2.0.0 upgrades. The v4 embedding
+/// model stores its tokenizer as `v4-tokenizer.json`; installs predating the
+/// version-specific tokenizer resolver can have the model without that file.
+/// When the model is present without its tokenizer, fetch it silently in the
+/// background. Runs once, then the migration version guards it from re-running.
+fn migrate_v76_to_v77(app: &AppHandle) -> Result<(), String> {
+    crate::embedding::download::repair_v4_tokenizer(app);
     Ok(())
 }
 
@@ -4052,6 +4082,23 @@ fn migrate_v74_to_v75(app: &AppHandle) -> Result<(), String> {
     let _ = conn.execute("ALTER TABLE characters ADD COLUMN lora_strength REAL", []);
     let _ = conn.execute("ALTER TABLE personas ADD COLUMN lora_name TEXT", []);
     let _ = conn.execute("ALTER TABLE personas ADD COLUMN lora_strength REAL", []);
+    Ok(())
+}
+
+fn migrate_v75_to_v76(app: &AppHandle) -> Result<(), String> {
+    let conn = crate::storage_manager::db::open_db(app)?;
+
+    let _ = conn.execute("ALTER TABLE messages ADD COLUMN mtp_stats TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE message_variants ADD COLUMN mtp_stats TEXT",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE group_messages ADD COLUMN mtp_stats TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE group_message_variants ADD COLUMN mtp_stats TEXT",
+        [],
+    );
+
     Ok(())
 }
 
