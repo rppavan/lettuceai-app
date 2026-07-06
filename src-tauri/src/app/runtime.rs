@@ -68,20 +68,37 @@ pub(crate) fn configure_onnxruntime_dylib(_app: &tauri::AppHandle) {
         use tauri::path::BaseDirectory;
         use tauri::Manager;
 
+        fn is_nonempty_file(path: &std::path::Path) -> bool {
+            std::fs::metadata(path)
+                .map(|metadata| metadata.is_file() && metadata.len() > 0)
+                .unwrap_or(false)
+        }
+
         if let Ok(value) = std::env::var("ORT_DYLIB_PATH") {
-            if !value.trim().is_empty() {
-                let _ = ort::util::preload_dylib(&value);
-                utils::log_info(
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                if is_nonempty_file(std::path::Path::new(trimmed)) {
+                    let _ = ort::util::preload_dylib(&value);
+                    utils::log_info(
+                        _app,
+                        "embedding_debug",
+                        format!("ORT_DYLIB_PATH already set to {}", value),
+                    );
+                    return;
+                }
+                utils::log_warn(
                     _app,
                     "embedding_debug",
-                    format!("ORT_DYLIB_PATH already set to {}", value),
+                    format!(
+                        "ORT_DYLIB_PATH is set to {} but the file is missing or empty; resolving a usable runtime instead",
+                        value
+                    ),
                 );
-                return;
             }
         }
 
         if let Some(value) = option_env!("ORT_DYLIB_PATH") {
-            if !value.trim().is_empty() {
+            if !value.trim().is_empty() && is_nonempty_file(std::path::Path::new(value.trim())) {
                 std::env::set_var("ORT_DYLIB_PATH", value);
                 let _ = ort::util::preload_dylib(value);
                 utils::log_info(
@@ -116,32 +133,24 @@ pub(crate) fn configure_onnxruntime_dylib(_app: &tauri::AppHandle) {
             _app.path()
                 .resolve(candidate, BaseDirectory::Resource)
                 .ok()
-                .filter(|path| path.exists())
+                .filter(|path| is_nonempty_file(path))
         });
 
         match resolved_path {
             Some(path) => {
-                if path.exists() {
-                    std::env::set_var("ORT_DYLIB_PATH", &path);
-                    let _ = ort::util::preload_dylib(&path);
-                    utils::log_info(
-                        _app,
-                        "embedding_debug",
-                        format!("Set ORT_DYLIB_PATH={}", path.display()),
-                    );
-                } else {
-                    utils::log_warn(
-                        _app,
-                        "embedding_debug",
-                        format!("ONNX Runtime library not found at {}", path.display()),
-                    );
-                }
+                std::env::set_var("ORT_DYLIB_PATH", &path);
+                let _ = ort::util::preload_dylib(&path);
+                utils::log_info(
+                    _app,
+                    "embedding_debug",
+                    format!("Set ORT_DYLIB_PATH={}", path.display()),
+                );
             }
             None => {
                 utils::log_warn(
                     _app,
                     "embedding_debug",
-                    "Failed to resolve ONNX Runtime resource path in bundled resources",
+                    "No usable ONNX Runtime library in bundled resources; it will be downloaded on first use",
                 );
             }
         }

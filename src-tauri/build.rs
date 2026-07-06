@@ -443,12 +443,19 @@ fn setup_linux_libs() -> anyhow::Result<()> {
         }
     }
 
-    if target_path.exists() {
+    if is_nonempty_file(&target_path) {
         println!(
             "cargo:warning=Linux ONNX Runtime already present at {:?}",
             target_path
         );
         return Ok(());
+    }
+    if target_path.exists() {
+        println!(
+            "cargo:warning=Existing Linux ONNX Runtime at {:?} is empty or corrupt; re-downloading.",
+            target_path
+        );
+        fs::remove_file(&target_path)?;
     }
 
     let archive_url = format!(
@@ -464,12 +471,14 @@ fn setup_linux_libs() -> anyhow::Result<()> {
         "cargo:warning=Downloading ONNX Runtime Linux v{}...",
         ORT_VERSION
     );
-    let response = reqwest::blocking::get(&archive_url)?.bytes()?;
+    let response = reqwest::blocking::get(&archive_url)?
+        .error_for_status()?
+        .bytes()?;
     extract_tgz_single_file(&response, &lib_path_in_archive, &target_path)?;
 
-    if !target_path.exists() {
+    if !is_nonempty_file(&target_path) {
         anyhow::bail!(
-            "ONNX Runtime library not found after Linux download: {}",
+            "ONNX Runtime library missing or empty after Linux download: {}",
             target_path.display()
         );
     }
@@ -549,12 +558,19 @@ fn setup_windows_libs() -> anyhow::Result<()> {
         }
     }
 
-    if target_path.exists() {
+    if is_nonempty_file(&target_path) {
         println!(
             "cargo:warning=Windows ONNX Runtime already present at {:?}",
             target_path
         );
         return Ok(());
+    }
+    if target_path.exists() {
+        println!(
+            "cargo:warning=Existing Windows ONNX Runtime at {:?} is empty or corrupt; re-downloading.",
+            target_path
+        );
+        fs::remove_file(&target_path)?;
     }
 
     let archive_url = format!(
@@ -575,9 +591,9 @@ fn setup_windows_libs() -> anyhow::Result<()> {
         .bytes()?;
     extract_zip_single_file(&response, &dll_path_in_archive, &target_path)?;
 
-    if !target_path.exists() {
+    if !is_nonempty_file(&target_path) {
         anyhow::bail!(
-            "ONNX Runtime library not found after Windows download: {}",
+            "ONNX Runtime library missing or empty after Windows download: {}",
             target_path.display()
         );
     }
@@ -898,26 +914,89 @@ fn validate_macos_ort_dylibs(
     Ok(())
 }
 
-fn extract_tgz_single_file(bytes: &[u8], entry_path: &str, dest_path: &Path) -> anyhow::Result<()> {
-    let reader = Cursor::new(bytes);
-    let tar = flate2::read::GzDecoder::new(reader);
-    let mut archive = tar::Archive::new(tar);
+fn is_nonempty_file(path: &Path) -> bool {
+    fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false)
+}
 
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?.to_string_lossy().replace('\\', "/");
-        if path != entry_path {
-            continue;
+fn write_extracted_file(reader: &mut impl io::Read, dest_path: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file_name = dest_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("ort-download");
+    let tmp_path = dest_path.with_file_name(format!("{}.tmp", file_name));
+    let mut outfile = fs::File::create(&tmp_path)?;
+    let written = io::copy(reader, &mut outfile)?;
+    drop(outfile);
+    if written == 0 {
+        let _ = fs::remove_file(&tmp_path);
+        anyhow::bail!(
+            "Extracted ONNX Runtime file is empty: {}",
+            dest_path.display()
+        );
+    }
+    fs::rename(&tmp_path, dest_path)?;
+    Ok(())
+}
+
+fn extract_tgz_single_file(bytes: &[u8], entry_path: &str, dest_path: &Path) -> anyhow::Result<()> {
+    let mut target = entry_path.to_string();
+
+    for _ in 0..8 {
+        let reader = Cursor::new(bytes);
+        let tar = flate2::read::GzDecoder::new(reader);
+        let mut archive = tar::Archive::new(tar);
+        let mut next_target: Option<String> = None;
+
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?.to_string_lossy().replace('\\', "/");
+            if path != target {
+                continue;
+            }
+
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_symlink() || entry_type.is_hard_link() {
+                let Some(link_name) = entry
+                    .link_name()?
+                    .map(|link| link.to_string_lossy().replace('\\', "/"))
+                else {
+                    anyhow::bail!("Unable to resolve link target for '{}' in archive", target);
+                };
+                next_target = Some(if link_name.contains('/') {
+                    link_name
+                } else {
+                    match target.rfind('/') {
+                        Some(index) => format!("{}/{}", &target[..index], link_name),
+                        None => link_name,
+                    }
+                });
+                break;
+            }
+
+            return write_extracted_file(&mut entry, dest_path);
         }
-        if let Some(parent) = dest_path.parent() {
-            fs::create_dir_all(parent)?;
+
+        match next_target {
+            Some(resolved) => {
+                println!(
+                    "cargo:warning=Archive entry '{}' is a link; following to '{}'",
+                    target, resolved
+                );
+                target = resolved;
+            }
+            None => anyhow::bail!("Could not find '{}' in ONNX Runtime archive", target),
         }
-        let mut outfile = fs::File::create(dest_path)?;
-        io::copy(&mut entry, &mut outfile)?;
-        return Ok(());
     }
 
-    anyhow::bail!("Could not find '{}' in ONNX Runtime archive", entry_path)
+    anyhow::bail!(
+        "Too many link hops while resolving '{}' in ONNX Runtime archive",
+        entry_path
+    )
 }
 
 fn extract_zip_single_file(bytes: &[u8], entry_path: &str, dest_path: &Path) -> anyhow::Result<()> {
@@ -930,12 +1009,7 @@ fn extract_zip_single_file(bytes: &[u8], entry_path: &str, dest_path: &Path) -> 
         if name != entry_path {
             continue;
         }
-        if let Some(parent) = dest_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut outfile = fs::File::create(dest_path)?;
-        io::copy(&mut entry, &mut outfile)?;
-        return Ok(());
+        return write_extracted_file(&mut entry, dest_path);
     }
 
     anyhow::bail!("Could not find '{}' in ONNX Runtime archive", entry_path)

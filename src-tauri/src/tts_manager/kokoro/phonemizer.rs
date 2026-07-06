@@ -3,6 +3,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 #[cfg(not(target_os = "android"))]
 use std::io::Write;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(not(target_os = "android"))]
@@ -12,6 +14,9 @@ use serde::Serialize;
 
 use super::lexicon::{load_lexicon_overrides, resolve_lexicon_path};
 use super::model::KokoroError;
+
+#[cfg(target_os = "windows")]
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, Default)]
 pub struct EspeakConfig {
@@ -549,9 +554,17 @@ fn phonemize_segments_batch(
     vocab: &HashMap<char, i64>,
     espeak: &EspeakConfig,
 ) -> Result<Vec<String>, KokoroError> {
-    let batched_input = segments.join("\n");
+    let batched_input = segments
+        .iter()
+        .map(|segment| format!("{segment}."))
+        .collect::<Vec<_>>()
+        .join("\n");
     let output = run_espeak(&batched_input, lang, espeak)?;
-    let lines: Vec<&str> = output.lines().collect();
+    let lines: Vec<&str> = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
 
     if lines.len() != segments.len() {
         return segments
@@ -588,6 +601,9 @@ fn run_espeak(input: &str, lang: &str, espeak: &EspeakConfig) -> Result<String, 
         if let Some(data_path) = espeak.data_path.as_deref() {
             cmd.arg("--path").arg(data_path);
         }
+
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
 
         #[cfg(target_os = "linux")]
         if let Some(bin_dir) = espeak.bin_path.as_deref().and_then(|p| p.parent()) {

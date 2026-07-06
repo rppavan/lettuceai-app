@@ -1,6 +1,8 @@
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 #[cfg(not(target_os = "android"))]
-use std::{env, process::Command};
+use std::{env, process::Command, sync::OnceLock};
 
 use tauri::AppHandle;
 
@@ -62,7 +64,9 @@ fn explicit_espeak_config(
 
 #[cfg(not(target_os = "android"))]
 fn resolve_desktop_espeak() -> Result<EspeakConfig, KokoroError> {
-    if command_available("espeak-ng") {
+    static ESPEAK_ON_PATH: OnceLock<()> = OnceLock::new();
+    if ESPEAK_ON_PATH.get().is_some() || command_available("espeak-ng") {
+        let _ = ESPEAK_ON_PATH.set(());
         return Ok(EspeakConfig::default());
     }
 
@@ -71,9 +75,13 @@ fn resolve_desktop_espeak() -> Result<EspeakConfig, KokoroError> {
 
 #[cfg(not(target_os = "android"))]
 fn command_available(command: &str) -> bool {
-    Command::new(command)
-        .arg("--version")
-        .output()
+    let mut cmd = Command::new(command);
+    cmd.arg("--version");
+
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(super::phonemizer::CREATE_NO_WINDOW);
+
+    cmd.output()
         .map(|output| output.status.success())
         .unwrap_or(false)
 }

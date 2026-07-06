@@ -39,11 +39,17 @@ impl AbortRegistry {
 
     pub fn register(&self, request_id: String) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
-        let handle = AbortHandle::new(tx);
 
         if let Ok(mut state) = self.inner.lock() {
-            state.aborted.remove(&request_id);
-            state.handles.entry(request_id).or_default().push(handle);
+            if state.aborted.contains(&request_id) {
+                let _ = tx.send(());
+                return rx;
+            }
+            state
+                .handles
+                .entry(request_id)
+                .or_default()
+                .push(AbortHandle::new(tx));
         }
 
         rx
@@ -118,5 +124,42 @@ impl AbortRegistry {
 impl Default for AbortRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn abort_before_register_fires_receiver_and_keeps_flag() {
+        let registry = AbortRegistry::new();
+        registry.abort("req-1").unwrap();
+
+        let mut rx = registry.register("req-1".to_string());
+        assert!(rx.try_recv().is_ok());
+        assert!(registry.take_aborted("req-1"));
+        assert!(!registry.take_aborted("req-1"));
+    }
+
+    #[test]
+    fn abort_after_register_fires_receiver() {
+        let registry = AbortRegistry::new();
+        let mut rx = registry.register("req-2".to_string());
+
+        assert!(rx.try_recv().is_err());
+        registry.abort("req-2").unwrap();
+        assert!(rx.try_recv().is_ok());
+        assert!(registry.take_aborted("req-2"));
+    }
+
+    #[test]
+    fn register_without_abort_stays_pending() {
+        let registry = AbortRegistry::new();
+        let mut rx = registry.register("req-3".to_string());
+
+        assert!(rx.try_recv().is_err());
+        assert!(!registry.take_aborted("req-3"));
+        registry.unregister("req-3");
     }
 }
