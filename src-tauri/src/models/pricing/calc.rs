@@ -77,18 +77,18 @@ pub fn calculate_openrouter_request_cost(
     let reasoning_cost = reasoning_tokens as f64 * reasoning_price_per_token;
     let request_cost = request_price;
     let web_search_cost = input.web_search_requests as f64 * web_search_price;
-    let mut completion_cost =
-        completion_base_cost + reasoning_cost + request_cost + web_search_cost;
+    let mut completion_cost = completion_base_cost;
 
-    let mut total_cost = prompt_cost + completion_cost;
+    let mut total_cost =
+        prompt_cost + completion_cost + reasoning_cost + request_cost + web_search_cost;
 
     if let Some(authoritative_total_cost) = input
         .authoritative_total_cost
         .filter(|v| v.is_finite() && *v >= 0.0)
     {
-        let delta = authoritative_total_cost - total_cost;
-        if delta.abs() > 1e-12 {
-            completion_cost += delta;
+        let non_completion_cost = prompt_cost + reasoning_cost + request_cost + web_search_cost;
+        if authoritative_total_cost + 1e-12 >= non_completion_cost {
+            completion_cost = (authoritative_total_cost - non_completion_cost).max(0.0);
             total_cost = authoritative_total_cost;
         }
     }

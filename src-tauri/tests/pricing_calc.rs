@@ -101,6 +101,8 @@ fn reasoning_tokens_billed() {
     };
     let cost = calculate_openrouter_request_cost(&input, &p).expect("ok");
     assert!(cost.reasoning_cost > 0.0);
+    assert!((cost.completion_cost - 0.003).abs() < 1e-9);
+    assert!((cost.total_cost - 0.004).abs() < 1e-9);
 }
 
 #[test]
@@ -130,6 +132,31 @@ fn authoritative_total_overrides_calculated() {
     };
     let cost = calculate_openrouter_request_cost(&input, &p).expect("ok");
     assert!((cost.total_cost - 0.5).abs() < 1e-9);
+    assert!(cost.completion_cost >= 0.0);
+}
+
+#[test]
+fn authoritative_total_below_known_costs_does_not_make_completion_negative() {
+    let mut p = pricing("0.000002", "0.000012");
+    p.internal_reasoning = "0.000012".into();
+    p.web_search = "0.014".into();
+
+    let input = OpenRouterCostInput {
+        prompt_tokens: 17_898,
+        completion_tokens: 16_113,
+        reasoning_tokens: 1_166,
+        web_search_requests: 1,
+        authoritative_total_cost: Some(0.0),
+        ..Default::default()
+    };
+
+    let cost = calculate_openrouter_request_cost(&input, &p).expect("ok");
+
+    assert!(cost.completion_cost >= 0.0);
+    assert!((cost.prompt_cost - 0.035796).abs() < 1e-9);
+    assert!((cost.reasoning_cost - 0.013992).abs() < 1e-9);
+    assert!((cost.web_search_cost - 0.014).abs() < 1e-9);
+    assert!((cost.total_cost - 0.243152).abs() < 1e-9);
 }
 
 #[test]
