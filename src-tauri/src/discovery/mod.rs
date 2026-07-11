@@ -1217,6 +1217,8 @@ pub async fn discovery_import_character(app: AppHandle, path: String) -> Result<
                             always_active,
                             keywords: entry.keys.clone(),
                             case_sensitive: false,
+                            keyword_match_mode:
+                                crate::storage_manager::lorebook::LorebookKeywordMatchMode::Literal,
                             content: entry.content.clone(),
                             priority: 0,
                             display_order,

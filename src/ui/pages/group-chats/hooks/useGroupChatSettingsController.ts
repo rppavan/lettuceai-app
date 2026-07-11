@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { storageBridge } from "../../../../core/storage/files";
 import { updateGroupSessionDisableCharacterLorebooks } from "../../../../core/storage/repo";
 import type {
   GroupSession,
+  GroupSessionOverrideKey,
   GroupParticipation,
   Character,
   Persona,
@@ -39,6 +40,8 @@ export function useGroupChatSettingsController(
   const [participationStats, setParticipationStats] = useState<GroupParticipation[]>([]);
   const [messageCount, setMessageCount] = useState<number>(0);
   const [ui, dispatch] = useReducer(groupChatSettingsUiReducer, initialGroupChatSettingsUiState);
+  const uiRef = useRef(ui);
+  uiRef.current = ui;
 
   const setUi = useCallback((patch: Partial<typeof ui>) => {
     dispatch({ type: "PATCH", patch });
@@ -58,7 +61,9 @@ export function useGroupChatSettingsController(
 
       setParticipationStats(stats);
       setMessageCount(msgCount);
-      setUi({ nameDraft: layoutSession.name });
+      if (!uiRef.current.editingName) {
+        setUi({ nameDraft: layoutSession.name });
+      }
     } catch (err) {
       console.error("Failed to load group chat settings:", err);
       setUi({ error: t("groupChats.sessionSettingsController.failedToLoad") });
@@ -104,13 +109,9 @@ export function useGroupChatSettingsController(
 
     try {
       setUi({ saving: true });
-      const updated = await storageBridge.groupSessionUpdate(
-        session.id,
-        ui.nameDraft.trim(),
-        session.characterIds,
-        session.personaId,
-      );
-      updateSession?.(updated);
+      const trimmed = ui.nameDraft.trim();
+      await storageBridge.groupSessionUpdateTitle(session.id, trimmed);
+      updateSession?.({ ...session, name: trimmed });
       setUi({ editingName: false });
     } catch (err) {
       console.error("Failed to save name:", err);
@@ -125,16 +126,28 @@ export function useGroupChatSettingsController(
 
       try {
         setUi({ saving: true });
-        const updated = await storageBridge.groupSessionUpdate(
-          session.id,
-          session.name,
-          session.characterIds,
-          personaId,
-        );
+        const updated = await storageBridge.groupSessionUpdatePersona(session.id, personaId);
         updateSession?.(updated);
         setUi({ showPersonaSelector: false });
       } catch (err) {
         console.error("Failed to change persona:", err);
+      } finally {
+        setUi({ saving: false });
+      }
+    },
+    [session, setUi, updateSession],
+  );
+
+  const handleClearOverride = useCallback(
+    async (key: GroupSessionOverrideKey) => {
+      if (!session) return;
+
+      try {
+        setUi({ saving: true });
+        const updated = await storageBridge.groupSessionClearOverride(session.id, key);
+        updateSession?.(updated);
+      } catch (err) {
+        console.error("Failed to reset to group default:", err);
       } finally {
         setUi({ saving: false });
       }
@@ -317,6 +330,7 @@ export function useGroupChatSettingsController(
     setShowRemoveConfirm,
     handleSaveName,
     handleChangePersona,
+    handleClearOverride,
     handleAddCharacter,
     handleRemoveCharacter,
     handleChangeSpeakerSelectionMethod,

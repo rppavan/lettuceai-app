@@ -116,6 +116,37 @@ pub fn extract_text(data: &Value, provider_id: Option<&str>) -> Option<String> {
     }
 }
 
+pub fn extract_gemini_content(data: &Value) -> Option<Value> {
+    fn content_from_payload(payload: &Value) -> Option<Value> {
+        payload
+            .get("candidates")
+            .and_then(|candidates| candidates.as_array())
+            .and_then(|candidates| candidates.first())
+            .and_then(|candidate| candidate.get("content"))
+            .filter(|content| content.get("parts").and_then(|parts| parts.as_array()).is_some())
+            .cloned()
+    }
+
+    if let Some(raw) = data.as_str() {
+        let mut parts = Vec::new();
+        let mut role = "model".to_string();
+        for line in raw.lines() {
+            let Some(payload) = line.trim().strip_prefix("data:") else { continue; };
+            let Ok(payload) = serde_json::from_str::<Value>(payload.trim()) else { continue; };
+            let Some(content) = content_from_payload(&payload) else { continue; };
+            if let Some(value) = content.get("role").and_then(Value::as_str) {
+                role = value.to_string();
+            }
+            if let Some(chunk_parts) = content.get("parts").and_then(Value::as_array) {
+                parts.extend(chunk_parts.iter().cloned());
+            }
+        }
+        (!parts.is_empty()).then(|| serde_json::json!({ "role": role, "parts": parts }))
+    } else {
+        content_from_payload(data)
+    }
+}
+
 fn extract_explicit_reasoning(data: &Value) -> Option<String> {
     match data {
         Value::Object(map) => {

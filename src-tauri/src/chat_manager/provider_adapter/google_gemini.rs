@@ -30,6 +30,15 @@ pub fn gemini_thinking_mode(model_name: &str) -> GeminiThinkingMode {
     }
 }
 
+fn gemini_api_base(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if let Some(prefix) = base.strip_suffix("/v1") {
+        format!("{prefix}/v1beta")
+    } else {
+        base.to_string()
+    }
+}
+
 #[derive(Serialize)]
 struct GeminiThinkingConfig {
     #[serde(rename = "includeThoughts")]
@@ -66,7 +75,7 @@ impl ProviderAdapter for GoogleGeminiAdapter {
         api_key: &str,
         should_stream: bool,
     ) -> String {
-        let base = base_url.trim_end_matches('/').replace("/v1", "/v1beta");
+        let base = gemini_api_base(base_url);
         if should_stream {
             format!(
                 "{}/models/{}:streamGenerateContent?alt=sse&key={}",
@@ -146,6 +155,21 @@ impl ProviderAdapter for GoogleGeminiAdapter {
             if let Some(raw_content) = msg.get("gemini_content") {
                 if let Some(parts) = raw_content.get("parts").and_then(|v| v.as_array()) {
                     if !parts.is_empty() {
+                        for part in parts {
+                            let Some(function_call) = part
+                                .get("functionCall")
+                                .or_else(|| part.get("function_call"))
+                            else {
+                                continue;
+                            };
+                            let (Some(id), Some(name)) = (
+                                function_call.get("id").and_then(|v| v.as_str()),
+                                function_call.get("name").and_then(|v| v.as_str()),
+                            ) else {
+                                continue;
+                            };
+                            tool_call_name_by_id.insert(id.to_string(), name.to_string());
+                        }
                         contents.push(json!({
                             "role": raw_content
                                 .get("role")
@@ -396,7 +420,7 @@ impl ProviderAdapter for GoogleGeminiAdapter {
     }
 
     fn list_models_endpoint(&self, base_url: &str) -> String {
-        let base = base_url.trim_end_matches('/').replace("/v1", "/v1beta");
+        let base = gemini_api_base(base_url);
         format!("{}/models", base)
     }
 

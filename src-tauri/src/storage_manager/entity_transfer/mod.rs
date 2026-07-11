@@ -2082,9 +2082,9 @@ fn import_lorebooks_for_character_package(
                 r#"
                 INSERT INTO lorebook_entries (
                     id, lorebook_id, title, enabled, always_active, keywords,
-                    case_sensitive, content, priority, display_order, created_at, updated_at
+                    case_sensitive, keyword_match_mode, content, priority, display_order, created_at, updated_at
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 "#,
                 params![
                     uuid::Uuid::new_v4().to_string(),
@@ -2094,6 +2094,7 @@ fn import_lorebooks_for_character_package(
                     entry.always_active as i64,
                     keywords_json,
                     entry.case_sensitive as i64,
+                    "literal",
                     &entry.content,
                     entry.priority,
                     entry.display_order,

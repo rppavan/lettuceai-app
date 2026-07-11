@@ -39,6 +39,38 @@ struct GeminiRequest<'a> {
 #[serde(rename_all = "camelCase")]
 struct GeminiGenerationConfig {
     response_modalities: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<GeminiResponseFormat>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiResponseFormat {
+    image: GeminiImageFormat,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiImageFormat {
+    aspect_ratio: String,
+}
+
+fn gemini_aspect_ratio(size: Option<&str>) -> Option<String> {
+    let (width, height) = size?.split_once('x')?;
+    let width = width.trim().parse::<u32>().ok()?;
+    let height = height.trim().parse::<u32>().ok()?;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let mut a = width;
+    let mut b = height;
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    let divisor = a;
+    let ratio = format!("{}:{}", width / divisor, height / divisor);
+    matches!(ratio.as_str(), "1:1" | "2:3" | "3:2" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9")
+        .then_some(ratio)
 }
 
 #[derive(Deserialize)]
@@ -111,15 +143,19 @@ impl ImageProviderAdapter for GoogleGeminiAdapter {
 
         if let Some(input_images) = &request.input_images {
             for image in input_images {
-                if let Some((mime_type, data)) = image
+                let Some((mime_type, data)) = image
                     .strip_prefix("data:")
                     .and_then(|rest| rest.split_once(";base64,"))
-                {
-                    parts.push(GeminiPart {
-                        text: None,
-                        inline_data: Some(GeminiInlineDataRequest { mime_type, data }),
-                    });
+                else {
+                    return Err("Gemini image editing requires each input image as a base64 data URL".to_string());
+                };
+                if mime_type.is_empty() || data.is_empty() {
+                    return Err("Gemini image editing received an empty image data URL".to_string());
                 }
+                parts.push(GeminiPart {
+                    text: None,
+                    inline_data: Some(GeminiInlineDataRequest { mime_type, data }),
+                });
             }
         }
 
@@ -143,6 +179,11 @@ impl ImageProviderAdapter for GoogleGeminiAdapter {
             contents: vec![content],
             generation_config: Some(GeminiGenerationConfig {
                 response_modalities,
+                response_format: gemini_aspect_ratio(request.size.as_deref()).map(|aspect_ratio| {
+                    GeminiResponseFormat {
+                        image: GeminiImageFormat { aspect_ratio },
+                    }
+                }),
             }),
         };
 
@@ -257,5 +298,17 @@ impl ImageProviderAdapter for GeminiAgentPlatformExpressAdapter {
 
     fn parse_response(&self, response: Value) -> Result<Vec<ImageResponseData>, String> {
         GoogleGeminiAdapter.parse_response(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gemini_aspect_ratio;
+
+    #[test]
+    fn converts_dimensions_to_supported_gemini_aspect_ratios() {
+        assert_eq!(gemini_aspect_ratio(Some("1024x576")), Some("16:9".to_string()));
+        assert_eq!(gemini_aspect_ratio(Some("1024x1024")), Some("1:1".to_string()));
+        assert_eq!(gemini_aspect_ratio(Some("800x600")), Some("4:3".to_string()));
     }
 }

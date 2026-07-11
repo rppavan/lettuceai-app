@@ -526,6 +526,7 @@ pub async fn lorebook_gen_commit(app: AppHandle, args: CommitArgs) -> Result<Com
             always_active: draft.always_active,
             keywords: draft.keywords.clone(),
             case_sensitive: false,
+            keyword_match_mode: crate::storage_manager::lorebook::LorebookKeywordMatchMode::Literal,
             content: draft.content.clone(),
             priority: 0,
             display_order: display_order as i32,

@@ -8,7 +8,9 @@ import { type as getPlatform } from "@tauri-apps/plugin-os";
 
 import { storageBridge } from "../../../core/storage/files";
 import {
+  createBranchedSessionFromGroupMessage,
   generateGroupChatUserReply,
+  listAllGroupMessages,
   readSettings,
   SETTINGS_UPDATED_EVENT,
   toggleGroupMessagePin,
@@ -480,7 +482,9 @@ export function GroupChatPage() {
         setSelectedCharacterName(null);
         setSelectedCharacterAvatarUrl(null);
         const message =
-          typeof event.payload.message === "string" ? event.payload.message : "Group chat failed.";
+          typeof event.payload.message === "string"
+            ? event.payload.message
+            : t("groupChats.page.requestFailed");
         if (!isAbortMessage(message)) {
           setError(message);
         }
@@ -490,7 +494,7 @@ export function GroupChatPage() {
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [groupSessionId, characters]);
+  }, [groupSessionId, characters, t]);
 
   const handleScroll = useCallback(() => {
     updateIsAtBottom();
@@ -632,9 +636,11 @@ export function GroupChatPage() {
     if (!groupSessionId || !draft.trim() || sending) return;
 
     const userMessage = draft.trim();
+    const attachmentsToSend = pendingAttachments;
     const requestId = crypto.randomUUID();
     activeRequestIdRef.current = requestId;
     setDraft("");
+    setPendingAttachments([]);
     setSending(true);
     setSendingStatus("selecting");
     setError(null);
@@ -659,7 +665,7 @@ export function GroupChatPage() {
       variants: undefined,
       selectedVariantId: undefined,
       isPinned: false,
-      attachments: [],
+      attachments: attachmentsToSend,
       reasoning: null,
       selectionReasoning: null,
     };
@@ -731,6 +737,7 @@ export function GroupChatPage() {
         userMessage,
         true,
         requestId,
+        attachmentsToSend,
       );
 
       // Update messages with actual saved messages
@@ -738,9 +745,6 @@ export function GroupChatPage() {
         groupSessionId,
         MESSAGES_PAGE_SIZE,
       );
-      console.log("🔍 After send - updated messages count:", updatedMessages.length);
-      console.log("🔍 Last message after send:", updatedMessages[updatedMessages.length - 1]);
-      console.log("🔍 Last message modelId:", updatedMessages[updatedMessages.length - 1]?.modelId);
       setMessages(updatedMessages);
       setParticipationStats(response.participationStats);
     } catch (err) {
@@ -761,10 +765,18 @@ export function GroupChatPage() {
       }
       console.error("Failed to send message:", err);
       setError(errMsg || t("common.buttons.retry"));
-      // Remove optimistic messages on error
-      setMessages((prev) =>
-        prev.filter((m) => m.id !== userPlaceholderId && m.id !== assistantPlaceholderId),
-      );
+      try {
+        const updatedMessages = await storageBridge.groupMessagesList(
+          groupSessionId,
+          MESSAGES_PAGE_SIZE,
+        );
+        setMessages(updatedMessages);
+      } catch (loadErr) {
+        console.error("Failed to refresh messages after error:", loadErr);
+        setMessages((prev) =>
+          prev.filter((m) => m.id !== userPlaceholderId && m.id !== assistantPlaceholderId),
+        );
+      }
     } finally {
       if (unlistenNormalized) unlistenNormalized();
       assistantPlaceholderIdRef.current = null;
@@ -777,10 +789,19 @@ export function GroupChatPage() {
       setSelectedCharacterName(null);
       setSelectedCharacterAvatarUrl(null);
     }
-  }, [groupSessionId, draft, sending, messages.length, scrollToBottom, triggerTypingHaptic]);
+  }, [
+    groupSessionId,
+    draft,
+    sending,
+    pendingAttachments,
+    messages.length,
+    scrollToBottom,
+    triggerTypingHaptic,
+    t,
+  ]);
 
   const handleRegenerate = useCallback(
-    async (messageId: string, forceCharacterId?: string) => {
+    async (messageId: string, forceCharacterId?: string, guidance?: string) => {
       if (!groupSessionId || regeneratingMessageId) return;
 
       const requestId = crypto.randomUUID();
@@ -834,6 +855,7 @@ export function GroupChatPage() {
           messageId,
           forceCharacterId,
           requestId,
+          guidance,
         );
 
         // Update messages with final saved data
@@ -1262,6 +1284,32 @@ export function GroupChatPage() {
       setActionBusy(false);
     }
   }, [closeMessageActions, groupSessionId, messageAction, messages]);
+
+  const handleBranchToCharacter = useCallback(
+    async (characterId: string) => {
+      if (!messageAction || !session) return;
+
+      setActionBusy(true);
+      setActionError(null);
+      setActionStatus(null);
+      try {
+        const allMessages = await listAllGroupMessages(session.id);
+        const branched = await createBranchedSessionFromGroupMessage(
+          session,
+          allMessages,
+          messageAction.message.id,
+          characterId,
+        );
+        closeMessageActions();
+        navigate(Routes.chatSession(branched.characterId, branched.id));
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [messageAction, session, closeMessageActions, navigate],
+  );
 
   const handleSaveEdit = useCallback(async () => {
     if (!messageAction || !groupSessionId || !editDraft.trim()) return;
@@ -1958,10 +2006,8 @@ export function GroupChatPage() {
       isGenerating: sending,
       onSelectPersona: async (personaId) => {
         if (!session) return;
-        const updated = await storageBridge.groupSessionUpdate(
+        const updated = await storageBridge.groupSessionUpdatePersona(
           session.id,
-          session.name,
-          session.characterIds,
           personaId ?? null,
         );
         updateSession(updated);
@@ -1983,7 +2029,7 @@ export function GroupChatPage() {
       onAbort: async () => {
         await handleAbort();
       },
-      onViewHistory: () => navigate(Routes.groupChatHistory),
+      onViewHistory: () => navigate(Routes.groupChatHistory(session?.groupCharacterId)),
       onOpenMemories: () => session && navigate(Routes.groupChatMemories(session.id)),
       onOpenSearch: () => session && navigate(Routes.groupChatSearch(session.id)),
       onToggleVoiceAutoplay: () => {},
@@ -2040,7 +2086,7 @@ export function GroupChatPage() {
   if (!session) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-4">
-        <p className="text-fg/50 mb-4">{error || "Group session not found"}</p>
+        <p className="text-fg/50 mb-4">{error || t("groupChats.page.sessionNotFound")}</p>
         <button
           onClick={() => navigate(Routes.groupChats)}
           className={cn(
@@ -2050,7 +2096,7 @@ export function GroupChatPage() {
             interactive.transition.fast,
           )}
         >
-          Back to Group Chats
+          {t("groupChats.page.backToGroupChats")}
         </button>
       </div>
     );
@@ -2218,7 +2264,9 @@ export function GroupChatPage() {
             {messages.length === 0 ? (
               <div className="flex min-h-[50vh] items-center justify-center">
                 <p className="text-fg/30 text-center">
-                  Start a conversation with {groupCharacters.map((c) => c.name).join(", ")}
+                  {t("groupChats.page.startConversation", {
+                    names: groupCharacters.map((c) => c.name).join(", "),
+                  })}
                 </p>
               </div>
             ) : (
@@ -2244,8 +2292,8 @@ export function GroupChatPage() {
                       chatAppearance={chatAppearance}
                       getVariantState={getVariantState}
                       handleVariantDrag={handleVariantDrag}
-                      handleRegenerate={async (msg) => {
-                        await handleRegenerate(msg.id);
+                      handleRegenerate={async (msg, options) => {
+                        await handleRegenerate(msg.id, undefined, options?.guidance);
                       }}
                       onLongPress={(msg) => openMessageActions(msg)}
                       displayContent={parsed.content}
@@ -2264,7 +2312,7 @@ export function GroupChatPage() {
                 className="flex items-center gap-2 mt-4 text-fg/50"
               >
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm">Selecting character...</span>
+                <span className="text-sm">{t("groupChats.page.selectingCharacter")}</span>
               </motion.div>
             )}
           </div>
@@ -2431,6 +2479,7 @@ export function GroupChatPage() {
             handleRegenerate(messageAction.message.id, charId);
           }
         }}
+        onBranchToCharacter={(charId) => void handleBranchToCharacter(charId)}
         onOpenChatAppearance={handleOpenAppearance}
         characters={groupCharacters}
       />

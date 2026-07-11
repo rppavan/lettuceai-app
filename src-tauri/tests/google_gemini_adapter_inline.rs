@@ -214,6 +214,67 @@ fn includes_tool_call_ids_and_tool_config() {
 }
 
 #[test]
+fn preserves_function_name_for_raw_gemini_tool_call_results() {
+    let adapter = GoogleGeminiAdapter;
+    let body = adapter.body(
+        "gemini-3-flash-preview",
+        &vec![
+            json!({
+                "role": "assistant",
+                "gemini_content": {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "id": "call_123",
+                            "name": "lookup_weather",
+                            "args": { "city": "Istanbul" }
+                        },
+                        "thoughtSignature": "signature"
+                    }]
+                }
+            }),
+            json!({
+                "role": "tool",
+                "tool_call_id": "call_123",
+                "content": "{\"temperature\":18}"
+            }),
+        ],
+        None,
+        None,
+        None,
+        256,
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+    );
+
+    assert_eq!(
+        body["contents"][1]["parts"][0]["functionResponse"]["name"],
+        json!("lookup_weather")
+    );
+}
+
+#[test]
+fn keeps_a_v1beta_base_url_intact() {
+    let adapter = GoogleGeminiAdapter;
+    assert_eq!(
+        adapter.build_url(
+            "https://generativelanguage.googleapis.com/v1beta",
+            "gemini-3-flash-preview",
+            "key",
+            false,
+        ),
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=key"
+    );
+}
+
+#[test]
 fn gemini_25_uses_budget_based_thinking() {
     let adapter = GoogleGeminiAdapter;
     let body = adapter.body(

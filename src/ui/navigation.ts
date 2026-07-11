@@ -139,7 +139,10 @@ export const Routes = {
   groupChatMemories: (groupSessionId: string) => `/group-chats/${groupSessionId}/memories`,
   groupChatAppearance: (groupSessionId: string) => `/group-chats/${groupSessionId}/appearance`,
   groupChatSearch: (groupSessionId: string) => `/group-chats/${groupSessionId}/search`,
-  groupChatHistory: "/group-chats/history",
+  groupChatHistory: (groupId?: string | null) =>
+    groupId
+      ? `/group-chats/history?groupId=${encodeURIComponent(groupId)}`
+      : "/group-chats/history",
   // Engine routes
   engineHome: (credentialId: string) => `/settings/engine/${credentialId}`,
   engineSetup: (credentialId: string) => `/settings/engine/${credentialId}/setup`,
@@ -202,7 +205,7 @@ export const BACK_MAPPINGS: BackMapping[] = [
       (p.includes("/appearance") || p.includes("/search")),
     target: Routes.groupChats,
   },
-  { match: (p) => p === "/group-chats/history", target: Routes.groupChats },
+  { match: (p) => p.startsWith("/group-chats/history"), target: Routes.groupChats },
   { match: (p) => p.startsWith("/group-chats/new"), target: Routes.groupChats },
   { match: (p) => p.match(/^\/group-chats\/[^/]+$/) !== null, target: Routes.groupChats },
   // Engine back navigation

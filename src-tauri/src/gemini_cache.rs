@@ -119,6 +119,7 @@ pub async fn maybe_apply_gemini_explicit_cache(
             &model_name,
             system_instruction.as_ref(),
             &prefix_contents,
+            tools.as_ref(),
             &api_ttl,
         )
         .await?;
@@ -148,6 +149,7 @@ pub async fn maybe_apply_gemini_explicit_cache(
     body_obj.insert("contents".to_string(), Value::Array(live_contents));
     body_obj.insert("cachedContent".to_string(), Value::String(cache_name));
     body_obj.remove("systemInstruction");
+    body_obj.remove("tools");
 
     Ok(())
 }
@@ -226,6 +228,7 @@ async fn create_gemini_cached_content(
     model_name: &str,
     system_instruction: Option<&Value>,
     prefix_contents: &[Value],
+    tools: Option<&Value>,
     ttl: &str,
 ) -> Result<String, String> {
     let client = transport::build_client(app, req.timeout_ms, false, None, Some(&endpoint))
@@ -250,6 +253,9 @@ async fn create_gemini_cached_content(
 
     if let Some(system_instruction) = system_instruction.cloned() {
         payload["systemInstruction"] = system_instruction;
+    }
+    if let Some(tools) = tools.cloned() {
+        payload["tools"] = tools;
     }
 
     builder = builder.json(&payload);

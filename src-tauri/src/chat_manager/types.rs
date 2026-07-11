@@ -869,6 +869,9 @@ pub struct StoredMessage {
     /// Model used to generate this message (assistant messages)
     #[serde(default)]
     pub model_id: Option<String>,
+    /// Exact Gemini model content retained for thought-signature replay.
+    #[serde(default)]
+    pub gemini_content: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]

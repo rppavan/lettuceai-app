@@ -212,6 +212,7 @@ export function TopNav({ currentPath, onBackOverride, titleOverride, rightAction
     return (
       basePath === "/chat" ||
       basePath === "/" ||
+      basePath === "/group-chats" ||
       basePath === "/settings/models" ||
       basePath === "/settings/models/browse"
     );
@@ -232,6 +233,11 @@ export function TopNav({ currentPath, onBackOverride, titleOverride, rightAction
         if (mode) setLayoutViewMode(mode);
         return;
       }
+      if (basePath === "/group-chats") {
+        const mode = (window as any).__groupChatsViewMode;
+        if (mode) setLayoutViewMode(mode);
+        return;
+      }
       const mode = (window as any).__chatsViewMode;
       if (mode) setLayoutViewMode(mode);
     };
@@ -241,7 +247,9 @@ export function TopNav({ currentPath, onBackOverride, titleOverride, rightAction
         ? "models:viewModeChanged"
         : basePath === "/settings/models/browse"
           ? "hfBrowser:viewModeChanged"
-          : "chats:viewModeChanged";
+          : basePath === "/group-chats"
+            ? "groupChats:viewModeChanged"
+            : "chats:viewModeChanged";
     window.addEventListener(eventName, sync);
     return () => window.removeEventListener(eventName, sync);
   }, [basePath, showLayoutToggle]);
@@ -257,11 +265,15 @@ export function TopNav({ currentPath, onBackOverride, titleOverride, rightAction
           : layoutViewMode === "grid"
             ? LayoutGrid
             : Grid3X3
-        : layoutViewMode === "hero"
-          ? LayoutGrid
-          : layoutViewMode === "gallery"
-            ? Grid3X3
-            : LayoutList;
+        : basePath === "/group-chats"
+          ? layoutViewMode === "detailed"
+            ? LayoutList
+            : LayoutGrid
+          : layoutViewMode === "hero"
+            ? LayoutGrid
+            : layoutViewMode === "gallery"
+              ? Grid3X3
+              : LayoutList;
 
   const showAddButton = useMemo(() => {
     if (basePath.startsWith("/settings/providers")) return true;
@@ -750,7 +762,9 @@ export function TopNav({ currentPath, onBackOverride, titleOverride, rightAction
                       ? "models:cycleViewMode"
                       : basePath === "/settings/models/browse"
                         ? "hfBrowser:cycleViewMode"
-                        : "chats:cycleViewMode",
+                        : basePath === "/group-chats"
+                          ? "groupChats:cycleViewMode"
+                          : "chats:cycleViewMode",
                   ),
                 )
               }

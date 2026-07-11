@@ -1,7 +1,8 @@
 import { motion, type PanInfo, AnimatePresence } from "framer-motion";
-import React, { useCallback, useMemo, useState, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { RefreshCw, Pin, User, Bot, ChevronDown, Volume2, Loader2, Square } from "lucide-react";
 import { useI18n } from "../../../../core/i18n/context";
+import { BottomMenu } from "../../../components/BottomMenu";
 import { MarkdownRenderer } from "../../chats/components/MarkdownRenderer";
 import type {
   GroupMessage,
@@ -74,7 +75,7 @@ export interface GroupChatMessageProps {
   chatAppearance?: ChatAppearanceSettings;
   getVariantState: (message: GroupMessage) => VariantState;
   handleVariantDrag: (messageId: string, offsetX: number) => void;
-  handleRegenerate: (message: GroupMessage) => Promise<void>;
+  handleRegenerate: (message: GroupMessage, options?: { guidance?: string }) => Promise<void>;
   onLongPress: (message: GroupMessage) => void;
   displayContent?: string;
   onImageClick?: (src: string, alt: string) => void;
@@ -168,47 +169,199 @@ const MessageActions = React.memo(function MessageActions({
   disabled,
   isRegenerating,
   onRegenerate,
+  onGuidedRegenerate,
 }: {
   disabled: boolean;
   isRegenerating: boolean;
   onRegenerate: () => void;
+  onGuidedRegenerate: (guidance: string) => void;
 }) {
   const { t } = useI18n();
+  const [guidedOpen, setGuidedOpen] = useState(false);
+  const [guidance, setGuidance] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const openGuidedRegeneration = useCallback(() => {
+    if (disabled) return;
+    longPressTriggeredRef.current = true;
+    setGuidedOpen(true);
+  }, [disabled]);
+
+  const resetGuidedRegeneration = useCallback(() => {
+    setGuidedOpen(false);
+    setGuidance("");
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (disabled || event.button !== 0) return;
+      clearLongPressTimer();
+      longPressTriggeredRef.current = false;
+      longPressTimerRef.current = window.setTimeout(openGuidedRegeneration, 450);
+    },
+    [clearLongPressTimer, disabled, openGuidedRegeneration],
+  );
+
+  const handlePointerEnd = useCallback(() => {
+    clearLongPressTimer();
+  }, [clearLongPressTimer]);
+
+  const handleClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      clearLongPressTimer();
+      if (longPressTriggeredRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.setTimeout(() => {
+          longPressTriggeredRef.current = false;
+        }, 0);
+        return;
+      }
+      onRegenerate();
+    },
+    [clearLongPressTimer, onRegenerate],
+  );
+
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (disabled) return;
+      event.preventDefault();
+      event.stopPropagation();
+      clearLongPressTimer();
+      openGuidedRegeneration();
+    },
+    [clearLongPressTimer, disabled, openGuidedRegeneration],
+  );
+
+  const submitGuidedRegeneration = useCallback(() => {
+    const trimmed = guidance.trim();
+    if (!trimmed || disabled) return;
+    resetGuidedRegeneration();
+    onGuidedRegenerate(trimmed);
+  }, [disabled, guidance, onGuidedRegenerate, resetGuidedRegeneration]);
+
+  useEffect(() => {
+    if (!guidedOpen) return;
+    const id = window.setTimeout(() => textareaRef.current?.focus(), 150);
+    return () => window.clearTimeout(id);
+  }, [guidedOpen]);
+
+  useEffect(() => clearLongPressTimer, [clearLongPressTimer]);
+
   return (
-    <motion.div
-      className="absolute -bottom-4 right-0 flex items-center gap-2"
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{
-        type: "tween",
-        duration: 0.15,
-        ease: [0.25, 0.46, 0.45, 0.94],
-        delay: 0.1,
-      }}
-    >
-      <button
-        type="button"
-        onClick={onRegenerate}
-        disabled={disabled}
-        className={cn(
-          "flex items-center px-[0.6em] py-[0.3em] justify-center",
-          radius.full,
-          "border border-fg/15 bg-fg/10 text-fg",
-          interactive.transition.fast,
-          "hover:border-fg/30 hover:bg-fg/20 hover:scale-105",
-          interactive.active.scale,
-          "disabled:cursor-not-allowed disabled:opacity-80 disabled:hover:scale-100",
-        )}
-        aria-label={t("groupChats.message.regenerateResponse")}
-        style={{ willChange: "transform" }}
+    <>
+      <motion.div
+        className="absolute -bottom-4 right-0 flex items-center gap-2"
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{
+          type: "tween",
+          duration: 0.15,
+          ease: [0.25, 0.46, 0.45, 0.94],
+          delay: 0.1,
+        }}
       >
-        {isRegenerating ? (
-          <RefreshCw size={14} className="animate-spin rounded-full" />
-        ) : (
-          <RefreshCw size={14} />
-        )}
-      </button>
-    </motion.div>
+        <button
+          type="button"
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerEnd}
+          onPointerLeave={handlePointerEnd}
+          onPointerCancel={handlePointerEnd}
+          onClick={handleClick}
+          onContextMenu={handleContextMenu}
+          disabled={disabled}
+          className={cn(
+            "flex items-center px-[0.6em] py-[0.3em] justify-center",
+            radius.full,
+            "border border-fg/15 bg-fg/10 text-fg",
+            interactive.transition.fast,
+            "hover:border-fg/30 hover:bg-fg/20 hover:scale-105",
+            interactive.active.scale,
+            "disabled:cursor-not-allowed disabled:opacity-80 disabled:hover:scale-100",
+          )}
+          aria-label={t("groupChats.message.regenerateResponse")}
+          style={{ willChange: "transform" }}
+        >
+          {isRegenerating ? (
+            <RefreshCw size={14} className="animate-spin rounded-full" />
+          ) : (
+            <RefreshCw size={14} />
+          )}
+        </button>
+      </motion.div>
+
+      <BottomMenu
+        isOpen={guidedOpen}
+        onClose={resetGuidedRegeneration}
+        title={t("chats.message.guidedRegenerationTitle")}
+      >
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitGuidedRegeneration();
+          }}
+        >
+          <div className="space-y-1">
+            <label
+              className="block text-sm font-medium text-fg/90"
+              htmlFor="group-guided-regeneration"
+            >
+              {t("chats.message.guidedRegenerationLabel")}
+            </label>
+            <p className="text-sm leading-5 text-fg/55">
+              {t("chats.message.guidedRegenerationDescription")}
+            </p>
+          </div>
+          <textarea
+            id="group-guided-regeneration"
+            ref={textareaRef}
+            value={guidance}
+            onChange={(event) => setGuidance(event.target.value)}
+            placeholder={t("chats.message.guidedRegenerationPlaceholder")}
+            rows={4}
+            className={cn(
+              "w-full resize-none border border-fg/12 bg-fg/4 px-3 py-3 text-sm text-fg outline-none",
+              radius.lg,
+              "placeholder:text-fg/35 focus:border-fg/25 focus:bg-fg/6 focus:ring-2 focus:ring-fg/10",
+            )}
+          />
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={resetGuidedRegeneration}
+              className={cn(
+                "flex-1 border border-fg/10 bg-fg/5 py-3 text-sm font-medium text-fg",
+                radius.lg,
+                "transition hover:border-fg/20 hover:bg-fg/10",
+              )}
+            >
+              {t("common.buttons.cancel")}
+            </button>
+            <button
+              type="submit"
+              disabled={!guidance.trim() || disabled}
+              className={cn(
+                "flex-1 border border-emerald-500/30 bg-emerald-500/20 py-3 text-sm font-medium text-emerald-100",
+                radius.lg,
+                "transition hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-emerald-500/20",
+              )}
+            >
+              {t("chats.message.guidedRegenerationSubmit")}
+            </button>
+          </div>
+        </form>
+      </BottomMenu>
+    </>
   );
 });
 
@@ -344,6 +497,10 @@ function GroupChatMessageInner({
     const showTypingIndicator = isAssistant && isPlaceholder && message.content.trim().length === 0;
     const showRegenerateButton = isLatestAssistant && !isScene;
     const shouldAnimate = !isPlaceholder;
+    const selectedVariant =
+      (variantState.variants?.length ?? 0) > 0 && selectedVariantIndex >= 0
+        ? variantState.variants?.[selectedVariantIndex]
+        : undefined;
 
     return {
       isAssistant,
@@ -353,6 +510,7 @@ function GroupChatMessageInner({
       isLatestAssistant,
       totalVariants,
       selectedVariantIndex,
+      selectedVariant,
       enableSwipe,
       showTypingIndicator,
       showRegenerateButton,
@@ -486,7 +644,9 @@ function GroupChatMessageInner({
   );
 
   // Load attachments with lazy loading support for persisted images
-  const loadedAttachments = useSessionAttachments(message.attachments);
+  const loadedAttachments = useSessionAttachments(
+    computed.selectedVariant?.attachments ?? message.attachments,
+  );
   const bubbleStyle =
     chatAppearance?.bubbleStyle === "minimal"
       ? undefined
@@ -733,6 +893,7 @@ function GroupChatMessageInner({
           disabled={regeneratingMessageId === message.id || sending}
           isRegenerating={regeneratingMessageId === message.id}
           onRegenerate={() => void handleRegenerate(message)}
+          onGuidedRegenerate={(guidance) => void handleRegenerate(message, { guidance })}
         />
       )}
     </div>

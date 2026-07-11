@@ -77,17 +77,40 @@ function normalizeKeywordText(value: string): string {
     .join(" ");
 }
 
-function keywordMatches(keyword: string, text: string, caseSensitive: boolean): boolean {
+function containsUnsegmentedScript(text: string): boolean {
+  return /[\u0E00-\u0EFF\u1000-\u109F\u1780-\u17FF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/u.test(
+    text,
+  );
+}
+
+function keywordMatches(
+  keyword: string,
+  text: string,
+  caseSensitive: boolean,
+  keywordMatchMode: LorebookEntry["keywordMatchMode"],
+): boolean {
   const trimmedKeyword = keyword.trim();
   if (!trimmedKeyword) return false;
 
   const searchKeyword = caseSensitive ? trimmedKeyword : trimmedKeyword.toLowerCase();
   const searchText = caseSensitive ? text : text.toLowerCase();
 
+  if (keywordMatchMode === "regex") {
+    try {
+      return new RegExp(searchKeyword, caseSensitive ? "u" : "iu").test(searchText);
+    } catch {
+      return false;
+    }
+  }
+
   if (searchKeyword.endsWith("*")) {
     const prefix = searchKeyword.slice(0, -1);
     if (!prefix) return false;
-    return normalizeKeywordText(searchText)
+    const normalizedText = normalizeKeywordText(searchText);
+    if (containsUnsegmentedScript(prefix) || containsUnsegmentedScript(normalizedText)) {
+      return normalizedText.includes(prefix);
+    }
+    return normalizedText
       .split(/\s+/)
       .some((word) => word.startsWith(prefix));
   }
@@ -96,6 +119,9 @@ function keywordMatches(keyword: string, text: string, caseSensitive: boolean): 
   const normalizedText = normalizeKeywordText(searchText);
 
   if (!normalizedKeyword) return false;
+  if (containsUnsegmentedScript(normalizedKeyword) || containsUnsegmentedScript(normalizedText)) {
+    return normalizedText.includes(normalizedKeyword);
+  }
   if (normalizedKeyword.includes(" ")) {
     return normalizedText.includes(normalizedKeyword);
   }
@@ -113,10 +139,23 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function buildKeywordRegex(keyword: string, caseSensitive: boolean): RegExp | null {
+function buildKeywordRegex(
+  keyword: string,
+  text: string,
+  caseSensitive: boolean,
+  keywordMatchMode: LorebookEntry["keywordMatchMode"],
+): RegExp | null {
   const trimmed = keyword.trim();
   if (!trimmed) return null;
   const flags = caseSensitive ? "gu" : "giu";
+
+  if (keywordMatchMode === "regex") {
+    try {
+      return new RegExp(trimmed, flags);
+    } catch {
+      return null;
+    }
+  }
 
   if (trimmed.endsWith("*")) {
     const prefix = trimmed.slice(0, -1);
@@ -125,6 +164,10 @@ function buildKeywordRegex(keyword: string, caseSensitive: boolean): RegExp | nu
   }
 
   if (/\s/.test(trimmed)) {
+    return new RegExp(escapeRegExp(trimmed), flags);
+  }
+
+  if (containsUnsegmentedScript(trimmed) || containsUnsegmentedScript(text)) {
     return new RegExp(escapeRegExp(trimmed), flags);
   }
 
@@ -139,7 +182,12 @@ function findMessageMatches(
   for (const inspection of inspections) {
     if (!inspection.entry.enabled) continue;
     for (const keyword of inspection.entry.keywords) {
-      const regex = buildKeywordRegex(keyword, inspection.entry.caseSensitive);
+      const regex = buildKeywordRegex(
+        keyword,
+        text,
+        inspection.entry.caseSensitive,
+        inspection.entry.keywordMatchMode,
+      );
       if (!regex) continue;
       let m: RegExpExecArray | null;
       while ((m = regex.exec(text)) !== null) {
@@ -208,6 +256,7 @@ export function makeBlankEntry(lorebookId: string, displayOrder: number): Lorebo
     alwaysActive: false,
     keywords: [],
     caseSensitive: false,
+    keywordMatchMode: "literal",
     content: "",
     priority: 0,
     displayOrder,
@@ -224,7 +273,7 @@ export function buildInspections(
   return entries
     .map<EntryInspection>((entry) => {
       const matchedKeywords = entry.keywords.filter((keyword) =>
-        keywordMatches(keyword, context, entry.caseSensitive),
+        keywordMatches(keyword, context, entry.caseSensitive, entry.keywordMatchMode),
       );
       let status: EntryInspection["status"];
       if (!entry.enabled) status = "disabled";

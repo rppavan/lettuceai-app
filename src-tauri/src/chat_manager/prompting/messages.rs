@@ -179,10 +179,16 @@ pub fn push_user_or_assistant_message_with_context(
             "content": content
         }));
     } else {
-        target.push(json!({
+        let mut api_message = json!({
             "role": message.role,
             "content": text
-        }));
+        });
+        if message.role == "assistant" {
+            if let Some(gemini_content) = &message.gemini_content {
+                api_message["gemini_content"] = gemini_content.clone();
+            }
+        }
+        target.push(api_message);
     }
 }
 

@@ -1,14 +1,12 @@
-use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use serde_json::json;
+use tauri::AppHandle;
 use uuid::Uuid;
 
-use crate::api::{api_request, ApiRequest};
 use crate::chat_manager::attachments::{
     cleanup_attachments, load_attachment_data, persist_attachments,
 };
 use crate::chat_manager::commands::take_aborted_request;
 use crate::chat_manager::companion;
-use crate::chat_manager::execution::{build_provider_extra_fields, RequestSettings};
 use crate::chat_manager::memory::dynamic::{
     context_enrichment_enabled, dynamic_min_similarity, dynamic_retrieval_limit,
     dynamic_retrieval_strategy, dynamic_window_size, ensure_pinned_hot, mark_memories_accessed,
@@ -23,11 +21,9 @@ use crate::chat_manager::messages::{
     sanitize_placeholders_in_api_messages,
 };
 use crate::chat_manager::prompts;
-use crate::chat_manager::request::{
-    extract_error_message, extract_reasoning, extract_text, extract_usage, new_assistant_variant,
-};
+use crate::chat_manager::request::new_assistant_variant;
 use crate::chat_manager::service::{
-    record_failed_usage, record_usage_if_available, require_api_key, ChatService, PreparedChatTurn,
+    record_failed_usage, record_usage_if_available, ChatService, PreparedChatTurn,
 };
 use crate::chat_manager::storage::recent_messages;
 use crate::chat_manager::temporal::{
@@ -43,10 +39,9 @@ use crate::chat_manager::turn_builder::{
 use crate::chat_manager::types::{
     ChatCompletionArgs, ChatTurnResult, ImageAttachment, StoredMessage,
 };
+use crate::conversation_manager::{execute_generation, ConversationExecutionInput};
 use crate::usage::tracking::UsageOperationType;
-use crate::utils::{
-    emit_debug, emit_error_event, emit_info, log_error, log_info, log_warn, now_millis,
-};
+use crate::utils::{emit_debug, emit_info, log_info, now_millis};
 
 pub struct CompletionFlow {
     app: AppHandle,
@@ -167,6 +162,7 @@ impl CompletionFlow {
             attachments: persisted_attachments,
             reasoning: None,
             model_id: None,
+            gemini_content: None,
         };
         session.messages.push(user_msg.clone());
         session.updated_at = now;
@@ -449,87 +445,134 @@ impl CompletionFlow {
             None
         };
 
-        let attempts = vec![(&model, &credential, false)];
-
-        let mut selected_model = &model;
-        let mut selected_credential = &credential;
-        let mut selected_api_key = String::new();
-        let mut successful_response = None;
-        let mut last_error = "request failed".to_string();
-
-        for (idx, (attempt_model, attempt_credential, is_fallback_attempt)) in
-            attempts.iter().enumerate()
+        let execution = match execute_generation(ConversationExecutionInput {
+            app: &app,
+            session_id: &session.id,
+            request_session: &session,
+            settings,
+            model: &model,
+            credential: &credential,
+            messages: &messages_for_api,
+            stream: should_stream,
+            request_id: request_id.clone(),
+            operation: "completion",
+            log_scope: "chat_completion",
+            tool_config: None,
+        })
+        .await
         {
-            let has_next_attempt = idx + 1 < attempts.len();
+            Ok(output) => output,
+            Err(failure) => {
+                record_failed_usage(
+                    &app,
+                    &failure.usage,
+                    &session,
+                    &character,
+                    &model,
+                    &credential,
+                    UsageOperationType::Chat,
+                    &failure.message,
+                    "chat_completion",
+                );
+                return Err(failure.message);
+            }
+        };
+        let selected_model = &model;
+        let selected_credential = &credential;
+        let selected_api_key = execution.api_key;
+        let images_from_sse = execution.generated_image_data_urls;
+        let text = if time_stamp_enabled {
+            crate::chat_manager::temporal::strip_echoed_time_stamps(&execution.text)
+        } else {
+            execution.text
+        };
+        let usage = execution.usage;
+        let reasoning = execution.reasoning;
+        let gemini_content = execution.gemini_content;
 
-            let attempt_api_key = match require_api_key(&app, attempt_credential, "chat_completion")
+        #[cfg(any())]
+        {
+            let attempts = vec![(&model, &credential, false)];
+
+            let mut selected_model = &model;
+            let mut selected_credential = &credential;
+            let mut selected_api_key = String::new();
+            let mut successful_response = None;
+            let mut last_error = "request failed".to_string();
+
+            for (idx, (attempt_model, attempt_credential, is_fallback_attempt)) in
+                attempts.iter().enumerate()
             {
-                Ok(key) => key,
-                Err(err) => {
-                    log_error(
-                        &app,
-                        "chat_completion",
-                        format!(
-                            "failed to resolve API key for model={} provider={}: {}",
-                            attempt_model.name, attempt_credential.provider_id, err
-                        ),
-                    );
-                    last_error = err;
-                    if has_next_attempt {
-                        continue;
-                    }
-                    return Err(last_error);
-                }
-            };
+                let has_next_attempt = idx + 1 < attempts.len();
 
-            let request_settings = RequestSettings::resolve(&session, attempt_model, settings);
-            let extra_body_fields = build_provider_extra_fields(
-                &attempt_credential.provider_id,
-                &session,
-                attempt_model,
-                settings,
-                &request_settings,
-            );
+                let attempt_api_key =
+                    match require_api_key(&app, attempt_credential, "chat_completion") {
+                        Ok(key) => key,
+                        Err(err) => {
+                            log_error(
+                                &app,
+                                "chat_completion",
+                                format!(
+                                    "failed to resolve API key for model={} provider={}: {}",
+                                    attempt_model.name, attempt_credential.provider_id, err
+                                ),
+                            );
+                            last_error = err;
+                            if has_next_attempt {
+                                continue;
+                            }
+                            return Err(last_error);
+                        }
+                    };
 
-            log_info(
-                &app,
-                "chat_completion",
-                format!(
-                    "reasoning settings: enabled={} effort={:?} budget={:?} model_adv={:?}",
+                let request_settings = RequestSettings::resolve(&session, attempt_model, settings);
+                let extra_body_fields = build_provider_extra_fields(
+                    &attempt_credential.provider_id,
+                    &session,
+                    attempt_model,
+                    settings,
+                    &request_settings,
+                );
+
+                log_info(
+                    &app,
+                    "chat_completion",
+                    format!(
+                        "reasoning settings: enabled={} effort={:?} budget={:?} model_adv={:?}",
+                        request_settings.reasoning_enabled,
+                        request_settings.reasoning_effort,
+                        request_settings.reasoning_budget,
+                        attempt_model
+                            .advanced_model_settings
+                            .as_ref()
+                            .map(|a| a.reasoning_enabled)
+                    ),
+                );
+
+                let built = crate::chat_manager::request_builder::build_chat_request(
+                    attempt_credential,
+                    &attempt_api_key,
+                    &attempt_model.name,
+                    &messages_for_api,
+                    None,
+                    request_settings.temperature,
+                    request_settings.top_p,
+                    request_settings.max_tokens,
+                    request_settings.context_length,
+                    should_stream,
+                    request_id.clone(),
+                    request_settings.frequency_penalty,
+                    request_settings.presence_penalty,
+                    request_settings.top_k,
+                    None,
                     request_settings.reasoning_enabled,
-                    request_settings.reasoning_effort,
+                    request_settings.reasoning_effort.clone(),
                     request_settings.reasoning_budget,
-                    attempt_model
-                        .advanced_model_settings
-                        .as_ref()
-                        .map(|a| a.reasoning_enabled)
-                ),
-            );
+                    request_settings.prompt_caching_enabled.unwrap_or(false),
+                    extra_body_fields,
+                );
 
-            let built = crate::chat_manager::request_builder::build_chat_request(
-                attempt_credential,
-                &attempt_api_key,
-                &attempt_model.name,
-                &messages_for_api,
-                None,
-                request_settings.temperature,
-                request_settings.top_p,
-                request_settings.max_tokens,
-                request_settings.context_length,
-                should_stream,
-                request_id.clone(),
-                request_settings.frequency_penalty,
-                request_settings.presence_penalty,
-                request_settings.top_k,
-                None,
-                request_settings.reasoning_enabled,
-                request_settings.reasoning_effort.clone(),
-                request_settings.reasoning_budget,
-                request_settings.prompt_caching_enabled.unwrap_or(false),
-                extra_body_fields,
-            );
-
-            log_info(
+                log_info(
                 &app,
                 "chat_completion",
                 format!(
@@ -542,200 +585,207 @@ impl CompletionFlow {
                 ),
             );
 
-            let request_started_at = now_millis().unwrap_or_default();
+                let request_started_at = now_millis().unwrap_or_default();
 
-            emit_info(
-                &app,
-                "sending_request",
-                json!({
-                    "operation": "completion",
-                    "sessionId": session.id,
-                    "providerId": attempt_credential.provider_id,
-                    "model": attempt_model.name,
-                    "stream": should_stream,
-                    "requestId": request_id,
-                    "endpoint": built.url,
-                    "requestStartedAt": request_started_at,
-                    "requestBody": &built.body,
-                    "reasoning": built.body.get("reasoning"),
-                    "reasoningEffort": built.body.get("reasoning_effort"),
-                    "maxCompletionTokens": built.body.get("max_completion_tokens"),
-                    "requestSettings": {
-                        "temperature": request_settings.temperature,
-                        "topP": request_settings.top_p,
-                        "maxTokens": request_settings.max_tokens,
-                        "contextLength": request_settings.context_length,
-                        "frequencyPenalty": request_settings.frequency_penalty,
-                        "presencePenalty": request_settings.presence_penalty,
-                        "topK": request_settings.top_k,
-                        "reasoningEnabled": request_settings.reasoning_enabled,
-                        "reasoningEffort": request_settings.reasoning_effort,
-                        "reasoningBudget": request_settings.reasoning_budget,
-                    },
-                    "fallbackAttempt": is_fallback_attempt,
-                }),
-            );
-
-            let api_request_payload = ApiRequest {
-                url: built.url,
-                method: Some("POST".into()),
-                headers: Some(built.headers),
-                query: None,
-                body: Some(built.body),
-                timeout_ms: Some(crate::transport::DEFAULT_REQUEST_TIMEOUT_MS),
-                stream: Some(built.stream),
-                request_id: built.request_id.clone(),
-                provider_id: Some(attempt_credential.provider_id.clone()),
-            };
-
-            let api_response = match api_request(app.clone(), api_request_payload).await {
-                Ok(resp) => resp,
-                Err(err) => {
-                    log_error(
-                        &app,
-                        "chat_completion",
-                        format!(
-                            "api_request failed model={} provider={} err={}",
-                            attempt_model.name, attempt_credential.provider_id, err
-                        ),
-                    );
-                    last_error = err;
-                    if has_next_attempt {
-                        continue;
-                    }
-                    return Err(last_error);
-                }
-            };
-
-            emit_info(
-                &app,
-                "response",
-                json!({
-                    "operation": "completion",
-                    "sessionId": session.id,
-                    "requestId": request_id,
-                    "status": api_response.status,
-                    "ok": api_response.ok,
-                    "model": attempt_model.name,
-                    "elapsedMs": now_millis().unwrap_or_default().saturating_sub(request_started_at),
-                }),
-            );
-
-            if !api_response.ok {
-                let fallback = format!("Provider returned status {}", api_response.status);
-                let err_message =
-                    extract_error_message(api_response.data()).unwrap_or(fallback.clone());
-                let failed_usage = extract_usage(api_response.data());
-
-                if !has_next_attempt {
-                    record_failed_usage(
-                        &app,
-                        &failed_usage,
-                        &session,
-                        &character,
-                        attempt_model,
-                        attempt_credential,
-                        UsageOperationType::Chat,
-                        &err_message,
-                        "chat_completion",
-                    );
-                }
-
-                emit_error_event(
+                emit_info(
                     &app,
-                    "provider_error",
+                    "sending_request",
+                    json!({
+                        "operation": "completion",
+                        "sessionId": session.id,
+                        "providerId": attempt_credential.provider_id,
+                        "model": attempt_model.name,
+                        "stream": should_stream,
+                        "requestId": request_id,
+                        "endpoint": built.url,
+                        "requestStartedAt": request_started_at,
+                        "requestBody": &built.body,
+                        "reasoning": built.body.get("reasoning"),
+                        "reasoningEffort": built.body.get("reasoning_effort"),
+                        "maxCompletionTokens": built.body.get("max_completion_tokens"),
+                        "requestSettings": {
+                            "temperature": request_settings.temperature,
+                            "topP": request_settings.top_p,
+                            "maxTokens": request_settings.max_tokens,
+                            "contextLength": request_settings.context_length,
+                            "frequencyPenalty": request_settings.frequency_penalty,
+                            "presencePenalty": request_settings.presence_penalty,
+                            "topK": request_settings.top_k,
+                            "reasoningEnabled": request_settings.reasoning_enabled,
+                            "reasoningEffort": request_settings.reasoning_effort,
+                            "reasoningBudget": request_settings.reasoning_budget,
+                        },
+                        "fallbackAttempt": is_fallback_attempt,
+                    }),
+                );
+
+                let api_request_payload = ApiRequest {
+                    url: built.url,
+                    method: Some("POST".into()),
+                    headers: Some(built.headers),
+                    query: None,
+                    body: Some(built.body),
+                    timeout_ms: Some(crate::transport::DEFAULT_REQUEST_TIMEOUT_MS),
+                    stream: Some(built.stream),
+                    request_id: built.request_id.clone(),
+                    provider_id: Some(attempt_credential.provider_id.clone()),
+                };
+
+                let api_response = match api_request(app.clone(), api_request_payload).await {
+                    Ok(resp) => resp,
+                    Err(err) => {
+                        log_error(
+                            &app,
+                            "chat_completion",
+                            format!(
+                                "api_request failed model={} provider={} err={}",
+                                attempt_model.name, attempt_credential.provider_id, err
+                            ),
+                        );
+                        last_error = err;
+                        if has_next_attempt {
+                            continue;
+                        }
+                        return Err(last_error);
+                    }
+                };
+
+                emit_info(
+                    &app,
+                    "response",
                     json!({
                         "operation": "completion",
                         "sessionId": session.id,
                         "requestId": request_id,
                         "status": api_response.status,
-                        "message": err_message,
-                        "usage": failed_usage,
+                        "ok": api_response.ok,
                         "model": attempt_model.name,
+                        "elapsedMs": now_millis().unwrap_or_default().saturating_sub(request_started_at),
                     }),
                 );
 
-                last_error = if err_message == fallback {
-                    err_message
-                } else {
-                    format!("{} (status {})", err_message, api_response.status)
-                };
+                if !api_response.ok {
+                    let fallback = format!("Provider returned status {}", api_response.status);
+                    let err_message =
+                        extract_error_message(api_response.data()).unwrap_or(fallback.clone());
+                    let failed_usage = extract_usage(api_response.data());
 
-                if has_next_attempt {
-                    continue;
+                    if !has_next_attempt {
+                        record_failed_usage(
+                            &app,
+                            &failed_usage,
+                            &session,
+                            &character,
+                            attempt_model,
+                            attempt_credential,
+                            UsageOperationType::Chat,
+                            &err_message,
+                            "chat_completion",
+                        );
+                    }
+
+                    emit_error_event(
+                        &app,
+                        "provider_error",
+                        json!({
+                            "operation": "completion",
+                            "sessionId": session.id,
+                            "requestId": request_id,
+                            "status": api_response.status,
+                            "message": err_message,
+                            "usage": failed_usage,
+                            "model": attempt_model.name,
+                        }),
+                    );
+
+                    last_error = if err_message == fallback {
+                        err_message
+                    } else {
+                        format!("{} (status {})", err_message, api_response.status)
+                    };
+
+                    if has_next_attempt {
+                        continue;
+                    }
+                    return Err(last_error);
                 }
-                return Err(last_error);
+
+                selected_model = attempt_model;
+                selected_credential = attempt_credential;
+                selected_api_key = attempt_api_key;
+                successful_response = Some(api_response);
+                break;
             }
 
-            selected_model = attempt_model;
-            selected_credential = attempt_credential;
-            selected_api_key = attempt_api_key;
-            successful_response = Some(api_response);
-            break;
-        }
-
-        let api_response = match successful_response {
-            Some(resp) => resp,
-            None => return Err(last_error),
-        };
-
-        if take_aborted_request(&app, request_id.as_deref()) {
-            return Err("Request aborted by user".to_string());
-        }
-
-        let images_from_sse = match api_response.data() {
-            Value::String(s) if s.contains("data:") => {
-                crate::chat_manager::sse::accumulate_image_data_urls_from_sse(s)
-            }
-            // non-streamed image responses come back as one JSON object
-            value => crate::chat_manager::sse::image_data_urls_from_response(value),
-        };
-
-        let text = extract_text(api_response.data(), Some(&selected_credential.provider_id))
-            .unwrap_or_default();
-        let text = if time_stamp_enabled {
-            crate::chat_manager::temporal::strip_echoed_time_stamps(&text)
-        } else {
-            text
-        };
-        let usage = extract_usage(api_response.data());
-        let reasoning =
-            extract_reasoning(api_response.data(), Some(&selected_credential.provider_id));
-
-        if text.trim().is_empty() && images_from_sse.is_empty() {
-            let has_reasoning = reasoning.as_ref().is_some_and(|r| !r.trim().is_empty());
-            let error_detail = if has_reasoning {
-                "Model completed reasoning but generated no response text. This may indicate the model ran out of tokens or encountered an issue during generation."
-            } else {
-                "Empty response from provider"
+            let api_response = match successful_response {
+                Some(resp) => resp,
+                None => return Err(last_error),
             };
 
-            log_error(
-                &app,
-                "chat_completion",
-                format!(
-                    "empty response from provider: has_reasoning={}",
-                    has_reasoning
-                ),
-            );
-            return Err(error_detail.to_string());
-        }
+            if take_aborted_request(&app, request_id.as_deref()) {
+                return Err("Request aborted by user".to_string());
+            }
 
-        if let Some(filter) = app.try_state::<crate::content_filter::ContentFilter>() {
-            if filter.is_enabled() {
-                let result = filter.check_text(&text);
-                if result.blocked {
-                    log_warn(
-                        &app,
-                        "chat_completion",
-                        format!(
-                            "Content blocked by Pure Mode (score={:.1}, terms={:?})",
-                            result.score, result.matched_terms
-                        ),
-                    );
-                    return Err(
-                        "Response blocked by Pure Mode. Try rephrasing your message.".to_string(),
-                    );
+            let images_from_sse = match api_response.data() {
+                Value::String(s) if s.contains("data:") => {
+                    crate::chat_manager::sse::accumulate_image_data_urls_from_sse(s)
+                }
+                // non-streamed image responses come back as one JSON object
+                value => crate::chat_manager::sse::image_data_urls_from_response(value),
+            };
+
+            let text = extract_text(api_response.data(), Some(&selected_credential.provider_id))
+                .unwrap_or_default();
+            let text = if time_stamp_enabled {
+                crate::chat_manager::temporal::strip_echoed_time_stamps(&text)
+            } else {
+                text
+            };
+            let usage = extract_usage(api_response.data());
+            let reasoning =
+                extract_reasoning(api_response.data(), Some(&selected_credential.provider_id));
+            let gemini_content = crate::chat_manager::provider_adapter::is_gemini_format_provider(
+                &selected_credential.provider_id,
+            )
+            .then(|| extract_gemini_content(api_response.data()))
+            .flatten();
+
+            if text.trim().is_empty() && images_from_sse.is_empty() {
+                let has_reasoning = reasoning.as_ref().is_some_and(|r| !r.trim().is_empty());
+                let error_detail = if has_reasoning {
+                    "Model completed reasoning but generated no response text. This may indicate the model ran out of tokens or encountered an issue during generation."
+                } else {
+                    "Empty response from provider"
+                };
+
+                log_error(
+                    &app,
+                    "chat_completion",
+                    format!(
+                        "empty response from provider: has_reasoning={}",
+                        has_reasoning
+                    ),
+                );
+                return Err(error_detail.to_string());
+            }
+
+            if let Some(filter) = app.try_state::<crate::content_filter::ContentFilter>() {
+                if filter.is_enabled() {
+                    let result = filter.check_text(&text);
+                    if result.blocked {
+                        log_warn(
+                            &app,
+                            "chat_completion",
+                            format!(
+                                "Content blocked by Pure Mode (score={:.1}, terms={:?})",
+                                result.score, result.matched_terms
+                            ),
+                        );
+                        return Err(
+                            "Response blocked by Pure Mode. Try rephrasing your message."
+                                .to_string(),
+                        );
+                    }
                 }
             }
         }
@@ -818,6 +868,7 @@ impl CompletionFlow {
             attachments: persisted_assistant_attachments,
             reasoning,
             model_id: Some(selected_model.id.clone()),
+            gemini_content,
         };
 
         session.messages.push(assistant_message.clone());

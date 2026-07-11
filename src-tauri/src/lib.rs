@@ -12,6 +12,7 @@ mod asr_manager;
 pub mod chat_appearance;
 pub mod chat_manager;
 pub mod content_filter;
+mod conversation_manager;
 pub mod creation_helper;
 pub mod discovery;
 pub mod embedding;

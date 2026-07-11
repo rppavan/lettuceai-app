@@ -22,7 +22,10 @@ use crate::image_generator::types::ImageGenerationRequest;
 use crate::storage_manager::characters as characters_storage;
 use crate::storage_manager::db::{now_ms, open_db};
 use crate::storage_manager::lorebook as lorebook_storage;
-use crate::storage_manager::media::{storage_read_image_data, storage_write_image_data};
+use crate::storage_manager::media::{
+    generate_avatar_gradient, storage_read_image_data, storage_save_avatar,
+    storage_write_image_data,
+};
 use crate::storage_manager::personas as personas_storage;
 use crate::storage_manager::settings::internal_read_settings;
 use crate::usage::{
@@ -1879,70 +1882,18 @@ pub(crate) async fn execute_tool(
             Err(e) => json!({ "success": false, "error": e }),
         },
         "use_uploaded_image_as_persona_avatar" => {
-            let persona_id = arguments.get("persona_id").and_then(|v| v.as_str());
             let image_id = arguments.get("image_id").and_then(|v| v.as_str());
-            if let (Some(persona_id), Some(image_id)) = (persona_id, image_id) {
+            if let Some(image_id) = image_id {
                 match resolve_uploaded_image_id(&session.id, image_id) {
                     Ok(Some(resolved_id)) => {
-                        match get_uploaded_image(app, &session.id, &resolved_id) {
-                            Ok(Some(image)) => {
-                                match personas_storage::personas_list_typed::<Value>(app) {
-                                    Ok(personas) => {
-                                        if let Some(persona) = personas.iter().find_map(|p| {
-                                            let id = p.get("id")?.as_str()?;
-                                            if id != persona_id {
-                                                return None;
-                                            }
-                                            Some(p)
-                                        }) {
-                                            let title =
-                                                persona.get("title").and_then(|v| v.as_str());
-                                            let description =
-                                                persona.get("description").and_then(|v| v.as_str());
-                                            let is_default =
-                                                persona.get("isDefault").and_then(|v| v.as_bool());
-                                            if let (Some(title), Some(description)) =
-                                                (title, description)
-                                            {
-                                                let persona_json = json!({
-                                                    "id": persona_id,
-                                                    "title": title,
-                                                    "description": description,
-                                                    "avatarPath": image.data,
-                                                    "isDefault": is_default.unwrap_or(false),
-                                                });
-                                                match personas_storage::persona_upsert_typed::<
-                                                    _,
-                                                    Value,
-                                                >(
-                                                    app, &persona_json
-                                                ) {
-                                                    Ok(persona) => {
-                                                        json!({ "success": true, "persona": persona })
-                                                    }
-                                                    Err(e) => {
-                                                        json!({ "success": false, "error": e })
-                                                    }
-                                                }
-                                            } else {
-                                                json!({ "success": false, "error": "Persona missing title or description" })
-                                            }
-                                        } else {
-                                            json!({ "success": false, "error": "Persona not found" })
-                                        }
-                                    }
-                                    Err(e) => json!({ "success": false, "error": e }),
-                                }
-                            }
-                            Ok(None) => json!({ "success": false, "error": "Image not found" }),
-                            Err(e) => json!({ "success": false, "error": e }),
-                        }
+                        session.draft.avatar_path = Some(resolved_id);
+                        json!({ "success": true, "message": "Persona avatar set from uploaded image" })
                     }
                     Ok(None) => json!({ "success": false, "error": "Image not found" }),
                     Err(e) => json!({ "success": false, "error": e }),
                 }
             } else {
-                json!({ "success": false, "error": "Missing 'persona_id' or 'image_id' argument" })
+                json!({ "success": false, "error": "Missing 'image_id' argument" })
             }
         }
         "list_lorebooks" => match lorebook_storage::lorebooks_list(app.clone()) {
@@ -3501,33 +3452,26 @@ pub fn complete_session(app: &AppHandle, session_id: &str) -> Result<DraftCharac
     let mut session = get_session(app, session_id)?
         .ok_or_else(|| crate::utils::err_msg(module_path!(), line!(), "Session not found"))?;
 
-    session.status = CreationStatus::Completed;
-    session.updated_at = now_ms() as i64;
-
-    {
-        let mut sessions = SESSIONS
-            .lock()
-            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
-        sessions.insert(session_id.to_string(), session.clone());
-    }
-    persist_session(app, &session)?;
-
     let mut draft = session.draft.clone();
 
-    // Resolve avatar path if it's an ID (not data URI)
+    // Resolve creation-helper image IDs into editor-ready data URLs.
     if let Some(ref path) = draft.avatar_path {
         if !path.starts_with("data:") {
-            if let Ok(Some(img)) = get_uploaded_image(app, session_id, path) {
-                draft.avatar_path = Some(img.data);
+            match get_uploaded_image(app, session_id, path) {
+                Ok(Some(img)) => draft.avatar_path = Some(img.data),
+                Ok(None) => {}
+                Err(err) => return Err(format!("Failed to resolve draft avatar: {err}")),
             }
         }
     }
 
-    // Resolve background path if it's an ID (not data URI)
+    // Resolve background IDs for the same reason.
     if let Some(ref path) = draft.background_image_path {
         if !path.starts_with("data:") {
-            if let Ok(Some(img)) = get_uploaded_image(app, session_id, path) {
-                draft.background_image_path = Some(img.data);
+            match get_uploaded_image(app, session_id, path) {
+                Ok(Some(img)) => draft.background_image_path = Some(img.data),
+                Ok(None) => {}
+                Err(err) => return Err(format!("Failed to resolve draft background: {err}")),
             }
         }
     }
@@ -3551,6 +3495,16 @@ pub fn complete_session(app: &AppHandle, session_id: &str) -> Result<DraftCharac
         let target_id = session.target_id.as_deref().unwrap_or_default();
         apply_lorebook_edit(app, target_id, &draft)?;
     }
+
+    session.status = CreationStatus::Completed;
+    session.updated_at = now_ms() as i64;
+    {
+        let mut sessions = SESSIONS
+            .lock()
+            .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+        sessions.insert(session_id.to_string(), session.clone());
+    }
+    persist_session(app, &session)?;
 
     Ok(draft)
 }
@@ -3585,20 +3539,19 @@ fn apply_character_edit(
         target["description"] = json!(draft.description);
     }
 
-    target["scenes"] = json!(draft
-        .scenes
-        .iter()
-        .map(|scene| {
-            json!({
-                "id": scene.id,
-                "content": scene.content,
-                "direction": scene.direction
-            })
-        })
-        .collect::<Vec<Value>>());
+    target["scenes"] = merge_character_scenes(&target, draft);
     target["defaultSceneId"] = json!(draft.default_scene_id);
-    target["avatarPath"] = json!(draft.avatar_path);
-    target["backgroundImagePath"] = json!(draft.background_image_path);
+    target["avatarPath"] = json!(persist_draft_avatar(
+        app,
+        "character",
+        target_id,
+        draft.avatar_path.as_deref(),
+        !draft.disable_avatar_gradient,
+    )?);
+    target["backgroundImagePath"] = json!(persist_draft_background(
+        app,
+        draft.background_image_path.as_deref(),
+    )?);
     target["disableAvatarGradient"] = json!(draft.disable_avatar_gradient);
     target["defaultModelId"] = json!(draft.default_model_id);
     target["promptTemplateId"] = json!(draft.prompt_template_id);
@@ -3613,7 +3566,7 @@ fn apply_persona_edit(
     draft: &DraftCharacter,
 ) -> Result<(), String> {
     let personas: Vec<Value> = personas_storage::personas_list_typed(app)?;
-    let target = personas
+    let mut target = personas
         .into_iter()
         .find(|p| p.get("id").and_then(|v| v.as_str()) == Some(target_id))
         .ok_or_else(|| "Persona not found".to_string())?;
@@ -3621,30 +3574,137 @@ fn apply_persona_edit(
     let existing_title = target
         .get("title")
         .and_then(|v| v.as_str())
-        .unwrap_or("Untitled Persona");
+        .unwrap_or("Untitled Persona")
+        .to_string();
     let existing_desc = target
         .get("description")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let is_default = target
-        .get("isDefault")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+        .unwrap_or("")
+        .to_string();
+    let avatar_path = persist_draft_avatar(
+        app,
+        "persona",
+        target_id,
+        draft.avatar_path.as_deref(),
+        true,
+    )?;
+    merge_persona_draft(
+        &mut target,
+        target_id,
+        draft,
+        &existing_title,
+        &existing_desc,
+        avatar_path,
+    );
 
-    let payload = json!({
-        "id": target_id,
-        "title": draft.name.as_deref().unwrap_or(existing_title),
-        "description": draft
-            .description
-            .as_deref()
-            .or(draft.definition.as_deref())
-            .unwrap_or(existing_desc),
-        "avatarPath": draft.avatar_path,
-        "isDefault": is_default,
-    });
-
-    let _: Value = personas_storage::persona_upsert_typed(app, &payload)?;
+    let _: Value = personas_storage::persona_upsert_typed(app, &target)?;
     Ok(())
+}
+
+fn merge_persona_draft(
+    target: &mut Value,
+    target_id: &str,
+    draft: &DraftCharacter,
+    existing_title: &str,
+    existing_desc: &str,
+    avatar_path: Option<String>,
+) {
+    target["id"] = json!(target_id);
+    target["title"] = json!(draft.name.as_deref().unwrap_or(existing_title));
+    target["description"] = json!(draft
+        .description
+        .as_deref()
+        .or(draft.definition.as_deref())
+        .unwrap_or(existing_desc));
+    target["avatarPath"] = json!(avatar_path);
+}
+
+fn merge_character_scenes(target: &Value, draft: &DraftCharacter) -> Value {
+    let existing = target
+        .get("scenes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|scene| {
+            scene
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id.to_string(), scene.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+
+    Value::Array(
+        draft
+            .scenes
+            .iter()
+            .map(|scene| {
+                let mut merged = existing
+                    .get(&scene.id)
+                    .cloned()
+                    .unwrap_or_else(|| json!({ "id": scene.id }));
+                merged["id"] = json!(scene.id);
+                merged["content"] = json!(scene.content);
+                merged["direction"] = json!(scene.direction);
+                merged
+            })
+            .collect(),
+    )
+}
+
+fn persist_draft_avatar(
+    app: &AppHandle,
+    entity_type: &str,
+    entity_id: &str,
+    avatar_path: Option<&str>,
+    regenerate_gradient: bool,
+) -> Result<Option<String>, String> {
+    let Some(path) = avatar_path else {
+        return Ok(None);
+    };
+    if !path.starts_with("data:") {
+        return Ok(Some(path.to_string()));
+    }
+
+    let storage_id = format!("{entity_type}-{entity_id}");
+    let filename = storage_save_avatar(
+        app.clone(),
+        storage_id.clone(),
+        path.to_string(),
+        None,
+        None,
+    )?;
+    if regenerate_gradient {
+        if let Err(err) = generate_avatar_gradient(
+            app.clone(),
+            storage_id,
+            filename.clone(),
+            Some(true),
+            Some("round".to_string()),
+        ) {
+            log_warn(
+                app,
+                "creation_helper",
+                format!("Failed to regenerate avatar gradient: {err}"),
+            );
+        }
+    }
+    Ok(Some(filename))
+}
+
+fn persist_draft_background(
+    app: &AppHandle,
+    background_path: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(path) = background_path else {
+        return Ok(None);
+    };
+    if !path.starts_with("data:") {
+        return Ok(Some(path.to_string()));
+    }
+
+    let image_id = Uuid::new_v4().to_string();
+    storage_write_image_data(app, &image_id, path)?;
+    Ok(Some(image_id))
 }
 
 fn apply_lorebook_edit(
@@ -3701,6 +3761,84 @@ pub fn cleanup_old_sessions(max_age_ms: i64) -> Result<usize, String> {
     }
 
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scene_merge_keeps_editor_only_scene_data() {
+        let target = json!({
+            "scenes": [{
+                "id": "scene-1",
+                "content": "old",
+                "direction": "old direction",
+                "backgroundImagePath": "background-id",
+                "createdAt": 123,
+                "selectedVariantId": "variant-1",
+                "variants": [{ "id": "variant-1", "content": "alternate" }]
+            }]
+        });
+        let draft = DraftCharacter {
+            scenes: vec![DraftScene {
+                id: "scene-1".to_string(),
+                content: "new".to_string(),
+                direction: Some("new direction".to_string()),
+            }],
+            ..DraftCharacter::default()
+        };
+
+        let merged = merge_character_scenes(&target, &draft);
+        let scene = &merged.as_array().unwrap()[0];
+        assert_eq!(scene["content"], "new");
+        assert_eq!(scene["direction"], "new direction");
+        assert_eq!(scene["backgroundImagePath"], "background-id");
+        assert_eq!(scene["createdAt"], 123);
+        assert_eq!(scene["selectedVariantId"], "variant-1");
+        assert_eq!(scene["variants"][0]["content"], "alternate");
+    }
+
+    #[test]
+    fn persona_merge_keeps_fields_outside_the_creation_draft() {
+        let mut target = json!({
+            "id": "persona-1",
+            "title": "Old name",
+            "description": "Old description",
+            "nickname": "Nick",
+            "avatarCrop": { "x": 1.0, "y": 2.0, "scale": 3.0 },
+            "designDescription": "Design notes",
+            "designReferenceImageIds": ["reference-1"],
+            "activeLorebookIds": ["lorebook-1"],
+            "loraName": "persona-lora",
+            "loraStrength": 0.75,
+            "isDefault": true
+        });
+        let draft = DraftCharacter {
+            name: Some("New name".to_string()),
+            definition: Some("New description".to_string()),
+            ..DraftCharacter::default()
+        };
+
+        merge_persona_draft(
+            &mut target,
+            "persona-1",
+            &draft,
+            "Old name",
+            "Old description",
+            Some("avatar_base.webp".to_string()),
+        );
+
+        assert_eq!(target["title"], "New name");
+        assert_eq!(target["description"], "New description");
+        assert_eq!(target["avatarPath"], "avatar_base.webp");
+        assert_eq!(target["nickname"], "Nick");
+        assert_eq!(target["activeLorebookIds"][0], "lorebook-1");
+        assert_eq!(target["designReferenceImageIds"][0], "reference-1");
+        assert_eq!(target["loraName"], "persona-lora");
+        assert_eq!(target["loraStrength"], 0.75);
+        assert_eq!(target["isDefault"], true);
+    }
 }
 
 pub(crate) async fn record_creation_usage(

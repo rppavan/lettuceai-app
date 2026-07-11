@@ -53,6 +53,11 @@ pub struct GroupPreview {
     pub message_count: i64,
     pub archived: bool,
     pub chat_type: String,
+    pub latest_session_id: Option<String>,
+    pub latest_session_updated_at: Option<i64>,
+    pub session_count: i64,
+    pub latest_session_message: Option<String>,
+    pub latest_session_message_count: i64,
 }
 
 fn default_chat_type() -> String {
@@ -87,6 +92,137 @@ fn ensure_participation_records(
         }
     }
 
+    Ok(())
+}
+
+fn reconcile_inheriting_session_participation(
+    conn: &Connection,
+    group_id: &str,
+    character_ids: &[String],
+) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, COALESCE(config_overrides, '{\"version\":1}') FROM group_sessions WHERE group_character_id = ?1",
+        )
+        .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+    let rows = stmt
+        .query_map(params![group_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+    let mut session_ids = Vec::new();
+    for row in rows {
+        let (session_id, config) =
+            row.map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+        let overrides: serde_json::Value =
+            serde_json::from_str(&config).unwrap_or_else(|_| serde_json::json!({}));
+        if !overrides
+            .as_object()
+            .is_some_and(|object| object.contains_key("characterIds"))
+        {
+            session_ids.push(session_id);
+        }
+    }
+    drop(stmt);
+    for session_id in session_ids {
+        ensure_participation_records(conn, &session_id, character_ids)?;
+    }
+    Ok(())
+}
+
+fn mirror_profile_defaults_to_sessions(conn: &Connection, group_id: &str) -> Result<(), String> {
+    let profile = conn
+        .query_row(
+            "SELECT character_ids, muted_character_ids, persona_id, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, speaker_selection_method, memory_type FROM group_characters WHERE id = ?1",
+            params![group_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            },
+        )
+        .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, COALESCE(config_overrides, '{\"version\":1}') FROM group_sessions WHERE group_character_id = ?1",
+        )
+        .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+    let rows = stmt
+        .query_map(params![group_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+    let mut sessions = Vec::new();
+    for row in rows {
+        sessions.push(
+            row.map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?,
+        );
+    }
+    drop(stmt);
+
+    for (session_id, raw_overrides) in sessions {
+        let overrides: serde_json::Value = serde_json::from_str(&raw_overrides)
+            .unwrap_or_else(|_| serde_json::json!({ "version": 1 }));
+        let has = |key: &str| {
+            overrides
+                .as_object()
+                .is_some_and(|object| object.contains_key(key))
+        };
+        conn.execute(
+            "UPDATE group_sessions SET
+                character_ids = CASE WHEN ?1 THEN character_ids ELSE ?2 END,
+                muted_character_ids = CASE WHEN ?3 THEN muted_character_ids ELSE ?4 END,
+                persona_id = CASE WHEN ?5 THEN persona_id ELSE ?6 END,
+                chat_type = CASE WHEN ?7 THEN chat_type ELSE ?8 END,
+                starting_scene = CASE WHEN ?9 THEN starting_scene ELSE ?10 END,
+                background_image_path = CASE WHEN ?11 THEN background_image_path ELSE ?12 END,
+                lorebook_ids = CASE WHEN ?13 THEN lorebook_ids ELSE ?14 END,
+                disable_character_lorebooks = CASE WHEN ?15 THEN disable_character_lorebooks ELSE ?16 END,
+                speaker_selection_method = CASE WHEN ?17 THEN speaker_selection_method ELSE ?18 END,
+                memory_type = CASE WHEN ?19 THEN memory_type ELSE ?20 END
+             WHERE id = ?21",
+            params![
+                has("characterIds") as i64,
+                profile.0,
+                has("mutedCharacterIds") as i64,
+                profile.1,
+                has("personaId") as i64,
+                profile.2,
+                has("chatType") as i64,
+                profile.3,
+                has("startingScene") as i64,
+                profile.4,
+                has("backgroundImagePath") as i64,
+                profile.5,
+                has("lorebookIds") as i64,
+                profile.6,
+                has("disableCharacterLorebooks") as i64,
+                profile.7,
+                has("speakerSelectionMethod") as i64,
+                profile.8,
+                has("memoryType") as i64,
+                profile.9,
+                session_id,
+            ],
+        )
+        .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+
+        let effective_character_ids = overrides
+            .get("characterIds")
+            .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())
+            .or_else(|| serde_json::from_str(&profile.0).ok())
+            .unwrap_or_default();
+        ensure_participation_records(conn, &session_id, &effective_character_ids)?;
+    }
     Ok(())
 }
 
@@ -247,7 +383,12 @@ pub fn groups_list(pool: State<'_, SwappablePool>) -> Result<String, String> {
                      JOIN group_sessions gs3 ON gm.session_id = gs3.id
                      WHERE gs3.group_character_id = gc.id) as message_count,
                     COALESCE(gc.archived, 0) as archived,
-                    COALESCE(gc.chat_type, 'conversation') as chat_type
+                    COALESCE(gc.chat_type, 'conversation') as chat_type,
+                    (SELECT gs.id FROM group_sessions gs WHERE gs.group_character_id = gc.id ORDER BY gs.updated_at DESC, gs.id DESC LIMIT 1) as latest_session_id,
+                    (SELECT gs.updated_at FROM group_sessions gs WHERE gs.group_character_id = gc.id ORDER BY gs.updated_at DESC, gs.id DESC LIMIT 1) as latest_session_updated_at,
+                    (SELECT COUNT(*) FROM group_sessions gs WHERE gs.group_character_id = gc.id) as session_count,
+                    (SELECT gm.content FROM group_messages gm WHERE gm.session_id = (SELECT gs.id FROM group_sessions gs WHERE gs.group_character_id = gc.id ORDER BY gs.updated_at DESC, gs.id DESC LIMIT 1) ORDER BY gm.created_at DESC, gm.id DESC LIMIT 1) as latest_session_message,
+                    (SELECT COUNT(*) FROM group_messages gm WHERE gm.session_id = (SELECT gs.id FROM group_sessions gs WHERE gs.group_character_id = gc.id ORDER BY gs.updated_at DESC, gs.id DESC LIMIT 1)) as latest_session_message_count
              FROM group_characters gc
              WHERE COALESCE(gc.archived, 0) = 0
              ORDER BY effective_updated_at DESC",
@@ -292,6 +433,21 @@ pub fn groups_list(pool: State<'_, SwappablePool>) -> Result<String, String> {
                 != 0,
             chat_type: row
                 .get(7)
+                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
+            latest_session_id: row
+                .get(8)
+                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
+            latest_session_updated_at: row
+                .get(9)
+                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
+            session_count: row
+                .get(10)
+                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
+            latest_session_message: row
+                .get(11)
+                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
+            latest_session_message_count: row
+                .get(12)
                 .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
         });
     }
@@ -347,6 +503,7 @@ pub fn group_create(
         ],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    reconcile_inheriting_session_participation(&conn, &id, &character_ids)?;
 
     let item = Group {
         id,
@@ -408,6 +565,7 @@ pub fn group_lorebooks_set(
         params![lorebook_ids_json, now, id],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
     group_get(id, pool)
 }
 
@@ -424,6 +582,7 @@ pub fn group_update_disable_character_lorebooks(
         params![disable_character_lorebooks as i64, now, id],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
     group_get(id, pool)
 }
 
@@ -497,6 +656,8 @@ pub fn group_update(
         ],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
+    reconcile_inheriting_session_participation(&conn, &id, &character_ids)?;
 
     let starting_scene: Option<serde_json::Value> =
         starting_scene_json.and_then(|s| serde_json::from_str(&s).ok());
@@ -553,6 +714,7 @@ pub fn group_update_persona(
         params![persona_id, now, id],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
     Ok(())
 }
 
@@ -569,6 +731,7 @@ pub fn group_update_speaker_selection_method(
         params![speaker_selection_method, now, id],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
     Ok(())
 }
 
@@ -585,11 +748,7 @@ pub fn group_update_memory_type(
         params![memory_type, now, id],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
-    conn.execute(
-        "UPDATE group_sessions SET memory_type = ?1, updated_at = ?2 WHERE group_character_id = ?3",
-        params![memory_type, now, id],
-    )
-    .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
     Ok(())
 }
 
@@ -626,6 +785,7 @@ pub fn group_update_background_image(
         params![background_image_path, now, id],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
     Ok(())
 }
 
@@ -663,6 +823,8 @@ pub fn group_update_character_ids(
         params![character_ids_json, muted_out, now, id],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
+    reconcile_inheriting_session_participation(&conn, &id, &character_ids)?;
     Ok(())
 }
 
@@ -709,6 +871,7 @@ pub fn group_update_muted_character_ids(
         params![muted_out, now, id],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
     Ok(())
 }
 
@@ -725,6 +888,7 @@ pub fn group_update_starting_scene(
         params![starting_scene_json, now, id],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    mirror_profile_defaults_to_sessions(&conn, &id)?;
     Ok(())
 }
 
@@ -820,4 +984,83 @@ pub fn group_create_session(
     }
 
     group_sessions::group_session_get_internal(&conn, &session_id)
+}
+
+#[cfg(test)]
+mod profile_mirroring_tests {
+    use super::*;
+
+    #[test]
+    fn profile_changes_mirror_only_into_inheriting_sessions() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE group_characters (
+                id TEXT PRIMARY KEY, character_ids TEXT, muted_character_ids TEXT,
+                persona_id TEXT, chat_type TEXT, starting_scene TEXT,
+                background_image_path TEXT, lorebook_ids TEXT,
+                disable_character_lorebooks INTEGER, speaker_selection_method TEXT,
+                memory_type TEXT
+            );
+            CREATE TABLE group_sessions (
+                id TEXT PRIMARY KEY, group_character_id TEXT, config_overrides TEXT,
+                character_ids TEXT, muted_character_ids TEXT, persona_id TEXT,
+                chat_type TEXT, starting_scene TEXT, background_image_path TEXT,
+                lorebook_ids TEXT, disable_character_lorebooks INTEGER,
+                speaker_selection_method TEXT, memory_type TEXT
+            );
+            CREATE TABLE group_participation (
+                id TEXT PRIMARY KEY, session_id TEXT, character_id TEXT,
+                speak_count INTEGER, last_spoke_turn INTEGER, last_spoke_at INTEGER
+            );
+            INSERT INTO group_characters VALUES (
+                'profile', '[\"one\",\"two\"]', '[]', 'persona', 'roleplay', NULL,
+                'background.png', '[\"lore\"]', 1, 'round_robin', 'dynamic'
+            );
+            INSERT INTO group_sessions VALUES (
+                'inherited', 'profile', '{\"version\":1}', '[\"old\"]', '[]', NULL,
+                'conversation', NULL, NULL, '[]', 0, 'llm', 'manual'
+            );
+            INSERT INTO group_sessions VALUES (
+                'overridden', 'profile', '{\"version\":1,\"characterIds\":[\"custom\"],\"memoryType\":\"manual\"}',
+                '[\"custom\"]', '[]', NULL, 'conversation', NULL, NULL, '[]', 0, 'llm', 'manual'
+            );",
+        )
+        .unwrap();
+
+        mirror_profile_defaults_to_sessions(&conn, "profile").unwrap();
+
+        let inherited: (String, String) = conn
+            .query_row(
+                "SELECT character_ids, memory_type FROM group_sessions WHERE id = 'inherited'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let overridden: (String, String) = conn
+            .query_row(
+                "SELECT character_ids, memory_type FROM group_sessions WHERE id = 'overridden'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(inherited, ("[\"one\",\"two\"]".to_string(), "dynamic".to_string()));
+        assert_eq!(overridden, ("[\"custom\"]".to_string(), "manual".to_string()));
+
+        let inherited_participants: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM group_participation WHERE session_id = 'inherited'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let overridden_participants: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM group_participation WHERE session_id = 'overridden'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(inherited_participants, 2);
+        assert_eq!(overridden_participants, 1);
+    }
 }

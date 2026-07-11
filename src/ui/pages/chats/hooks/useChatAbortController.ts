@@ -105,17 +105,29 @@ function mergePartialAssistantMessage(
   storedMessages: StoredMessage[],
   partialAssistant: { mode: "append" | "replace"; message: StoredMessage },
 ): StoredMessage[] {
+  const messagesBeforePartial = storedMessages.filter(
+    (message) => message.id !== partialAssistant.message.id,
+  );
+  const latestCreatedAt = messagesBeforePartial.reduce(
+    (latest, message) => Math.max(latest, message.createdAt),
+    Number.NEGATIVE_INFINITY,
+  );
+  const message = {
+    ...partialAssistant.message,
+    createdAt: Math.max(partialAssistant.message.createdAt, latestCreatedAt + 1),
+  };
+
   if (partialAssistant.mode === "replace") {
-    const replaced = storedMessages.map((message) =>
-      message.id === partialAssistant.message.id ? partialAssistant.message : message,
+    const replaced = storedMessages.map((storedMessage) =>
+      storedMessage.id === message.id ? message : storedMessage,
     );
     const hasReplacement = replaced.some((message) => message.id === partialAssistant.message.id);
     return sortMessages(
-      hasReplacement ? replaced : [...storedMessages, partialAssistant.message],
+      hasReplacement ? replaced : [...storedMessages, message],
     );
   }
 
-  return sortMessages([...storedMessages, partialAssistant.message]);
+  return sortMessages([...storedMessages, message]);
 }
 
 export function useChatAbortController({

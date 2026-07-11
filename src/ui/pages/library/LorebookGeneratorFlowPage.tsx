@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -479,165 +479,155 @@ export function LorebookGeneratorFlowPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-bg text-fg">
+    <div className="mx-auto w-full max-w-3xl space-y-6">
       <StageStepper pageStage={pageStage} />
-      <main className="flex-1 px-4 pb-24 pt-4 sm:pt-6">
-        <div className="mx-auto w-full max-w-3xl space-y-6">
-          {error && (
-            <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <div className="flex-1">{error}</div>
-              <button
-                type="button"
-                onClick={() => setError(null)}
-                className="text-red-200/70 hover:text-red-100"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-
-          <AnimatePresence mode="wait">
-          {pageStage === "brief" && (
-            <motion.div key="brief" {...animations.fadeIn}>
-            <BriefForm
-              brief={brief}
-              setBrief={setBrief}
-              textSources={textSources}
-              addTextSource={addTextSource}
-              updateTextSource={updateTextSource}
-              removeTextSource={removeTextSource}
-              files={files}
-              fileInputRef={fileInputRef}
-              onFileChange={handleFileChange}
-              onRemoveFile={removeFile}
-              targetCount={targetCount}
-              setTargetCount={setTargetCount}
-              lorebookName={lorebookName}
-              setLorebookName={setLorebookName}
-              characters={characters}
-              personas={personas}
-              characterId={characterId}
-              setCharacterId={setCharacterId}
-              personaId={personaId}
-              setPersonaId={setPersonaId}
-              totalSize={totalSize}
-              canStart={canStart}
-              onStart={() => void startGeneration()}
-              busy={busy}
-            />
-            </motion.div>
-          )}
-
-          {pageStage === "planning" && (
-            <motion.div
-              key="planning"
-              {...animations.fadeIn}
-              className="flex flex-col items-center gap-4 py-16 text-fg/70"
-            >
-              <div className="relative">
-                <div className="absolute inset-0 rounded-full bg-accent/20 blur-xl" />
-                <Loader2 className="relative h-10 w-10 animate-spin text-accent" />
-              </div>
-              <p className="text-sm">{t("lorebookGen.flow.planningEntries")}</p>
-            </motion.div>
-          )}
-
-          {pageStage === "outline" && job && (
-            <motion.div key="outline" {...animations.fadeIn}>
-            <OutlineReview
-              job={job}
-              onUpdate={updateOutlineEntry}
-              onRemove={removeOutlineEntry}
-              onAdd={addOutlineEntry}
-              onApprove={() => void approveOutline()}
-              onBack={() => setPageStage("brief")}
-              busy={busy}
-            />
-            </motion.div>
-          )}
-
-          {pageStage === "drafting" && job && (
-            <motion.div key="drafting" {...animations.fadeIn}>
-            <DraftReview
-              job={job}
-              expandedDrafts={expandedDrafts}
-              toggleExpanded={toggleDraftExpanded}
-              onApprove={(idx, approved) => void handleApproveDraft(idx, approved)}
-              onOpenRefine={(idx) => {
-                setRefineFor(idx);
-                setRefineText("");
-              }}
-              onOpenEdit={(idx) => setEditFor(idx)}
-              onRetryFailed={() => void lorebookGenDraftNext(job.id).then((j) => setJob(j))}
-              onRunCoherence={() => void runCoherence()}
-              onSkipToCommit={() => void goToCommit()}
-              busy={busy}
-            />
-            </motion.div>
-          )}
-
-          {pageStage === "coherence" && job && (
-            <motion.div key="coherence" {...animations.fadeIn}>
-            <DraftReview
-              job={job}
-              expandedDrafts={expandedDrafts}
-              toggleExpanded={toggleDraftExpanded}
-              onApprove={(idx, approved) => void handleApproveDraft(idx, approved)}
-              onOpenRefine={(idx) => {
-                setRefineFor(idx);
-                setRefineText("");
-              }}
-              onOpenEdit={(idx) => setEditFor(idx)}
-              onRetryFailed={() => void lorebookGenDraftNext(job.id).then((j) => setJob(j))}
-              onRunCoherence={() => void runCoherence()}
-              onSkipToCommit={() => void goToCommit()}
-              busy={busy}
-              coherenceBanner={
-                <CoherenceBanner
-                  job={job}
-                  accepted={acceptedChangeIds}
-                  setAccepted={setAcceptedChangeIds}
-                  onApply={() => void applyCoherence()}
-                  onSkip={() => skipCoherence()}
-                  busy={busy}
-                />
-              }
-            />
-            </motion.div>
-          )}
-
-          {pageStage === "commit" && job && (
-            <motion.div key="commit" {...animations.fadeIn}>
-            <CommitForm
-              lorebooks={existingLorebooks}
-              commitTarget={commitTarget}
-              setCommitTarget={setCommitTarget}
-              newLorebookName={lorebookName.trim() || initialName.trim() || t("common.labels.untitled")}
-              draftCount={job.drafts.length}
-              onCommit={() => void handleCommit()}
-              onBack={() => setPageStage("drafting")}
-              busy={busy}
-            />
-            </motion.div>
-          )}
-
-          {pageStage === "done" && (
-            <motion.div
-              key="done"
-              {...animations.scaleIn}
-              className="flex flex-col items-center gap-4 py-16 text-fg/70"
-            >
-              <div className="relative">
-                <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-xl" />
-                <CheckCircle2 className="relative h-12 w-12 text-emerald-400" />
-              </div>
-              <p className="text-sm">{t("lorebookGen.flow.lorebookSaved")}</p>
-            </motion.div>
-          )}
-          </AnimatePresence>
+      {error && (
+        <div className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1">{error}</div>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="text-danger/70 hover:text-danger"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
-      </main>
+      )}
+
+      <AnimatePresence mode="wait">
+        {pageStage === "brief" && (
+          <motion.div key="brief" {...animations.fadeIn}>
+          <BriefForm
+            brief={brief}
+            setBrief={setBrief}
+            textSources={textSources}
+            addTextSource={addTextSource}
+            updateTextSource={updateTextSource}
+            removeTextSource={removeTextSource}
+            files={files}
+            fileInputRef={fileInputRef}
+            onFileChange={handleFileChange}
+            onRemoveFile={removeFile}
+            targetCount={targetCount}
+            setTargetCount={setTargetCount}
+            lorebookName={lorebookName}
+            setLorebookName={setLorebookName}
+            characters={characters}
+            personas={personas}
+            characterId={characterId}
+            setCharacterId={setCharacterId}
+            personaId={personaId}
+            setPersonaId={setPersonaId}
+            totalSize={totalSize}
+            canStart={canStart}
+            onStart={() => void startGeneration()}
+            busy={busy}
+          />
+          </motion.div>
+        )}
+
+        {pageStage === "planning" && (
+          <motion.div
+            key="planning"
+            {...animations.fadeIn}
+            className="flex flex-col items-center gap-4 py-16"
+          >
+            <Loader2 className="h-8 w-8 animate-spin text-accent/70" />
+            <p className="text-sm text-fg/55">{t("lorebookGen.flow.planningEntries")}</p>
+          </motion.div>
+        )}
+
+        {pageStage === "outline" && job && (
+          <motion.div key="outline" {...animations.fadeIn}>
+          <OutlineReview
+            job={job}
+            onUpdate={updateOutlineEntry}
+            onRemove={removeOutlineEntry}
+            onAdd={addOutlineEntry}
+            onApprove={() => void approveOutline()}
+            onBack={() => setPageStage("brief")}
+            busy={busy}
+          />
+          </motion.div>
+        )}
+
+        {pageStage === "drafting" && job && (
+          <motion.div key="drafting" {...animations.fadeIn}>
+          <DraftReview
+            job={job}
+            expandedDrafts={expandedDrafts}
+            toggleExpanded={toggleDraftExpanded}
+            onApprove={(idx, approved) => void handleApproveDraft(idx, approved)}
+            onOpenRefine={(idx) => {
+              setRefineFor(idx);
+              setRefineText("");
+            }}
+            onOpenEdit={(idx) => setEditFor(idx)}
+            onRetryFailed={() => void lorebookGenDraftNext(job.id).then((j) => setJob(j))}
+            onRunCoherence={() => void runCoherence()}
+            onSkipToCommit={() => void goToCommit()}
+            busy={busy}
+          />
+          </motion.div>
+        )}
+
+        {pageStage === "coherence" && job && (
+          <motion.div key="coherence" {...animations.fadeIn}>
+          <DraftReview
+            job={job}
+            expandedDrafts={expandedDrafts}
+            toggleExpanded={toggleDraftExpanded}
+            onApprove={(idx, approved) => void handleApproveDraft(idx, approved)}
+            onOpenRefine={(idx) => {
+              setRefineFor(idx);
+              setRefineText("");
+            }}
+            onOpenEdit={(idx) => setEditFor(idx)}
+            onRetryFailed={() => void lorebookGenDraftNext(job.id).then((j) => setJob(j))}
+            onRunCoherence={() => void runCoherence()}
+            onSkipToCommit={() => void goToCommit()}
+            busy={busy}
+            coherenceBanner={
+              <CoherenceBanner
+                job={job}
+                accepted={acceptedChangeIds}
+                setAccepted={setAcceptedChangeIds}
+                onApply={() => void applyCoherence()}
+                onSkip={() => skipCoherence()}
+                busy={busy}
+              />
+            }
+          />
+          </motion.div>
+        )}
+
+        {pageStage === "commit" && job && (
+          <motion.div key="commit" {...animations.fadeIn}>
+          <CommitForm
+            lorebooks={existingLorebooks}
+            commitTarget={commitTarget}
+            setCommitTarget={setCommitTarget}
+            newLorebookName={lorebookName.trim() || initialName.trim() || t("common.labels.untitled")}
+            draftCount={job.drafts.length}
+            onCommit={() => void handleCommit()}
+            onBack={() => setPageStage("drafting")}
+            busy={busy}
+          />
+          </motion.div>
+        )}
+
+        {pageStage === "done" && (
+          <motion.div
+            key="done"
+            {...animations.scaleIn}
+            className="flex flex-col items-center gap-4 py-16"
+          >
+            <CheckCircle2 className="h-10 w-10 text-accent" />
+            <p className="text-sm text-fg/55">{t("lorebookGen.flow.lorebookSaved")}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <RefineSheet
         isOpen={refineFor !== null && !!job}
@@ -687,61 +677,52 @@ function StageStepper({ pageStage }: { pageStage: PageStage }) {
   const { t } = useI18n();
   const activeIdx = activeStepIndex(pageStage);
   return (
-    <div className="sticky top-0 z-10 border-b border-fg/10 bg-bg/85 px-4 py-3 backdrop-blur-md">
-      <div className="mx-auto flex max-w-3xl items-center gap-2 sm:gap-3">
-        {STEPS.map((step, i) => {
-          const isActive = i === activeIdx;
-          const isComplete = i < activeIdx;
-          return (
-            <div key={step.key} className="flex flex-1 items-center gap-2 sm:gap-3">
-              <div className="flex flex-1 items-center gap-2">
-                <motion.div
-                  layout
-                  className={cn(
-                    "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold",
-                    interactive.transition.default,
-                    isActive
-                      ? "border-accent bg-accent/15 text-accent"
-                      : isComplete
-                        ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                        : "border-fg/15 bg-fg/5 text-fg/40",
-                  )}
-                >
-                  {isActive && (
-                    <motion.span
-                      layoutId="stepper-glow"
-                      className="absolute inset-0 rounded-full bg-accent/15 blur-sm"
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                    />
-                  )}
-                  <span className="relative">
-                    {isComplete ? <Check className="h-3.5 w-3.5" /> : i + 1}
-                  </span>
-                </motion.div>
-                <span
-                  className={cn(
-                    "hidden truncate text-xs font-medium sm:inline",
-                    isActive ? "text-fg" : isComplete ? "text-fg/70" : "text-fg/40",
-                  )}
-                >
-                  {t(step.labelKey)}
+    <div className="flex items-center gap-2 px-1 pt-3 pb-1 sm:gap-3">
+      {STEPS.map((step, i) => {
+        const isActive = i === activeIdx;
+        const isComplete = i < activeIdx;
+        return (
+          <Fragment key={step.key}>
+            <div className="flex shrink-0 items-center gap-2">
+              <motion.div
+                layout
+                className={cn(
+                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold",
+                  interactive.transition.default,
+                  isActive
+                    ? "border-accent bg-accent/15 text-accent"
+                    : isComplete
+                      ? "border-accent/30 bg-accent/10 text-accent/80"
+                      : "border-fg/15 bg-fg/5 text-fg/40",
+                )}
+              >
+                <span>
+                  {isComplete ? <Check className="h-3.5 w-3.5" /> : i + 1}
                 </span>
-              </div>
-              {i < STEPS.length - 1 && (
-                <div className="relative h-px flex-1 bg-fg/10">
-                  <motion.div
-                    initial={false}
-                    animate={{ scaleX: i < activeIdx ? 1 : 0 }}
-                    style={{ transformOrigin: "left" }}
-                    transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }}
-                    className="absolute inset-0 bg-emerald-500/50"
-                  />
-                </div>
-              )}
+              </motion.div>
+              <span
+                className={cn(
+                  "hidden truncate text-xs font-medium sm:inline",
+                  isActive ? "text-fg" : isComplete ? "text-fg/70" : "text-fg/40",
+                )}
+              >
+                {t(step.labelKey)}
+              </span>
             </div>
-          );
-        })}
-      </div>
+            {i < STEPS.length - 1 && (
+              <div className="relative h-px flex-1 bg-fg/10">
+                <motion.div
+                  initial={false}
+                  animate={{ scaleX: i < activeIdx ? 1 : 0 }}
+                  style={{ transformOrigin: "left" }}
+                  transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }}
+                  className="absolute inset-0 bg-accent/40"
+                />
+              </div>
+            )}
+          </Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -799,27 +780,32 @@ function BriefForm({
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-7">
-      <Field label={t("lorebookGen.flow.lorebookNameLabel")}>
-        <input
-          value={lorebookName}
-          onChange={(e) => setLorebookName(e.target.value)}
-          placeholder={t("lorebookGen.flow.lorebookNamePlaceholder")}
-          className={inputClass}
-        />
-      </Field>
+    <div className="space-y-6">
+      <div className={groupCardClass}>
+        <div className="px-4 py-3">
+          <Field label={t("lorebookGen.flow.lorebookNameLabel")}>
+            <input
+              value={lorebookName}
+              onChange={(e) => setLorebookName(e.target.value)}
+              placeholder={t("lorebookGen.flow.lorebookNamePlaceholder")}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+        <div className="px-4 py-3">
+          <Field label={t("lorebookGen.flow.briefLabel")}>
+            <textarea
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              placeholder={t("lorebookGen.flow.briefPlaceholder")}
+              rows={5}
+              className={cn(inputClass, "resize-y")}
+            />
+          </Field>
+        </div>
+      </div>
 
-      <Field label={t("lorebookGen.flow.briefLabel")}>
-        <textarea
-          value={brief}
-          onChange={(e) => setBrief(e.target.value)}
-          placeholder={t("lorebookGen.flow.briefPlaceholder")}
-          rows={5}
-          className={cn(inputClass, "resize-y")}
-        />
-      </Field>
-
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+      <div className={groupCardClass}>
         <CharacterTrigger
           characters={characters}
           selectedId={characterId}
@@ -832,98 +818,104 @@ function BriefForm({
         />
       </div>
 
-      <Field
-        label={t("lorebookGen.flow.pastedTextLabel")}
-        hint={textSources.length > 0 ? `${textSources.length}` : t("lorebookGen.flow.optional")}
-        action={
-          <button type="button" onClick={addTextSource} className={pillButtonClass}>
+      <div className={groupCardClass}>
+        <div className="flex items-center gap-2 px-4 py-3">
+          <span className="text-[11px] font-medium text-fg/70">
+            {t("lorebookGen.flow.pastedTextLabel")}
+          </span>
+          <span className="text-[10px] text-fg/40">
+            · {textSources.length > 0 ? `${textSources.length}` : t("lorebookGen.flow.optional")}
+          </span>
+          <button
+            type="button"
+            onClick={addTextSource}
+            className={cn(pillButtonClass, "ml-auto")}
+          >
             <Plus className="h-3 w-3" /> {t("common.buttons.add")}
           </button>
-        }
-      >
+        </div>
         {textSources.length === 0 ? (
-          <p className="text-xs text-fg/40">
+          <p className="px-4 py-3 text-xs text-fg/40">
             {t("lorebookGen.flow.referenceMaterialHint")}
           </p>
         ) : (
-          <div className="space-y-2">
-            <AnimatePresence initial={false}>
-              {textSources.map((src) => (
-                <motion.div
-                  key={src.id}
-                  layout
-                  {...animations.fadeInFast}
-                  className="space-y-2"
-                >
-                  <div className="flex items-center gap-2">
-                    <input
-                      value={src.label}
-                      onChange={(e) => updateTextSource(src.id, { label: e.target.value })}
-                      className={cn(inputClass, "px-3 py-1.5 text-xs")}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeTextSource(src.id)}
-                      className="rounded-lg p-1.5 text-fg/40 transition hover:bg-fg/5 hover:text-red-300"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <textarea
-                    value={src.body}
-                    onChange={(e) => updateTextSource(src.id, { body: e.target.value })}
-                    rows={4}
-                    placeholder={t("lorebookGen.flow.pasteSourcePlaceholder")}
-                    className={cn(inputClass, "px-3 py-2 text-xs")}
+          <AnimatePresence initial={false}>
+            {textSources.map((src) => (
+              <motion.div
+                key={src.id}
+                layout
+                {...animations.fadeInFast}
+                className="space-y-2 px-4 py-3"
+              >
+                <div className="flex items-center gap-2">
+                  <input
+                    value={src.label}
+                    onChange={(e) => updateTextSource(src.id, { label: e.target.value })}
+                    className={cn(inputClass, "px-3 py-1.5 text-xs")}
                   />
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </div>
+                  <button
+                    type="button"
+                    onClick={() => removeTextSource(src.id)}
+                    className="rounded-lg p-1.5 text-fg/40 transition hover:bg-fg/5 hover:text-danger"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <textarea
+                  value={src.body}
+                  onChange={(e) => updateTextSource(src.id, { body: e.target.value })}
+                  rows={4}
+                  placeholder={t("lorebookGen.flow.pasteSourcePlaceholder")}
+                  className={cn(inputClass, "px-3 py-2 text-xs")}
+                />
+              </motion.div>
+            ))}
+          </AnimatePresence>
         )}
-      </Field>
+      </div>
 
-      <Field
-        label={t("lorebookGen.flow.filesLabel")}
-        hint={files.length > 0 ? `${files.length}` : ".txt, .md, .pdf"}
-        action={
-          <>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className={pillButtonClass}
-            >
-              <Upload className="h-3 w-3" /> {t("lorebookGen.flow.upload")}
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept=".txt,.md,.markdown,.pdf,.text"
-              className="hidden"
-              onChange={(e) => {
-                void onFileChange(e);
-              }}
-            />
-          </>
-        }
-      >
+      <div className={groupCardClass}>
+        <div className="flex items-center gap-2 px-4 py-3">
+          <span className="text-[11px] font-medium text-fg/70">
+            {t("lorebookGen.flow.filesLabel")}
+          </span>
+          <span className="text-[10px] text-fg/40">
+            · {files.length > 0 ? `${files.length}` : ".txt, .md, .pdf"}
+          </span>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className={cn(pillButtonClass, "ml-auto")}
+          >
+            <Upload className="h-3 w-3" /> {t("lorebookGen.flow.upload")}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".txt,.md,.markdown,.pdf,.text"
+            className="hidden"
+            onChange={(e) => {
+              void onFileChange(e);
+            }}
+          />
+        </div>
         {files.length === 0 ? (
-          <p className="text-xs text-fg/40">
+          <p className="px-4 py-3 text-xs text-fg/40">
             {t("lorebookGen.flow.fileSizeHint")}
           </p>
         ) : (
-          <div className="divide-y divide-fg/5">
+          <>
             <AnimatePresence initial={false}>
               {files.map((f) => (
                 <motion.div
                   key={f.name}
                   layout
                   {...animations.fadeInFast}
-                  className="flex items-center justify-between gap-3 py-2 text-xs"
+                  className="flex items-center justify-between gap-3 px-4 py-2 text-xs"
                 >
                   <div className="flex min-w-0 items-center gap-2">
-                    <span className="shrink-0 rounded bg-fg/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                    <span className="shrink-0 rounded bg-fg/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-fg/60">
                       {f.kind}
                     </span>
                     <span className="truncate">{f.name}</span>
@@ -934,57 +926,57 @@ function BriefForm({
                   <button
                     type="button"
                     onClick={() => onRemoveFile(f.name)}
-                    className="rounded-lg p-1.5 text-fg/40 transition hover:bg-fg/5 hover:text-red-300"
+                    className="rounded-lg p-1.5 text-fg/40 transition hover:bg-fg/5 hover:text-danger"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </motion.div>
               ))}
             </AnimatePresence>
-            <p className="pt-2 text-[11px] text-fg/40">
+            <p className="px-4 py-2 text-[11px] text-fg/40">
               {t("lorebookGen.flow.totalKb", { size: (totalSize / 1024).toFixed(0) })}
             </p>
-          </div>
+          </>
         )}
-      </Field>
+      </div>
 
-      <Field label={t("lorebookGen.flow.targetEntryCount")}>
-        <div className="flex items-center gap-3">
-          <input
-            type="range"
-            min={MIN_TARGET}
-            max={MAX_TARGET}
-            step={1}
-            value={targetCount}
-            onChange={(e) => setTargetCount(Number(e.target.value))}
-            className="min-w-0 flex-1 accent-accent"
-          />
-          <NumberInput
-            min={MIN_TARGET}
-            max={MAX_TARGET}
-            step={1}
-            value={targetCount}
-            onChange={(next) => {
-              if (next !== null) setTargetCount(Math.round(next));
-            }}
-            className="w-16 shrink-0 rounded-lg border border-fg/10 bg-transparent px-2 py-1.5 text-center text-sm tabular-nums focus:border-fg/30 focus:outline-none"
-          />
+      <div className={groupCardClass}>
+        <div className="px-4 py-3">
+          <Field label={t("lorebookGen.flow.targetEntryCount")}>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={MIN_TARGET}
+                max={MAX_TARGET}
+                step={1}
+                value={targetCount}
+                onChange={(e) => setTargetCount(Number(e.target.value))}
+                className="min-w-0 flex-1 accent-accent"
+              />
+              <NumberInput
+                min={MIN_TARGET}
+                max={MAX_TARGET}
+                step={1}
+                value={targetCount}
+                onChange={(next) => {
+                  if (next !== null) setTargetCount(Math.round(next));
+                }}
+                className="w-16 shrink-0 rounded-lg border border-fg/10 bg-surface-el/20 px-2 py-1.5 text-center text-sm tabular-nums focus:border-fg/30 focus:outline-none"
+              />
+            </div>
+            <p className="text-[11px] text-fg/40">
+              {t("lorebookGen.flow.rangeHint", { min: MIN_TARGET, max: MAX_TARGET })}
+            </p>
+          </Field>
         </div>
-        <p className="text-[11px] text-fg/40">
-          {t("lorebookGen.flow.rangeHint", { min: MIN_TARGET, max: MAX_TARGET })}
-        </p>
-      </Field>
+      </div>
 
       <motion.button
         type="button"
         onClick={onStart}
         disabled={!canStart}
         whileTap={canStart ? { scale: 0.98 } : undefined}
-        className={cn(
-          "flex w-full items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent/10 py-3 text-sm font-semibold text-accent",
-          interactive.transition.fast,
-          "hover:bg-accent/20 disabled:opacity-40",
-        )}
+        className={cn(btnPrimary, "h-11 w-full")}
       >
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
         {t("lorebookGen.flow.planEntries")}
@@ -994,9 +986,15 @@ function BriefForm({
 }
 
 const inputClass =
-  "w-full rounded-lg border border-fg/10 bg-transparent px-3 py-2.5 text-sm transition focus:border-fg/30 focus:outline-none";
+  "w-full rounded-lg border border-fg/10 bg-surface-el/20 px-3 py-2 text-sm text-fg placeholder-fg/40 focus:border-fg/30 focus:outline-none";
 const pillButtonClass =
-  "flex items-center gap-1.5 rounded-md border border-fg/10 px-2.5 py-1 text-[11px] font-medium text-fg/70 transition hover:border-fg/20 hover:text-fg";
+  "flex items-center gap-1.5 rounded-lg border border-fg/10 bg-surface/60 px-2.5 py-1 text-[11px] font-medium text-fg/70 transition hover:bg-surface-el/65 hover:text-fg";
+const groupCardClass =
+  "overflow-hidden rounded-xl border border-fg/10 bg-fg/[0.025] divide-y divide-fg/[0.06]";
+const btnSecondary =
+  "flex items-center justify-center gap-2 rounded-lg border border-fg/10 bg-surface/60 px-3.5 text-sm font-medium text-fg transition hover:bg-surface-el/65 disabled:opacity-50";
+const btnPrimary =
+  "flex items-center justify-center gap-2 rounded-lg border border-accent/30 bg-accent/10 px-3.5 text-sm font-medium text-accent transition hover:bg-accent/15 disabled:opacity-40";
 
 function Field({
   label,
@@ -1012,10 +1010,10 @@ function Field({
   return (
     <section className="space-y-2">
       <div className="flex items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-fg/45">
+        <span className="text-[11px] font-medium text-fg/70">
           {label}
         </span>
-        {hint && <span className="text-[10px] text-fg/30">· {hint}</span>}
+        {hint && <span className="text-[10px] text-fg/40">· {hint}</span>}
         {action && <span className="ml-auto">{action}</span>}
       </div>
       {children}
@@ -1043,71 +1041,73 @@ function OutlineReview({
   const { t } = useI18n();
   return (
     <div className="space-y-4">
-      <p className="text-sm text-fg/60">
+      <p className="text-sm text-fg/55">
         {t("lorebookGen.flow.outlineIntro")}
       </p>
-      {job.outline.map((p, i) => (
-        <div key={i} className="space-y-2 rounded-xl border border-fg/10 bg-fg/[0.03] p-3">
-          <div className="flex items-center gap-2">
+      <div className={groupCardClass}>
+        {job.outline.map((p, i) => (
+          <div key={i} className="space-y-2 px-3 py-3">
+            <div className="flex items-center gap-2">
+              <input
+                value={p.title}
+                onChange={(e) => onUpdate(i, { title: e.target.value })}
+                className={cn(inputClass, "flex-1 px-2 py-1 font-medium")}
+              />
+              <select
+                value={p.category}
+                onChange={(e) => onUpdate(i, { category: e.target.value })}
+                className={cn(inputClass, "w-auto px-2 py-1 text-xs")}
+              >
+                {[
+                  "character",
+                  "location",
+                  "faction",
+                  "item",
+                  "event",
+                  "concept",
+                  "rule",
+                  "other",
+                ].map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => onRemove(i)}
+                className="rounded-lg p-1 text-fg/40 transition hover:bg-fg/5 hover:text-danger"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
             <input
-              value={p.title}
-              onChange={(e) => onUpdate(i, { title: e.target.value })}
-              className="flex-1 rounded-lg border border-fg/10 bg-surface-el/20 px-2 py-1 text-sm font-medium"
+              value={p.proposedKeys.join(", ")}
+              onChange={(e) =>
+                onUpdate(i, {
+                  proposedKeys: e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter((s) => s.length > 0),
+                })
+              }
+              placeholder={t("lorebookGen.flow.commaSeparatedKeys")}
+              className={cn(inputClass, "px-2 py-1 text-xs")}
             />
-            <select
-              value={p.category}
-              onChange={(e) => onUpdate(i, { category: e.target.value })}
-              className="rounded-lg border border-fg/10 bg-surface-el/20 px-2 py-1 text-xs"
-            >
-              {[
-                "character",
-                "location",
-                "faction",
-                "item",
-                "event",
-                "concept",
-                "rule",
-                "other",
-              ].map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => onRemove(i)}
-              className="rounded-lg p-1 text-fg/40 hover:bg-fg/5 hover:text-red-300"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            <textarea
+              value={p.rationale}
+              onChange={(e) => onUpdate(i, { rationale: e.target.value })}
+              rows={2}
+              placeholder={t("lorebookGen.flow.rationalePlaceholder")}
+              className={cn(inputClass, "px-2 py-1 text-xs")}
+            />
           </div>
-          <input
-            value={p.proposedKeys.join(", ")}
-            onChange={(e) =>
-              onUpdate(i, {
-                proposedKeys: e.target.value
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter((s) => s.length > 0),
-              })
-            }
-            placeholder={t("lorebookGen.flow.commaSeparatedKeys")}
-            className="w-full rounded-lg border border-fg/10 bg-surface-el/20 px-2 py-1 text-xs"
-          />
-          <textarea
-            value={p.rationale}
-            onChange={(e) => onUpdate(i, { rationale: e.target.value })}
-            rows={2}
-            placeholder={t("lorebookGen.flow.rationalePlaceholder")}
-            className="w-full rounded-lg border border-fg/10 bg-surface-el/20 px-2 py-1 text-xs"
-          />
-        </div>
-      ))}
+        ))}
+      </div>
       <button
         type="button"
         onClick={onAdd}
-        className="flex w-full items-center justify-center gap-1 rounded-xl border border-dashed border-fg/15 px-3 py-2 text-xs text-fg/60 hover:bg-fg/5"
+        className="flex w-full items-center justify-center gap-1 rounded-xl border border-dashed border-fg/15 px-3 py-2 text-xs text-fg/60 transition hover:bg-fg/[0.04]"
       >
         <Plus className="h-3.5 w-3.5" /> {t("lorebookGen.flow.addEntry")}
       </button>
@@ -1116,7 +1116,7 @@ function OutlineReview({
         <button
           type="button"
           onClick={onBack}
-          className="flex-1 rounded-xl border border-fg/10 py-3 text-sm hover:bg-fg/5"
+          className={cn(btnSecondary, "h-11 flex-1")}
         >
           {t("common.buttons.back")}
         </button>
@@ -1124,7 +1124,7 @@ function OutlineReview({
           type="button"
           onClick={onApprove}
           disabled={busy || job.outline.length === 0}
-          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent/15 py-3 text-sm font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
+          className={cn(btnPrimary, "h-11 flex-1")}
         >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
           {t("lorebookGen.flow.approveAndDraft")}
@@ -1170,11 +1170,11 @@ function DraftReview({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-fg/60">
+      <p className="text-sm text-fg/55">
         {t("lorebookGen.flow.draftsIntro")}
       </p>
       {coherenceBanner}
-      <div className="divide-y divide-fg/10">
+      <div className={groupCardClass}>
         <AnimatePresence initial={false}>
         {job.drafts.map((d, index) => {
           const expandable = d.status === "drafted" || d.status === "approved";
@@ -1188,11 +1188,7 @@ function DraftReview({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ delay: index * 0.02, duration: 0.18 }}
-            className={cn(
-              "space-y-2 py-3 first:pt-0 last:pb-0",
-              d.status === "approved" && "border-l-2 border-emerald-500/40 pl-4",
-              d.status === "failed" && "border-l-2 border-red-500/30 pl-4",
-            )}
+            className="space-y-2 px-3 py-3"
           >
           <button
             type="button"
@@ -1203,6 +1199,16 @@ function DraftReview({
               expandable && "cursor-pointer",
             )}
           >
+            <span
+              className={cn(
+                "h-4 w-0.5 shrink-0 rounded-full",
+                d.status === "approved"
+                  ? "bg-accent"
+                  : d.status === "failed"
+                    ? "bg-danger/70"
+                    : "bg-transparent",
+              )}
+            />
             {expandable ? (
               <motion.span
                 animate={{ rotate: expanded ? 90 : 0 }}
@@ -1227,7 +1233,7 @@ function DraftReview({
             {statusBadge(d.status, t)}
           </button>
           {d.status === "failed" && (
-            <p className="pl-6 text-xs text-red-300">{t("lorebookGen.flow.draftingFailedRetry")}</p>
+            <p className="pl-6 text-xs text-danger/80">{t("lorebookGen.flow.draftingFailedRetry")}</p>
           )}
           <AnimatePresence initial={false}>
           {expanded && (
@@ -1263,8 +1269,8 @@ function DraftReview({
                   className={cn(
                     "rounded-lg border px-3 py-1.5 text-xs font-medium transition",
                     d.status === "approved"
-                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
-                      : "border-fg/10 hover:border-fg/20 hover:bg-fg/5",
+                      ? "border-accent/30 bg-accent/10 text-accent"
+                      : "border-fg/10 bg-surface/60 hover:bg-surface-el/65",
                   )}
                 >
                   {d.status === "approved" ? (
@@ -1278,14 +1284,14 @@ function DraftReview({
                 <button
                   type="button"
                   onClick={() => onOpenRefine(d.planIdx)}
-                  className="rounded-lg border border-fg/10 px-3 py-1.5 text-xs transition hover:border-fg/20 hover:bg-fg/5"
+                  className="rounded-lg border border-fg/10 bg-surface/60 px-3 py-1.5 text-xs font-medium transition hover:bg-surface-el/65"
                 >
                   {t("lorebookGen.flow.askForChanges")}
                 </button>
                 <button
                   type="button"
                   onClick={() => onOpenEdit(d.planIdx)}
-                  className="rounded-lg border border-fg/10 px-3 py-1.5 text-xs transition hover:border-fg/20 hover:bg-fg/5"
+                  className="rounded-lg border border-fg/10 bg-surface/60 px-3 py-1.5 text-xs font-medium transition hover:bg-surface-el/65"
                 >
                   {t("lorebookGen.flow.editManually")}
                 </button>
@@ -1307,7 +1313,7 @@ function DraftReview({
             onClick={onRetryFailed}
             disabled={busy}
             whileTap={{ scale: 0.98 }}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-fg/10 py-3 text-sm transition hover:border-fg/20 hover:bg-fg/5 disabled:opacity-50"
+            className={cn(btnSecondary, "h-11 flex-1")}
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />} {t("lorebookGen.flow.continueDrafting")}
           </motion.button>
@@ -1317,7 +1323,7 @@ function DraftReview({
             type="button"
             onClick={onRetryFailed}
             disabled={busy}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-fg/10 py-3 text-sm hover:bg-fg/5 disabled:opacity-50"
+            className={cn(btnSecondary, "h-11 flex-1")}
           >
             <RefreshCw className="h-4 w-4" /> {t("lorebookGen.flow.retryFailed")}
           </button>
@@ -1328,7 +1334,7 @@ function DraftReview({
               type="button"
               onClick={onRunCoherence}
               disabled={busy}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-fg/10 py-3 text-sm hover:bg-fg/5 disabled:opacity-50"
+              className={cn(btnSecondary, "h-11 flex-1")}
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}{" "}
               {t("lorebookGen.flow.runCoherenceCheck")}
@@ -1337,7 +1343,7 @@ function DraftReview({
               type="button"
               onClick={onSkipToCommit}
               disabled={busy}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent/15 py-3 text-sm font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
+              className={cn(btnPrimary, "h-11 flex-1")}
             >
               <ArrowRight className="h-4 w-4" /> {t("lorebookGen.flow.saveLorebook")}
             </button>
@@ -1353,7 +1359,6 @@ function EntityTriggerButton({
   iconUrl,
   fallbackIcon,
   primary,
-  secondary,
   placeholder,
   onClick,
 }: {
@@ -1361,49 +1366,37 @@ function EntityTriggerButton({
   iconUrl: string | undefined;
   fallbackIcon: React.ReactNode;
   primary: string | null;
-  secondary?: string | null;
   placeholder: string;
   onClick: () => void;
 }) {
   const hasAvatar = iconUrl && isRenderableImageUrl(iconUrl);
   return (
-    <div className="space-y-2">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-fg/45">
-        {label}
-      </span>
-      <button
-        type="button"
-        onClick={onClick}
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-fg/[0.04] focus:bg-fg/[0.04] focus:outline-none"
+    >
+      <div
         className={cn(
-          "flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-fg/3 px-3 py-2.5 text-left",
-          interactive.transition.default,
-          "hover:border-fg/20 hover:bg-fg/6 active:scale-[0.99]",
+          "h-9 w-9 shrink-0 overflow-hidden rounded-full border",
+          primary ? "border-fg/15 bg-fg/5" : "border-dashed border-fg/15 bg-transparent",
+          "flex items-center justify-center",
         )}
       >
-        <div
-          className={cn(
-            "h-9 w-9 shrink-0 overflow-hidden rounded-full border",
-            primary ? "border-fg/15 bg-fg/5" : "border-dashed border-fg/15 bg-transparent",
-            "flex items-center justify-center",
-          )}
-        >
-          {hasAvatar ? (
-            <AvatarImage src={iconUrl!} alt={primary ?? label} />
-          ) : (
-            <span className="text-fg/45">{fallbackIcon}</span>
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className={cn("truncate text-sm", primary ? "text-fg" : "text-fg/45")}>
-            {primary ?? placeholder}
-          </p>
-          {secondary && (
-            <p className="mt-0.5 truncate text-[11px] text-fg/45">{secondary}</p>
-          )}
-        </div>
-        <ChevronRight className="h-4 w-4 shrink-0 text-fg/30" />
-      </button>
-    </div>
+        {hasAvatar ? (
+          <AvatarImage src={iconUrl!} alt={primary ?? label} />
+        ) : (
+          <span className="text-fg/45">{fallbackIcon}</span>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-fg">{label}</p>
+        <p className={cn("mt-0.5 truncate text-[11px]", primary ? "text-fg/60" : "text-fg/40")}>
+          {primary ?? placeholder}
+        </p>
+      </div>
+      <ChevronRight className="h-4 w-4 shrink-0 text-fg/30" />
+    </button>
   );
 }
 
@@ -1432,7 +1425,6 @@ function CharacterTrigger({
         iconUrl={avatarUrl}
         fallbackIcon={<User className="h-5 w-5" />}
         primary={selected?.name ?? null}
-        secondary={selected?.description ?? selected?.definition ?? null}
         placeholder={t("lorebookGen.flow.none")}
         onClick={() => setOpen(true)}
       />
@@ -1472,7 +1464,6 @@ function PersonaTrigger({
         iconUrl={avatarUrl}
         fallbackIcon={<UserCircle className="h-5 w-5" />}
         primary={selected?.title ?? null}
-        secondary={selected?.description ?? null}
         placeholder={t("lorebookGen.flow.none")}
         onClick={() => setOpen(true)}
       />
@@ -1491,9 +1482,9 @@ function statusBadge(status: string, t: (key: TranslationKey) => string) {
   const map: Record<string, { labelKey: TranslationKey; className: string }> = {
     pending: { labelKey: "lorebookGen.flow.draftStatus.pending", className: "bg-fg/10 text-fg/60" },
     drafting: { labelKey: "lorebookGen.flow.draftStatus.drafting", className: "bg-accent/15 text-accent" },
-    drafted: { labelKey: "lorebookGen.flow.draftStatus.drafted", className: "bg-emerald-500/10 text-emerald-300" },
-    approved: { labelKey: "lorebookGen.flow.draftStatus.approved", className: "bg-emerald-500/20 text-emerald-200" },
-    failed: { labelKey: "lorebookGen.flow.draftStatus.failed", className: "bg-red-500/15 text-red-300" },
+    drafted: { labelKey: "lorebookGen.flow.draftStatus.drafted", className: "bg-fg/10 text-fg/60" },
+    approved: { labelKey: "lorebookGen.flow.draftStatus.approved", className: "bg-accent/15 text-accent" },
+    failed: { labelKey: "lorebookGen.flow.draftStatus.failed", className: "bg-danger/15 text-danger" },
   };
   const entry = map[status];
   const tag = entry
@@ -1546,14 +1537,14 @@ function CoherenceBanner({
     return (
       <motion.div
         {...animations.fadeInFast}
-        className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.06] px-4 py-3"
+        className="flex items-center gap-3 rounded-xl border border-fg/10 bg-fg/[0.025] px-4 py-3"
       >
-        <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+        <CheckCircle2 className="h-5 w-5 shrink-0 text-accent" />
         <p className="flex-1 text-sm text-fg/80">{t("lorebookGen.flow.noCoherenceIssues")}</p>
         <button
           type="button"
           onClick={onSkip}
-          className="rounded-lg border border-fg/10 px-3 py-1.5 text-xs transition hover:border-fg/20 hover:bg-fg/5"
+          className="rounded-lg border border-fg/10 bg-surface/60 px-3 py-1.5 text-xs font-medium transition hover:bg-surface-el/65"
         >
           {t("common.buttons.continue")}
         </button>
@@ -1564,9 +1555,9 @@ function CoherenceBanner({
   return (
     <motion.div
       {...animations.fadeInFast}
-      className="space-y-3 rounded-xl border border-info/30 bg-info/[0.06] p-4"
+      className="space-y-3 rounded-xl border border-fg/10 bg-fg/[0.025] p-4"
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-info">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-fg/40">
         {t("lorebookGen.flow.coherenceProposals", { count: job.coherenceProposals.length })}
       </p>
       <p className="text-xs text-fg/60">
@@ -1611,7 +1602,7 @@ function CoherenceBanner({
         return (
           <label
             key={c.id}
-            className="flex cursor-pointer items-start gap-3 rounded-lg border border-fg/10 bg-fg/[0.02] p-2.5 transition hover:border-fg/20"
+            className="flex cursor-pointer items-start gap-3 rounded-lg border border-fg/10 bg-surface-el/20 p-2.5 transition hover:bg-fg/[0.04]"
           >
             <input
               type="checkbox"
@@ -1620,7 +1611,7 @@ function CoherenceBanner({
               className="mt-1 h-4 w-4 accent-accent"
             />
             <div className="flex-1 text-xs leading-relaxed text-fg/80">
-              <span className="mr-2 rounded bg-fg/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase">
+              <span className="mr-2 rounded bg-fg/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-fg/60">
                 {c.kind}
               </span>
               {summary}
@@ -1632,7 +1623,7 @@ function CoherenceBanner({
         <button
           type="button"
           onClick={onSkip}
-          className="flex-1 rounded-lg border border-fg/10 py-2 text-xs transition hover:border-fg/20 hover:bg-fg/5"
+          className={cn(btnSecondary, "flex-1 py-2 text-xs")}
         >
           {t("lorebookGen.flow.skip")}
         </button>
@@ -1641,7 +1632,7 @@ function CoherenceBanner({
           onClick={onApply}
           disabled={busy}
           whileTap={{ scale: 0.98 }}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-accent/40 bg-accent/10 py-2 text-xs font-semibold text-accent transition hover:bg-accent/20 disabled:opacity-50"
+          className={cn(btnPrimary, "flex-1 py-2 text-xs")}
         >
           {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} {t("lorebookGen.flow.applySelected")}
         </motion.button>
@@ -1672,28 +1663,32 @@ function CommitForm({
   const { t } = useI18n();
   return (
     <div className="space-y-5">
-      <p className="text-sm text-fg/60">
+      <p className="text-sm text-fg/55">
         {t("lorebookGen.flow.commitIntro", { count: draftCount })}
       </p>
-      <Field label={t("lorebookGen.flow.destination")}>
-        <select
-          value={commitTarget}
-          onChange={(e) => setCommitTarget(e.target.value)}
-          className={inputClass}
-        >
-          <option value="">{t("lorebookGen.flow.createNewLorebook", { name: newLorebookName })}</option>
-          {lorebooks.map((lb) => (
-            <option key={lb.id} value={lb.id}>
-              {t("lorebookGen.flow.appendTo", { name: lb.name })}
-            </option>
-          ))}
-        </select>
-      </Field>
+      <div className={groupCardClass}>
+        <div className="px-4 py-3">
+          <Field label={t("lorebookGen.flow.destination")}>
+            <select
+              value={commitTarget}
+              onChange={(e) => setCommitTarget(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">{t("lorebookGen.flow.createNewLorebook", { name: newLorebookName })}</option>
+              {lorebooks.map((lb) => (
+                <option key={lb.id} value={lb.id}>
+                  {t("lorebookGen.flow.appendTo", { name: lb.name })}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      </div>
       <div className="flex gap-3 pt-2">
         <button
           type="button"
           onClick={onBack}
-          className="flex-1 rounded-xl border border-fg/10 py-3 text-sm transition hover:border-fg/20 hover:bg-fg/5"
+          className={cn(btnSecondary, "h-11 flex-1")}
         >
           {t("common.buttons.back")}
         </button>
@@ -1702,7 +1697,7 @@ function CommitForm({
           onClick={onCommit}
           disabled={busy}
           whileTap={{ scale: 0.98 }}
-          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent/10 py-3 text-sm font-semibold text-accent transition hover:bg-accent/20 disabled:opacity-50"
+          className={cn(btnPrimary, "h-11 flex-1")}
         >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
           {t("common.buttons.save")}
@@ -1739,13 +1734,13 @@ function RefineSheet({
           onChange={(e) => setFeedback(e.target.value)}
           rows={5}
           placeholder={t("lorebookGen.flow.describeChangesPlaceholder")}
-          className="w-full rounded-xl border border-fg/10 bg-fg/[0.02] px-3.5 py-3 text-sm transition focus:border-fg/30 focus:outline-none"
+          className={inputClass}
         />
         <div className="flex gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 rounded-xl border border-fg/10 py-2.5 text-sm transition hover:border-fg/20 hover:bg-fg/5"
+            className={cn(btnSecondary, "flex-1 py-2.5")}
           >
             {t("common.buttons.cancel")}
           </button>
@@ -1754,7 +1749,7 @@ function RefineSheet({
             onClick={onSubmit}
             disabled={busy || !feedback.trim()}
             whileTap={{ scale: 0.98 }}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent/10 py-2.5 text-sm font-semibold text-accent transition hover:bg-accent/20 disabled:opacity-50"
+            className={cn(btnPrimary, "flex-1 py-2.5")}
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />} {t("lorebookGen.flow.apply")}
           </motion.button>
@@ -1787,26 +1782,26 @@ function EditDraftModal({
   const [alwaysActive, setAlwaysActive] = useState(initial.alwaysActive);
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-xl space-y-3 rounded-2xl border border-fg/10 bg-surface p-5">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 px-4 pt-[var(--titlebar-h,0px)]">
+      <div className="max-h-[80vh] w-full max-w-xl space-y-3 overflow-y-auto rounded-xl border border-fg/10 bg-surface p-5">
         <h3 className="text-sm font-semibold">{t("lorebookGen.flow.editEntry")}</h3>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder={t("lorebookGen.flow.titleLabel")}
-          className="w-full rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-2 text-sm"
+          className={inputClass}
         />
         <input
           value={keywordsText}
           onChange={(e) => setKeywordsText(e.target.value)}
           placeholder={t("lorebookGen.flow.commaSeparatedKeywords")}
-          className="w-full rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-2 text-sm"
+          className={inputClass}
         />
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
           rows={8}
-          className="w-full rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-sm"
+          className={inputClass}
         />
         <label className="flex items-center gap-2 text-xs">
           <input
@@ -1821,7 +1816,7 @@ function EditDraftModal({
           <button
             type="button"
             onClick={onCancel}
-            className="flex-1 rounded-xl border border-fg/10 py-2.5 text-sm hover:bg-fg/5"
+            className={cn(btnSecondary, "flex-1 py-2.5")}
           >
             {t("common.buttons.cancel")}
           </button>
@@ -1839,7 +1834,7 @@ function EditDraftModal({
               )
             }
             disabled={busy}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent/15 py-2.5 text-sm font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
+            className={cn(btnPrimary, "flex-1 py-2.5")}
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />} {t("common.buttons.save")}
           </button>

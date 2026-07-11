@@ -4,6 +4,7 @@ import {
   createDefaultAppState,
   type AppState,
   type ChatsViewMode,
+  type GroupChatsViewMode,
   type CustomColorPreset,
   type CustomColors,
   type PureModeLevel,
@@ -34,6 +35,7 @@ function cloneAppState(state?: AppState): AppState {
       settingsCardOpacity: preset.settingsCardOpacity,
     })),
     chatsViewMode: source.chatsViewMode ?? "hero",
+    groupChatsViewMode: source.groupChatsViewMode ?? "classic",
     trustedCertificates: (source.trustedCertificates ?? []).map((certificate) => ({
       ...certificate,
     })),
@@ -266,6 +268,23 @@ export function getChatsViewModeCached(): ChatsViewMode | null {
 export async function setChatsViewMode(mode: ChatsViewMode): Promise<void> {
   await withAppState((state) => {
     state.chatsViewMode = mode;
+  });
+}
+
+export async function getGroupChatsViewMode(): Promise<GroupChatsViewMode> {
+  const state = await getAppState();
+  return state.groupChatsViewMode ?? "classic";
+}
+
+export function getGroupChatsViewModeCached(): GroupChatsViewMode | null {
+  const settings = readSettingsCached();
+  if (!settings) return null;
+  return settings.appState.groupChatsViewMode ?? "classic";
+}
+
+export async function setGroupChatsViewMode(mode: GroupChatsViewMode): Promise<void> {
+  await withAppState((state) => {
+    state.groupChatsViewMode = mode;
   });
 }
 

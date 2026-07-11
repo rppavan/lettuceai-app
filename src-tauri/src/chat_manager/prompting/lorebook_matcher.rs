@@ -1,10 +1,41 @@
 use crate::storage_manager::db::DbConnection;
 use crate::storage_manager::lorebook::{
     get_character_active_lorebook_ids, get_enabled_lorebook_entry_contexts_for_ids, LorebookEntry,
-    LorebookEntryActivationContext, LorebookKeywordDetectionMode,
+    LorebookEntryActivationContext, LorebookKeywordDetectionMode, LorebookKeywordMatchMode,
 };
 
 pub(crate) fn keyword_matches(keyword: &str, text: &str, case_sensitive: bool) -> bool {
+    keyword_matches_with_mode(
+        keyword,
+        text,
+        case_sensitive,
+        LorebookKeywordMatchMode::Literal,
+    )
+}
+
+fn contains_unsegmented_script(text: &str) -> bool {
+    text.chars().any(|ch| {
+        matches!(
+            ch as u32,
+            0x0E00..=0x0E7F | // Thai
+            0x0E80..=0x0EFF | // Lao
+            0x1000..=0x109F | // Myanmar
+            0x1780..=0x17FF | // Khmer
+            0x3040..=0x30FF | // Hiragana and Katakana
+            0x3400..=0x4DBF | // CJK Extension A
+            0x4E00..=0x9FFF | // CJK Unified Ideographs
+            0xAC00..=0xD7AF | // Hangul syllables
+            0xF900..=0xFAFF   // CJK Compatibility Ideographs
+        )
+    })
+}
+
+pub(crate) fn keyword_matches_with_mode(
+    keyword: &str,
+    text: &str,
+    case_sensitive: bool,
+    mode: LorebookKeywordMatchMode,
+) -> bool {
     let keyword = keyword.trim();
     if keyword.is_empty() {
         return false;
@@ -31,6 +62,14 @@ pub(crate) fn keyword_matches(keyword: &str, text: &str, case_sensitive: bool) -
         (keyword.to_lowercase(), text.to_lowercase())
     };
 
+    if mode == LorebookKeywordMatchMode::Regex {
+        return regex::RegexBuilder::new(&search_keyword)
+            .case_insensitive(!case_sensitive)
+            .build()
+            .map(|regex| regex.is_match(&search_text))
+            .unwrap_or(false);
+    }
+
     if search_keyword.ends_with('*') {
         let prefix = &search_keyword[..search_keyword.len() - 1];
         if prefix.is_empty() {
@@ -38,6 +77,10 @@ pub(crate) fn keyword_matches(keyword: &str, text: &str, case_sensitive: bool) -
         }
 
         let normalized_text = normalize(&search_text);
+
+        if contains_unsegmented_script(prefix) || contains_unsegmented_script(&normalized_text) {
+            return normalized_text.contains(prefix);
+        }
 
         for word in normalized_text.split_whitespace() {
             if word.starts_with(prefix) {
@@ -49,6 +92,12 @@ pub(crate) fn keyword_matches(keyword: &str, text: &str, case_sensitive: bool) -
 
     let normalized_keyword = normalize(&search_keyword);
     let normalized_text = normalize(&search_text);
+
+    if contains_unsegmented_script(&normalized_keyword)
+        || contains_unsegmented_script(&normalized_text)
+    {
+        return normalized_text.contains(&normalized_keyword);
+    }
 
     if normalized_keyword.contains(' ') {
         return normalized_text.contains(&normalized_keyword);
@@ -83,10 +132,14 @@ pub fn activate_lorebook_entries(
         } else if entry.keywords.is_empty() {
             false
         } else {
-            entry
-                .keywords
-                .iter()
-                .any(|keyword| keyword_matches(keyword, keyword_context, entry.case_sensitive))
+            entry.keywords.iter().any(|keyword| {
+                keyword_matches_with_mode(
+                    keyword,
+                    keyword_context,
+                    entry.case_sensitive,
+                    entry.keyword_match_mode,
+                )
+            })
         };
 
         if should_activate {
@@ -138,4 +191,39 @@ pub fn format_lorebook_for_prompt(entries: &[LorebookEntry]) -> String {
         .filter(|content| !content.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{keyword_matches, keyword_matches_with_mode};
+    use crate::storage_manager::lorebook::LorebookKeywordMatchMode;
+
+    #[test]
+    fn literal_keywords_match_text_without_word_breaks() {
+        assert!(keyword_matches("東京", "今日は東京へ行く", false));
+        assert!(keyword_matches("北京", "我住在北京。", false));
+        assert!(keyword_matches("กรุงเทพ", "ฉันอยู่กรุงเทพมหานคร", false));
+    }
+
+    #[test]
+    fn literal_keywords_preserve_word_boundaries_for_spaced_languages() {
+        assert!(!keyword_matches("art", "We are going to a party", false));
+        assert!(keyword_matches("art", "We made art today", false));
+    }
+
+    #[test]
+    fn regex_keywords_are_opt_in() {
+        assert!(keyword_matches_with_mode(
+            r"東京|大阪",
+            "今日は大阪へ行く",
+            false,
+            LorebookKeywordMatchMode::Regex,
+        ));
+        assert!(!keyword_matches_with_mode(
+            r"東京|大阪",
+            "今日は名古屋へ行く",
+            false,
+            LorebookKeywordMatchMode::Regex,
+        ));
+    }
 }

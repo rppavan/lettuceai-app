@@ -507,11 +507,7 @@ function buildMemoryFromCreateAction(
   };
 }
 
-function resolveBranchedDynamicMemoryState(
-  sourceSession: Session,
-  branchMessageIndex: number,
-  messageIdMap?: Map<string, string>,
-): Pick<
+type BranchedDynamicMemorySource = Pick<
   Session,
   | "memoryEmbeddings"
   | "memorySummary"
@@ -519,23 +515,37 @@ function resolveBranchedDynamicMemoryState(
   | "memoryToolEvents"
   | "memoryStatus"
   | "memoryError"
-> {
-  const sourceEvents = sourceSession.memoryToolEvents ?? [];
+>;
+
+function resolveBranchedDynamicMemoryState(
+  sourceSession: Session,
+  branchMessageIndex: number,
+  messageIdMap?: Map<string, string>,
+): BranchedDynamicMemorySource {
+  return resolveBranchedDynamicMemoryStateCore(
+    sourceSession,
+    countConversationMessagesUpTo(sourceSession.messages, branchMessageIndex),
+    messageIdMap,
+  );
+}
+
+function resolveBranchedDynamicMemoryStateCore(
+  source: BranchedDynamicMemorySource,
+  branchConversationCount: number,
+  messageIdMap?: Map<string, string>,
+): BranchedDynamicMemorySource {
+  const sourceEvents = source.memoryToolEvents ?? [];
   if (sourceEvents.length === 0) {
     return {
-      memoryEmbeddings: (sourceSession.memoryEmbeddings ?? []).map(cloneSessionMemoryEmbedding),
-      memorySummary: sourceSession.memorySummary ?? "",
-      memorySummaryTokenCount: sourceSession.memorySummaryTokenCount ?? 0,
+      memoryEmbeddings: (source.memoryEmbeddings ?? []).map(cloneSessionMemoryEmbedding),
+      memorySummary: source.memorySummary ?? "",
+      memorySummaryTokenCount: source.memorySummaryTokenCount ?? 0,
       memoryToolEvents: [],
-      memoryStatus: sourceSession.memoryStatus ?? "idle",
-      memoryError: sourceSession.memoryError,
+      memoryStatus: source.memoryStatus ?? "idle",
+      memoryError: source.memoryError,
     };
   }
 
-  const branchConversationCount = countConversationMessagesUpTo(
-    sourceSession.messages,
-    branchMessageIndex,
-  );
   const keptEvents = sourceEvents
     .filter((event) => (event.windowEnd ?? 0) <= branchConversationCount)
     .map(cloneSessionMemoryToolEvent);
@@ -556,7 +566,7 @@ function resolveBranchedDynamicMemoryState(
   }
 
   const sourceMemoryById = new Map(
-    (sourceSession.memoryEmbeddings ?? []).map((memory) => [memory.id, memory]),
+    (source.memoryEmbeddings ?? []).map((memory) => [memory.id, memory]),
   );
   const activeMemories = new Map<string, SessionMemoryEmbedding>();
 
@@ -616,8 +626,8 @@ function resolveBranchedDynamicMemoryState(
   const lastKeptEvent = remappedEvents[remappedEvents.length - 1];
   const memorySummary = lastKeptEvent.summary ?? "";
   const memorySummaryTokenCount =
-    memorySummary === (sourceSession.memorySummary ?? "")
-      ? (sourceSession.memorySummaryTokenCount ?? 0)
+    memorySummary === (source.memorySummary ?? "")
+      ? (source.memorySummaryTokenCount ?? 0)
       : 0;
 
   return {
@@ -1265,6 +1275,7 @@ export async function saveLorebookEntry(
     alwaysActive: entry.alwaysActive ?? false,
     keywords: entry.keywords ?? [],
     caseSensitive: entry.caseSensitive ?? false,
+    keywordMatchMode: entry.keywordMatchMode ?? "literal",
     content: entry.content ?? "",
     priority: entry.priority ?? 0,
     displayOrder: entry.displayOrder ?? 0,
@@ -1685,6 +1696,233 @@ export async function createBranchedSessionToCharacter(
     updatedAt: timestamp,
     memoryStatus: branchedDynamicMemoryState.memoryStatus,
     memoryError: branchedDynamicMemoryState.memoryError,
+  };
+
+  await saveSession(s);
+  return s;
+}
+
+export async function listAllGroupMessages(sessionId: string): Promise<GroupMessage[]> {
+  const pageSize = 200;
+  const all: GroupMessage[] = [];
+  let before: { createdAt: number; id: string } | undefined;
+  for (;;) {
+    const page = z
+      .array(GroupMessageSchema)
+      .parse(
+        await storageBridge.groupMessagesList(sessionId, pageSize, before?.createdAt, before?.id),
+      );
+    if (page.length === 0) break;
+    all.unshift(...page);
+    if (page.length < pageSize) break;
+    before = { createdAt: page[0].createdAt, id: page[0].id };
+  }
+  return all;
+}
+
+function groupMemoryEmbeddingToSession(
+  memory: NonNullable<GroupSession["memoryEmbeddings"]>[number],
+): SessionMemoryEmbedding {
+  return {
+    id: memory.id,
+    text: memory.text,
+    embedding: [...memory.embedding],
+    embeddingSourceVersion: memory.embeddingSourceVersion ?? null,
+    embeddingDimensions: memory.embeddingDimensions ?? null,
+    createdAt: memory.createdAt,
+    tokenCount: memory.tokenCount,
+    isCold: memory.isCold,
+    importanceScore: memory.importanceScore,
+    persistenceImportance: 1,
+    promptImportance: 1,
+    volatility: 0.4,
+    lastAccessedAt: memory.lastAccessedAt,
+    isPinned: memory.isPinned,
+    accessCount: memory.accessCount,
+    matchScore: null,
+    category: memory.category ?? null,
+    observedAt: null,
+    observedTimePrecision: null,
+    canonicalEntities: [],
+    factSignature: null,
+    factPolarity: null,
+    sourceRole: null,
+    supersededBy: null,
+    supersededAt: null,
+    supersedes: [],
+  };
+}
+
+function groupMemoryToolEventToSession(
+  event: NonNullable<GroupSession["memoryToolEvents"]>[number],
+): SessionMemoryToolEvent {
+  return {
+    id: typeof event.id === "string" ? event.id : uuidv4(),
+    windowStart: typeof event.windowStart === "number" ? event.windowStart : 0,
+    windowEnd: typeof event.windowEnd === "number" ? event.windowEnd : 0,
+    windowMessageIds: Array.isArray(event.windowMessageIds)
+      ? [...event.windowMessageIds]
+      : undefined,
+    summary: typeof event.summary === "string" ? event.summary : "",
+    error: typeof event.error === "string" ? event.error : undefined,
+    status: typeof event.status === "string" ? event.status : undefined,
+    stage: typeof event.stage === "string" ? event.stage : undefined,
+    revertedAt: typeof event.revertedAt === "number" ? event.revertedAt : undefined,
+    actions: Array.isArray(event.actions)
+      ? event.actions.map((action) => ({ ...action }))
+      : [],
+    createdAt:
+      typeof event.createdAt === "number"
+        ? event.createdAt
+        : typeof event.timestamp === "number"
+          ? event.timestamp
+          : 0,
+  };
+}
+
+export async function createBranchedSessionFromGroupMessage(
+  sourceSession: GroupSession,
+  sourceMessages: GroupMessage[],
+  branchAtMessageId: string,
+  targetCharacterId: string,
+): Promise<Session> {
+  const messageIndex = sourceMessages.findIndex((m) => m.id === branchAtMessageId);
+  if (messageIndex === -1) {
+    throw new Error("Message not found in session");
+  }
+
+  const characters = await listCharacters();
+  const targetCharacter = characters.find((c) => c.id === targetCharacterId);
+  const characterName = targetCharacter?.name || "Unknown";
+  const nameById = new Map(characters.map((c) => [c.id, c.name]));
+  const groupNames = new Set(
+    sourceSession.characterIds
+      .map((id) => nameById.get(id))
+      .filter((name): name is string => Boolean(name)),
+  );
+  for (const message of sourceMessages) {
+    if (!message.speakerCharacterId) continue;
+    const name = nameById.get(message.speakerCharacterId);
+    if (name) groupNames.add(name);
+  }
+
+  const placeholderRegex = /\{\{@"([^"]+)"\}\}/g;
+  const resolveContent = (content: string) =>
+    content.replace(placeholderRegex, (match, name: string) =>
+      groupNames.has(name) ? name : match,
+    );
+
+  const cloneAttachmentRefs = (attachments: GroupMessage["attachments"] | undefined) =>
+    (attachments ?? []).map((attachment) => ({
+      id: attachment.id,
+      data: attachment.data,
+      mimeType: attachment.mimeType,
+      filename: attachment.filename ?? null,
+      width: attachment.width ?? null,
+      height: attachment.height ?? null,
+      storagePath: attachment.storagePath ?? null,
+    }));
+
+  const includedMessages = sourceMessages.slice(0, messageIndex + 1);
+  const messageIdMap = new Map<string, string>();
+  const branchedMessages: StoredMessage[] = includedMessages.map((message) => {
+    const newId = globalThis.crypto?.randomUUID?.() ?? uuidv4();
+    messageIdMap.set(message.id, newId);
+
+    const variantIdMap = new Map<string, string>();
+    const variants = (message.variants ?? []).map((variant) => {
+      const newVariantId = globalThis.crypto?.randomUUID?.() ?? uuidv4();
+      variantIdMap.set(variant.id, newVariantId);
+      return {
+        id: newVariantId,
+        content: resolveContent(variant.content),
+        createdAt: variant.createdAt,
+        usage: variant.usage ?? undefined,
+        attachments: cloneAttachmentRefs(variant.attachments),
+        reasoning: variant.reasoning ?? undefined,
+      };
+    });
+
+    return {
+      id: newId,
+      role: message.role,
+      content: resolveContent(message.content),
+      createdAt: message.createdAt,
+      isPinned: message.isPinned ?? false,
+      memoryRefs: [],
+      usage: message.usage ?? undefined,
+      reasoning: message.reasoning ?? undefined,
+      modelId: message.modelId ?? undefined,
+      attachments: cloneAttachmentRefs(message.attachments),
+      variants: variants.length > 0 ? variants : undefined,
+      selectedVariantId: message.selectedVariantId
+        ? variantIdMap.get(message.selectedVariantId)
+        : undefined,
+    };
+  });
+
+  const branchMessageCreatedAt = includedMessages[includedMessages.length - 1]?.createdAt ?? 0;
+  const sourceEvents = (sourceSession.memoryToolEvents ?? []).map(groupMemoryToolEventToSession);
+  const sourceEmbeddings = (sourceSession.memoryEmbeddings ?? [])
+    .map(groupMemoryEmbeddingToSession)
+    .filter((memory) => sourceEvents.length > 0 || memory.createdAt <= branchMessageCreatedAt);
+  const branchConversationCount = includedMessages.filter(
+    (message) => message.role === "user" || message.role === "assistant",
+  ).length;
+
+  const dynamicState = resolveBranchedDynamicMemoryStateCore(
+    {
+      memoryEmbeddings: sourceEmbeddings,
+      memorySummary: sourceSession.memorySummary,
+      memorySummaryTokenCount: sourceSession.memorySummaryTokenCount,
+      memoryToolEvents: sourceEvents,
+      memoryStatus: sourceSession.memoryStatus ?? "idle",
+      memoryError: sourceSession.memoryError ?? undefined,
+    },
+    branchConversationCount,
+    messageIdMap,
+  );
+
+  const sourceHasDynamicState =
+    sourceEmbeddings.length > 0 ||
+    sourceEvents.length > 0 ||
+    (sourceSession.memorySummary ?? "").trim().length > 0 ||
+    (sourceSession.memorySummaryTokenCount ?? 0) > 0;
+  const branchedVisibleMemories = sourceHasDynamicState
+    ? (dynamicState.memoryEmbeddings ?? []).map((memory) => memory.text)
+    : [...sourceSession.memories];
+
+  const id = globalThis.crypto?.randomUUID?.() ?? uuidv4();
+  const timestamp = now();
+
+  const s: Session = {
+    id,
+    characterId: targetCharacterId,
+    title: `${sourceSession.name} - ${characterName}`,
+    parentSessionId: undefined,
+    branchedFromMessageId: undefined,
+    rootSessionId: undefined,
+    backgroundImagePath: undefined,
+    mode: targetCharacter?.mode ?? "roleplay",
+    selectedSceneId: targetCharacter?.defaultSceneId ?? undefined,
+    promptTemplateId:
+      targetCharacter?.mode === "companion"
+        ? (targetCharacter?.companion?.prompting?.promptTemplateId ?? APP_COMPANION_TEMPLATE_ID)
+        : (targetCharacter?.promptTemplateId ?? null),
+    personaId: sourceSession.personaId,
+    personaDisabled: false,
+    companionState: undefined,
+    memories: branchedVisibleMemories,
+    memoryEmbeddings: dynamicState.memoryEmbeddings,
+    memorySummary: dynamicState.memorySummary,
+    memorySummaryTokenCount: dynamicState.memorySummaryTokenCount ?? 0,
+    memoryToolEvents: dynamicState.memoryToolEvents,
+    messages: branchedMessages,
+    archived: false,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    memoryStatus: dynamicState.memoryStatus,
+    memoryError: dynamicState.memoryError,
   };
 
   await saveSession(s);

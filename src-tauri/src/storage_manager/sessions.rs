@@ -922,6 +922,7 @@ fn fetch_messages_page_typed(
             ),
             reasoning,
             model_id: None,
+            gemini_content: None,
         });
     }
 
@@ -1085,6 +1086,7 @@ fn fetch_pinned_messages_typed(
             ),
             reasoning,
             model_id: None,
+            gemini_content: None,
         });
     }
 

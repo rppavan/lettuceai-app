@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useId } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   BookOpen,
@@ -58,14 +58,19 @@ function KeywordTagInput({
   onChange,
   caseSensitive,
   onCaseSensitiveChange,
+  keywordMatchMode,
+  onKeywordMatchModeChange,
 }: {
   keywords: string[];
   onChange: (keywords: string[]) => void;
   caseSensitive: boolean;
   onCaseSensitiveChange: (caseSensitive: boolean) => void;
+  keywordMatchMode: "literal" | "regex";
+  onKeywordMatchModeChange: (keywordMatchMode: "literal" | "regex") => void;
 }) {
   const { t } = useI18n();
   const [inputValue, setInputValue] = useState("");
+  const matchTypeLayoutId = useId();
 
   const addKeyword = () => {
     const newKeyword = inputValue.trim();
@@ -80,38 +85,27 @@ function KeywordTagInput({
   };
 
   return (
+    <>
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div>
         <label className="text-[11px] font-medium text-fg/70">
-          {t("characters.lorebook.keywords")}
+          {t(
+            keywordMatchMode === "regex"
+              ? "characters.lorebook.regularExpressionsLabel"
+              : "characters.lorebook.keywords",
+          )}
         </label>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-fg/50">{t("characters.lorebook.caseSensitive")}</span>
-          <label
-            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-all duration-200 ${
-              caseSensitive ? "bg-accent" : "bg-fg/20"
-            }`}
-          >
-            <input
-              type="checkbox"
-              checked={caseSensitive}
-              onChange={(e) => onCaseSensitiveChange(e.target.checked)}
-              className="sr-only"
-            />
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-fg shadow ring-0 transition duration-200 ${
-                caseSensitive ? "translate-x-4" : "translate-x-0"
-              }`}
-            />
-          </label>
-        </div>
       </div>
 
       <div className="flex gap-2">
         <input
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
-          placeholder={t("characters.lorebook.typeKeyword")}
+          placeholder={
+            keywordMatchMode === "regex"
+              ? t("characters.lorebook.regularExpressionPlaceholder")
+              : t("characters.lorebook.typeKeyword")
+          }
           className="flex-1 rounded-xl border border-fg/10 bg-surface-el/20 px-3 py-2.5 text-fg placeholder-fg/40 transition focus:border-fg/30 focus:outline-none"
         />
         <button
@@ -123,6 +117,50 @@ function KeywordTagInput({
           {t("common.buttons.add")}
         </button>
       </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <label className="flex items-center gap-2 text-xs text-fg/50">
+          <span>{t("characters.lorebook.matchType")}</span>
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-fg/8 bg-fg/[0.025] p-0.5">
+            {(["literal", "regex"] as const).map((mode) => {
+              const active = keywordMatchMode === mode;
+              return (
+                <motion.button
+                  key={mode}
+                  type="button"
+                  onClick={() => onKeywordMatchModeChange(mode)}
+                  whileTap={{ scale: 0.97 }}
+                  transition={{ duration: 0.14 }}
+                  className={`relative z-10 rounded-md px-2.5 py-1 text-[11.5px] font-medium transition-colors ${
+                    active ? "text-fg" : "text-fg/45 hover:text-fg/80"
+                  }`}
+                >
+                  {active && (
+                    <motion.span
+                      layoutId={`lorebook-match-mode-${matchTypeLayoutId}`}
+                      className="absolute inset-0 -z-10 rounded-md bg-fg/10"
+                      transition={{ type: "spring", stiffness: 480, damping: 34 }}
+                    />
+                  )}
+                  <span>
+                    {mode === "regex"
+                      ? t("characters.lorebook.regularExpressions")
+                      : t("characters.lorebook.literalText")}
+                  </span>
+                </motion.button>
+              );
+            })}
+          </div>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-fg/50">
+          <span>{t("characters.lorebook.caseSensitive")}</span>
+          <Switch checked={caseSensitive} onChange={onCaseSensitiveChange} />
+        </label>
+      </div>
+
+      {keywordMatchMode === "regex" && (
+        <p className="text-xs text-fg/50">{t("characters.lorebook.regularExpressionHint")}</p>
+      )}
 
       {keywords.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -142,6 +180,7 @@ function KeywordTagInput({
         </div>
       )}
     </div>
+    </>
   );
 }
 
@@ -228,6 +267,10 @@ function EntryEditorMenu({
             onChange={(keywords) => setDraft({ ...draft, keywords })}
             caseSensitive={draft.caseSensitive}
             onCaseSensitiveChange={(caseSensitive) => setDraft({ ...draft, caseSensitive })}
+            keywordMatchMode={draft.keywordMatchMode}
+            onKeywordMatchModeChange={(keywordMatchMode) =>
+              setDraft({ ...draft, keywordMatchMode })
+            }
           />
         )}
 
@@ -524,6 +567,7 @@ export function StandaloneLorebookEditor() {
       enabled: true,
       alwaysActive: false,
       caseSensitive: false,
+      keywordMatchMode: "literal",
       createdAt: Date.now(),
       updatedAt: Date.now(),
       displayOrder: entries.length,
@@ -545,6 +589,7 @@ export function StandaloneLorebookEditor() {
           enabled: entry.enabled,
           alwaysActive: entry.alwaysActive,
           caseSensitive: entry.caseSensitive,
+          keywordMatchMode: entry.keywordMatchMode,
         };
         await saveLorebookEntry(fullEntry);
         setEntries((prev) => [...prev, fullEntry]);

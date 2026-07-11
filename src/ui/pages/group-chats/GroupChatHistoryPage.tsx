@@ -14,7 +14,8 @@ export function GroupChatHistoryPage() {
   const navigate = useNavigate();
   const { backOrReplace } = useNavigationManager();
   const {
-    sessions,
+    scopedSessions,
+    filterGroup,
     characters,
     isLoading,
     error,
@@ -30,6 +31,7 @@ export function GroupChatHistoryPage() {
     handleRename,
     handleArchive,
     handleDuplicate,
+    handleExport,
   } = useGroupChatHistoryController({
     onOpenSession: (sessionId) => navigate(Routes.groupChat(sessionId)),
   });
@@ -55,14 +57,18 @@ export function GroupChatHistoryPage() {
           <div className="flex flex-1 items-center min-w-0">
             <button
               onClick={() => backOrReplace(Routes.groupChats)}
-              className="flex shrink-0 items-center justify-center -ml-2 text-fg transition hover:text-fg/80"
+              className="flex shrink-0 items-center justify-center px-[0.6em] py-[0.3em] -ml-2 text-fg transition hover:text-fg/80"
               aria-label={t("groupChats.historyPage.backAria")}
             >
-              <ArrowLeft size={14} strokeWidth={2.5} />
+              <ArrowLeft size={18} strokeWidth={2.5} />
             </button>
             <div className="min-w-0 flex-1 text-left">
               <p className="truncate text-xl font-bold text-fg/90">{t("groupChats.history.title")}</p>
-              <p className="mt-0.5 truncate text-xs text-fg/50">{t("groupChats.history.subtitle")}</p>
+              <p className="mt-0.5 truncate text-xs text-fg/50">
+                {filterGroup
+                  ? t("groupChats.history.subtitleForGroup", { name: filterGroup.name })
+                  : t("groupChats.history.subtitle")}
+              </p>
             </div>
           </div>
         </div>
@@ -70,6 +76,7 @@ export function GroupChatHistoryPage() {
 
       {/* Content */}
       <main className="flex-1 overflow-y-auto px-3 pt-4">
+        <div className="mx-auto w-full max-w-5xl">
         {error && (
           <div
             className={cn("mb-4 p-4 border border-danger/30 bg-danger/10 text-center", radius.lg)}
@@ -89,7 +96,7 @@ export function GroupChatHistoryPage() {
           </div>
         )}
 
-        {sessions.length > 0 && (
+        {scopedSessions.length > 0 && (
           <div className="mb-4">
             <div className={cn("relative")}>
               <Search
@@ -141,7 +148,7 @@ export function GroupChatHistoryPage() {
           </div>
         )}
 
-        {sessions.length === 0 ? (
+        {scopedSessions.length === 0 ? (
           <div className="text-center py-20">
             <MessageCircle className="mx-auto mb-4 h-12 w-12 text-fg/30" />
             <h3 className={cn(typography.h3.size, typography.h3.weight, "text-fg/70 mb-2")}>
@@ -197,6 +204,7 @@ export function GroupChatHistoryPage() {
                       onRename={(newTitle) => handleRename(session.id, newTitle)}
                       onArchive={() => handleArchive(session.id, true)}
                       onDuplicate={() => handleDuplicate(session)}
+                      onExport={() => handleExport(session.id)}
                       isBusy={busyIds.has(session.id)}
                     />
                   ))}
@@ -223,6 +231,7 @@ export function GroupChatHistoryPage() {
                       onRename={(newTitle) => handleRename(session.id, newTitle)}
                       onUnarchive={() => handleArchive(session.id, false)}
                       onDuplicate={() => handleDuplicate(session)}
+                      onExport={() => handleExport(session.id)}
                       isBusy={busyIds.has(session.id)}
                       isArchived
                     />
@@ -232,6 +241,7 @@ export function GroupChatHistoryPage() {
             )}
           </div>
         )}
+        </div>
       </main>
 
       <BottomMenu

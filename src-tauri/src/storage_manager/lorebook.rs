@@ -27,6 +27,30 @@ pub enum LorebookKeywordDetectionMode {
     LatestUserMessage,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LorebookKeywordMatchMode {
+    #[default]
+    Literal,
+    Regex,
+}
+
+impl LorebookKeywordMatchMode {
+    fn from_db_value(value: Option<String>) -> Self {
+        match value.as_deref() {
+            Some("regex") => Self::Regex,
+            _ => Self::Literal,
+        }
+    }
+
+    fn as_db_value(self) -> &'static str {
+        match self {
+            Self::Literal => "literal",
+            Self::Regex => "regex",
+        }
+    }
+}
+
 impl LorebookKeywordDetectionMode {
     pub(crate) fn from_db_value(value: Option<String>) -> Self {
         match value.as_deref() {
@@ -66,6 +90,8 @@ pub struct LorebookEntry {
     pub always_active: bool,
     pub keywords: Vec<String>,
     pub case_sensitive: bool,
+    #[serde(default)]
+    pub keyword_match_mode: LorebookKeywordMatchMode,
     pub content: String,
     pub priority: i32,
     pub display_order: i32,
@@ -157,11 +183,12 @@ impl LorebookEntry {
             always_active: row.get::<_, i32>(4)? != 0,
             keywords,
             case_sensitive: row.get::<_, i32>(6)? != 0,
-            content: row.get(7)?,
-            priority: row.get(8)?,
-            display_order: row.get(9)?,
-            created_at: row.get(10)?,
-            updated_at: row.get(11)?,
+            keyword_match_mode: LorebookKeywordMatchMode::from_db_value(row.get(7)?),
+            content: row.get(8)?,
+            priority: row.get(9)?,
+            display_order: row.get(10)?,
+            created_at: row.get(11)?,
+            updated_at: row.get(12)?,
         })
     }
 }
@@ -375,7 +402,7 @@ pub fn get_lorebook_entries(
         .prepare(
             r#"
             SELECT id, lorebook_id, title, enabled, always_active, keywords,
-                   case_sensitive, content, priority, display_order,
+                   case_sensitive, keyword_match_mode, content, priority, display_order,
                    created_at, updated_at
             FROM lorebook_entries
             WHERE lorebook_id = ?1
@@ -466,7 +493,7 @@ pub fn get_lorebook_entry(
     conn.query_row(
         r#"
         SELECT id, lorebook_id, title, enabled, always_active, keywords,
-               case_sensitive, content, priority, display_order,
+               case_sensitive, keyword_match_mode, content, priority, display_order,
                created_at, updated_at
         FROM lorebook_entries
         WHERE id = ?1
@@ -488,6 +515,17 @@ pub fn upsert_lorebook_entry(
     conn: &DbConnection,
     entry: &LorebookEntry,
 ) -> Result<LorebookEntry, String> {
+    if entry.keyword_match_mode == LorebookKeywordMatchMode::Regex {
+        for keyword in &entry.keywords {
+            regex::RegexBuilder::new(keyword)
+                .case_insensitive(!entry.case_sensitive)
+                .build()
+                .map_err(|error| {
+                    format!("Invalid lorebook regular expression `{keyword}`: {error}")
+                })?;
+        }
+    }
+
     let keywords_json = serde_json::to_string(&entry.keywords).map_err(|e| {
         crate::utils::err_msg(
             module_path!(),
@@ -519,8 +557,8 @@ pub fn upsert_lorebook_entry(
             r#"
             UPDATE lorebook_entries
             SET lorebook_id = ?2, title = ?3, enabled = ?4, always_active = ?5, keywords = ?6,
-                case_sensitive = ?7, content = ?8, priority = ?9, display_order = ?10,
-                updated_at = ?11
+                case_sensitive = ?7, keyword_match_mode = ?8, content = ?9, priority = ?10, display_order = ?11,
+                updated_at = ?12
             WHERE id = ?1
             "#,
             params![
@@ -531,6 +569,7 @@ pub fn upsert_lorebook_entry(
                 entry.always_active as i32,
                 keywords_json,
                 entry.case_sensitive as i32,
+                entry.keyword_match_mode.as_db_value(),
                 entry.content,
                 entry.priority,
                 entry.display_order,
@@ -549,9 +588,9 @@ pub fn upsert_lorebook_entry(
             r#"
             INSERT INTO lorebook_entries (
               id, lorebook_id, title, enabled, always_active, keywords,
-              case_sensitive, content, priority, display_order,
+              case_sensitive, keyword_match_mode, content, priority, display_order,
               created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             "#,
             params![
                 entry.id,
@@ -561,6 +600,7 @@ pub fn upsert_lorebook_entry(
                 entry.always_active as i32,
                 keywords_json,
                 entry.case_sensitive as i32,
+                entry.keyword_match_mode.as_db_value(),
                 entry.content,
                 entry.priority,
                 entry.display_order,
@@ -714,6 +754,7 @@ fn parse_world_info_entries(entries_value: &JsonValue) -> Vec<LorebookEntry> {
                     .get("case_sensitive")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
+                keyword_match_mode: LorebookKeywordMatchMode::Literal,
                 content,
                 priority: number_to_i32(obj.get("priority"))
                     .or_else(|| number_to_i32(obj.get("order")))
@@ -887,6 +928,7 @@ pub fn lorebook_entry_create_blank(
         always_active: false,
         keywords: vec![],
         case_sensitive: false,
+        keyword_match_mode: LorebookKeywordMatchMode::Literal,
         content: String::new(),
         priority: 0,
         display_order: max_order + 1,

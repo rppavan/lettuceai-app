@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Archive, ArchiveRestore, Edit3, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Copy, Download, Edit3, Trash2 } from "lucide-react";
 
 import { useI18n } from "../../../../../core/i18n/context";
 import type { GroupSessionPreview, Character } from "../../../../../core/storage/schemas";
@@ -27,6 +27,41 @@ const CharacterMiniAvatar = memo(({ character }: { character: Character }) => {
 
 CharacterMiniAvatar.displayName = "CharacterMiniAvatar";
 
+function IconAction({
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+  danger = false,
+}: {
+  icon: typeof Copy;
+  label: string;
+  onClick: () => void;
+  disabled: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className={cn(
+        "rounded-lg p-2 transition-colors",
+        danger
+          ? "text-fg/35 hover:bg-danger/10 hover:text-danger"
+          : "text-fg/45 hover:bg-fg/6 hover:text-fg/75",
+        disabled && "opacity-50",
+      )}
+    >
+      <Icon size={14} />
+    </button>
+  );
+}
+
 export function SessionCard({
   session,
   characters,
@@ -36,6 +71,7 @@ export function SessionCard({
   onArchive,
   onUnarchive,
   onDuplicate,
+  onExport,
   isBusy,
   isArchived = false,
 }: {
@@ -47,6 +83,7 @@ export function SessionCard({
   onArchive?: () => void;
   onUnarchive?: () => void;
   onDuplicate: () => void;
+  onExport?: () => void;
   isBusy: boolean;
   isArchived?: boolean;
 }) {
@@ -71,42 +108,30 @@ export function SessionCard({
     .map((id) => characters.find((c) => c.id === id))
     .filter(Boolean) as Character[];
 
-  const characterNames = session.characterIds
-    .map((id) => characters.find((c) => c.id === id)?.name || "Unknown")
-    .slice(0, 3)
-    .join(", ");
-
-  const extraCount = session.characterIds.length - 3;
-  const characterSummary =
-    extraCount > 0 ? `${characterNames} +${extraCount} more` : characterNames;
-
   return (
     <div
       className={cn(
-        "border border-fg/10 bg-fg/5 overflow-hidden",
+        "group overflow-hidden border transition-colors",
         radius.lg,
-        isArchived && "border-warning/20 bg-warning/5",
+        "border-fg/8 bg-fg/3 hover:border-fg/12 hover:bg-fg/4",
+        isArchived && "border-amber-400/20 bg-amber-400/5",
       )}
     >
       <button
         onClick={onSelect}
         disabled={isBusy || isRenaming}
-        className="w-full p-4 text-left disabled:opacity-50 active:bg-fg/10 transition-colors"
+        className="w-full px-4 py-3 text-left disabled:opacity-50 transition-colors"
       >
         <div className="flex items-start gap-3">
-          <div className="relative h-12 w-14 shrink-0">
-            {avatarCharacters.map((char, index) => (
+          <div className="flex shrink-0 -space-x-2 pt-0.5">
+            {avatarCharacters.map((char) => (
               <div
                 key={char.id}
                 className={cn(
-                  "absolute h-8 w-8 overflow-hidden rounded-full",
-                  "border-2 border-surface",
+                  "h-7 w-7 overflow-hidden rounded-full",
+                  "ring-2 ring-surface",
                   "bg-linear-to-br from-fg/8 to-fg/4",
                 )}
-                style={{
-                  left: `${index * 10}px`,
-                  zIndex: 3 - index,
-                }}
               >
                 <CharacterMiniAvatar character={char} />
               </div>
@@ -114,54 +139,47 @@ export function SessionCard({
             {session.characterIds.length > 3 && (
               <div
                 className={cn(
-                  "absolute h-8 w-8 overflow-hidden rounded-full",
-                  "border-2 border-surface",
-                  "bg-fg/10",
-                  "flex items-center justify-center",
+                  "flex h-7 w-7 items-center justify-center rounded-full",
+                  "ring-2 ring-surface bg-fg/10",
+                  "text-[10px] font-semibold text-fg/60",
                 )}
-                style={{
-                  left: `${3 * 10}px`,
-                  zIndex: 0,
-                }}
               >
-                <span className="text-[10px] font-medium text-fg/60">
-                  +{session.characterIds.length - 3}
-                </span>
+                +{session.characterIds.length - 3}
               </div>
             )}
           </div>
 
-          <div className="flex-1 min-w-0">
-            <h3
-              className={cn(typography.h3.size, typography.h3.weight, "text-fg mb-1 truncate")}
-            >
-              {session.name}
-            </h3>
-
-            <p className={cn(typography.caption.size, "text-fg/40 truncate mb-1")}>
-              {characterSummary}
-            </p>
-
-            <p className={cn(typography.bodySmall.size, "text-fg/50 mb-2")}>
-              {formatTimeAgo(session.updatedAt)} • {t("groupChats.session.messageCount", { count: session.messageCount })}
-            </p>
-
-            {session.lastMessage && (
+          <div className="min-w-0 flex-1">
+            <div className="mb-1 flex items-center gap-2">
+              <h3 className={cn(typography.bodySmall.size, "truncate font-semibold text-fg/92")}>
+                {session.name}
+              </h3>
+              {isArchived ? (
+                <span className="inline-flex shrink-0 items-center rounded-md border border-amber-400/25 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-200/80">
+                  {t("chats.history.archivedBadge")}
+                </span>
+              ) : null}
+            </div>
+            {session.lastMessage ? (
               <p
-                className={cn(
-                  typography.bodySmall.size,
-                  "text-fg/70 line-clamp-2 leading-relaxed",
-                )}
+                className={cn(typography.bodySmall.size, "line-clamp-2 leading-relaxed text-fg/58")}
               >
                 {session.lastMessage}
               </p>
+            ) : (
+              <p className={cn(typography.bodySmall.size, "text-fg/32")}>
+                {t("groupChats.list.emptyChatPreview")}
+              </p>
             )}
           </div>
+          <span className={cn(typography.caption.size, "shrink-0 pt-0.5 text-fg/35")}>
+            {formatTimeAgo(session.updatedAt)}
+          </span>
         </div>
       </button>
 
-      {isRenaming && (
-        <div className="px-4 pb-3 border-t border-fg/5 pt-3">
+      {isRenaming ? (
+        <div className="border-t border-fg/8 px-4 pb-3 pt-3">
           <input
             type="text"
             value={editTitle}
@@ -174,7 +192,7 @@ export function SessionCard({
             className={cn(
               "w-full px-3 py-2 bg-fg/10 border border-fg/20 text-fg mb-2",
               radius.md,
-              typography.body.size,
+              typography.bodySmall.size,
               "focus:outline-none focus:border-info/60",
             )}
             placeholder={t("groupChats.session.chatTitlePlaceholder")}
@@ -186,7 +204,7 @@ export function SessionCard({
               className={cn(
                 "flex-1 px-3 py-2 border border-info/40 bg-info/20 text-info",
                 radius.md,
-                typography.bodySmall.size,
+                typography.caption.size,
                 "active:scale-95 disabled:opacity-50 transition-all",
               )}
             >
@@ -197,7 +215,7 @@ export function SessionCard({
               className={cn(
                 "flex-1 px-3 py-2 border border-fg/10 bg-fg/5 text-fg/60",
                 radius.md,
-                typography.bodySmall.size,
+                typography.caption.size,
                 "active:scale-95 transition-all",
               )}
             >
@@ -205,78 +223,59 @@ export function SessionCard({
             </button>
           </div>
         </div>
-      )}
-
-      {!isRenaming && (
-        <div className="px-4 pb-3 border-t border-fg/5 pt-3 flex flex-wrap gap-2">
-          <button
-            onClick={onDuplicate}
-            disabled={isBusy}
-            className={cn(
-              "flex items-center gap-2 px-3 py-2 border border-fg/10 bg-fg/5 text-fg/60",
-              radius.md,
-              typography.bodySmall.size,
-              "active:scale-95 active:bg-accent/10 active:text-accent/80 active:border-accent/40 disabled:opacity-50 transition-all",
-            )}
-          >
-            <Plus size={14} />
-            {t("groupChats.session.newChat")}
-          </button>
-          <button
-            onClick={() => setIsRenaming(true)}
-            disabled={isBusy}
-            className={cn(
-              "flex items-center gap-2 px-3 py-2 border border-fg/10 bg-fg/5 text-fg/60",
-              radius.md,
-              typography.bodySmall.size,
-              "active:scale-95 active:bg-info/10 active:text-info active:border-info/40 disabled:opacity-50 transition-all",
-            )}
-          >
-            <Edit3 size={14} />
-            {t("groupChats.session.rename")}
-          </button>
-          {isArchived ? (
-            <button
-              onClick={onUnarchive}
+      ) : (
+        <div className="flex items-center justify-between gap-3 border-t border-fg/8 px-3 py-1.5">
+          <span className={cn(typography.caption.size, "text-fg/38")}>
+            {t("groupChats.session.messageCount", {
+              count: session.messageCount.toLocaleString(),
+            })}
+          </span>
+          <div className="flex items-center gap-1">
+            <IconAction
+              icon={Copy}
+              label={t("groupChats.session.duplicate")}
+              onClick={onDuplicate}
               disabled={isBusy}
-              className={cn(
-                "flex items-center gap-2 px-3 py-2 border border-fg/10 bg-fg/5 text-fg/60",
-                radius.md,
-                typography.bodySmall.size,
-                "active:scale-95 active:bg-warning/10 active:text-warning active:border-warning/40 disabled:opacity-50 transition-all",
-              )}
-            >
-              <ArchiveRestore size={14} />
-              {t("groupChats.session.unarchive")}
-            </button>
-          ) : (
-            <button
-              onClick={onArchive}
-              disabled={isBusy}
-              className={cn(
-                "flex items-center gap-2 px-3 py-2 border border-fg/10 bg-fg/5 text-fg/60",
-                radius.md,
-                typography.bodySmall.size,
-                "active:scale-95 active:bg-warning/10 active:text-warning active:border-warning/40 disabled:opacity-50 transition-all",
-              )}
-            >
-              <Archive size={14} />
-              {t("groupChats.session.archive")}
-            </button>
-          )}
-          <button
-            onClick={onDelete}
-            disabled={isBusy}
-            className={cn(
-              "flex items-center gap-2 px-3 py-2 border border-fg/10 bg-fg/5 text-fg/60",
-              radius.md,
-              typography.bodySmall.size,
-              "active:scale-95 active:bg-danger/10 active:text-danger active:border-danger/40 disabled:opacity-50 transition-all",
+            />
+            {onExport && (
+              <IconAction
+                icon={Download}
+                label={t("groupChats.session.export")}
+                onClick={onExport}
+                disabled={isBusy}
+              />
             )}
-          >
-            <Trash2 size={14} />
-            {t("common.buttons.delete")}
-          </button>
+            <IconAction
+              icon={Edit3}
+              label={t("groupChats.session.rename")}
+              onClick={() => setIsRenaming(true)}
+              disabled={isBusy}
+            />
+            {isArchived
+              ? onUnarchive && (
+                  <IconAction
+                    icon={ArchiveRestore}
+                    label={t("groupChats.session.unarchive")}
+                    onClick={onUnarchive}
+                    disabled={isBusy}
+                  />
+                )
+              : onArchive && (
+                  <IconAction
+                    icon={Archive}
+                    label={t("groupChats.session.archive")}
+                    onClick={onArchive}
+                    disabled={isBusy}
+                  />
+                )}
+            <IconAction
+              icon={Trash2}
+              label={t("common.buttons.delete")}
+              onClick={onDelete}
+              disabled={isBusy}
+              danger
+            />
+          </div>
         </div>
       )}
     </div>

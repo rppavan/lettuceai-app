@@ -1,32 +1,27 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { storageBridge } from "../../../../core/storage/files";
 import { listCharacters } from "../../../../core/storage/repo";
-import type { GroupPreview, GroupSessionPreview, Character } from "../../../../core/storage/schemas";
+import type { GroupPreview, Character } from "../../../../core/storage/schemas";
+import { toast } from "../../../components/toast";
+import { useI18n } from "../../../../core/i18n/context";
 
 export function useGroupChatsListController() {
+  const { t } = useI18n();
   const [groups, setGroups] = useState<GroupPreview[]>([]);
-  const [sessions, setSessions] = useState<GroupSessionPreview[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedGroup, setSelectedGroup] = useState<GroupPreview | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
-  const [selectedSession, setSelectedSession] = useState<GroupSessionPreview | null>(null);
-  const [showSessionDeleteConfirm, setShowSessionDeleteConfirm] = useState(false);
-  const [deletingSession, setDeletingSession] = useState(false);
+  const [openingGroupId, setOpeningGroupId] = useState<string | null>(null);
+  const openingRef = useRef(false);
 
   const loadData = useCallback(async () => {
     try {
-      const [items, allSessions, chars] = await Promise.all([
-        storageBridge.groupsList(),
-        storageBridge.groupSessionsListAll(),
-        listCharacters(),
-      ]);
+      const [items, chars] = await Promise.all([storageBridge.groupsList(), listCharacters()]);
       setGroups(items);
-      setSessions(allSessions);
       setCharacters(chars);
     } catch (err) {
       console.error("Failed to load groups:", err);
@@ -45,7 +40,6 @@ export function useGroupChatsListController() {
     let unlisten: UnlistenFn | null = null;
     (async () => {
       unlisten = await listen("database-reloaded", () => {
-        console.log("Database reloaded, refreshing group sessions...");
         void loadData();
       });
     })();
@@ -64,64 +58,86 @@ export function useGroupChatsListController() {
       await loadData();
       setShowDeleteConfirm(false);
       setSelectedGroup(null);
-      setExpandedGroupId((current) => (current === selectedGroup.id ? null : current));
     } catch (err) {
       console.error("Failed to delete group:", err);
+      toast.error(t("groupChats.list.deleteGroupFailed"));
     } finally {
       setDeleting(false);
     }
-  }, [selectedGroup, loadData]);
+  }, [selectedGroup, loadData, t]);
 
-  const handleToggleExpand = useCallback((groupId: string) => {
-    setExpandedGroupId((current) => (current === groupId ? null : groupId));
+  const resolveLatestSessionId = useCallback(async (group: GroupPreview) => {
+    if (!group.latestSessionId) return null;
+    const existing = await storageBridge.groupSessionGet(group.latestSessionId);
+    if (existing) return existing.id as string;
+
+    const freshGroups: GroupPreview[] = await storageBridge.groupsList();
+    setGroups(freshGroups);
+    const fresh = freshGroups.find((item) => item.id === group.id);
+    if (fresh?.latestSessionId && fresh.latestSessionId !== group.latestSessionId) {
+      const freshSession = await storageBridge.groupSessionGet(fresh.latestSessionId);
+      if (freshSession) return freshSession.id as string;
+    }
+    return null;
   }, []);
 
-  const handleSessionDelete = useCallback(async () => {
-    if (!selectedSession) return;
+  const handleOpenGroup = useCallback(
+    async (group: GroupPreview): Promise<string | null> => {
+      if (openingRef.current) return null;
+      openingRef.current = true;
+      setOpeningGroupId(group.id);
+      try {
+        const existingId = await resolveLatestSessionId(group);
+        if (existingId) return existingId;
+        const session = await storageBridge.groupCreateSession(group.id);
+        await loadData();
+        return session.id as string;
+      } catch (err) {
+        console.error("Failed to open group chat:", err);
+        toast.error(t("groupChats.list.startChatFailed"));
+        await loadData();
+        return null;
+      } finally {
+        openingRef.current = false;
+        setOpeningGroupId(null);
+      }
+    },
+    [resolveLatestSessionId, loadData, t],
+  );
 
-    try {
-      setDeletingSession(true);
-      await storageBridge.groupSessionDelete(selectedSession.id);
-      await loadData();
-      setShowSessionDeleteConfirm(false);
-      setSelectedSession(null);
-    } catch (err) {
-      console.error("Failed to delete session:", err);
-    } finally {
-      setDeletingSession(false);
-    }
-  }, [selectedSession, loadData]);
-
-  const handleNewChat = useCallback(async (groupId: string) => {
-    try {
-      const session = await storageBridge.groupCreateSession(groupId);
-      await loadData();
-      return session;
-    } catch (err) {
-      console.error("Failed to create new group chat:", err);
-      return null;
-    }
-  }, [loadData]);
+  const handleNewChat = useCallback(
+    async (groupId: string): Promise<string | null> => {
+      if (openingRef.current) return null;
+      openingRef.current = true;
+      setOpeningGroupId(groupId);
+      try {
+        const session = await storageBridge.groupCreateSession(groupId);
+        await loadData();
+        return session.id as string;
+      } catch (err) {
+        console.error("Failed to create new group chat:", err);
+        toast.error(t("groupChats.list.startChatFailed"));
+        return null;
+      } finally {
+        openingRef.current = false;
+        setOpeningGroupId(null);
+      }
+    },
+    [loadData, t],
+  );
 
   return {
     groups,
-    sessions,
     characters,
     loading,
     selectedGroup,
     showDeleteConfirm,
     deleting,
-    expandedGroupId,
+    openingGroupId,
     setSelectedGroup,
     setShowDeleteConfirm,
     handleDelete,
-    handleToggleExpand,
+    handleOpenGroup,
     handleNewChat,
-    selectedSession,
-    setSelectedSession,
-    showSessionDeleteConfirm,
-    setShowSessionDeleteConfirm,
-    deletingSession,
-    handleSessionDelete,
   } as const;
 }

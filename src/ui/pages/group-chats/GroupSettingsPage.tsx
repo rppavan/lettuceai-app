@@ -151,12 +151,14 @@ export function GroupSettingsPage() {
   if (error || !group) {
     return (
       <div className="flex h-full flex-col items-center justify-center text-fg p-8">
-        <p className="text-lg font-medium text-danger">{error || "Group not found"}</p>
+        <p className="text-lg font-medium text-danger">
+          {error || t("groupChats.groupSettingsController.notFound")}
+        </p>
         <button
           onClick={() => navigate(Routes.groupChats)}
           className="mt-4 rounded-xl border border-fg/10 bg-fg/5 px-4 py-2 text-sm"
         >
-          Back to Groups
+          {t("groupChats.groupSettingsExtra.backToGroups")}
         </button>
       </div>
     );
@@ -369,6 +371,10 @@ export function GroupSettingsPage() {
               </div>
             </div>
           </section>
+
+          <p className={cn(typography.caption.size, "px-1 text-fg/45")}>
+            {t("groupChats.groupSettings.defaultsHint")}
+          </p>
 
           {/* Quick Settings */}
           <section className={spacing.item}>

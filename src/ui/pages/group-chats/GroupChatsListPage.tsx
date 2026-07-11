@@ -1,68 +1,85 @@
-import { MessageCircle, Trash2, Settings } from "lucide-react";
+import { useEffect, useState } from "react";
+import { History, Plus, Settings, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { useI18n } from "../../../core/i18n/context";
+import {
+  getGroupChatsViewMode,
+  getGroupChatsViewModeCached,
+  setGroupChatsViewMode,
+} from "../../../core/storage/appState";
+import type { GroupChatsViewMode } from "../../../core/storage/schemas";
 import { BottomMenu } from "../../components";
 import { Routes } from "../../navigation";
 import { useGroupChatsListController } from "./hooks/useGroupChatsListController";
-import {
-  GroupSessionList,
-  GroupSessionSkeleton,
-  EmptyState,
-} from "./components/list/GroupSessionList";
+import { GroupList, GroupListSkeleton, EmptyState } from "./components/list/GroupList";
 
 export function GroupChatsListPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const [viewMode, setViewMode] = useState<GroupChatsViewMode>(
+    () => getGroupChatsViewModeCached() ?? "classic",
+  );
+
+  useEffect(() => {
+    getGroupChatsViewMode()
+      .then((mode) => setViewMode(mode))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    (window as any).__groupChatsViewMode = viewMode;
+    window.dispatchEvent(new CustomEvent("groupChats:viewModeChanged"));
+  }, [viewMode]);
+
+  useEffect(() => {
+    const handler = () => {
+      setViewMode((prev) => {
+        const next: GroupChatsViewMode = prev === "classic" ? "detailed" : "classic";
+        setGroupChatsViewMode(next).catch(() => {});
+        return next;
+      });
+    };
+    window.addEventListener("groupChats:cycleViewMode", handler);
+    return () => window.removeEventListener("groupChats:cycleViewMode", handler);
+  }, []);
   const {
     groups,
-    sessions,
     characters,
     loading,
     selectedGroup,
     showDeleteConfirm,
     deleting,
-    expandedGroupId,
+    openingGroupId,
     setSelectedGroup,
     setShowDeleteConfirm,
     handleDelete,
-    handleToggleExpand,
+    handleOpenGroup,
     handleNewChat,
-    selectedSession,
-    setSelectedSession,
-    showSessionDeleteConfirm,
-    setShowSessionDeleteConfirm,
-    deletingSession,
-    handleSessionDelete,
   } = useGroupChatsListController();
 
-  const openGroupSettings = (item: { id: string }) => {
-    navigate(Routes.groupSettings(item.id));
-    setSelectedGroup(null);
-  };
+  const menuActionClass =
+    "flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-fg/5 px-4 py-3 text-left transition hover:border-fg/20 hover:bg-fg/10";
+  const menuIconClass =
+    "flex h-8 w-8 items-center justify-center rounded-full border border-fg/10 bg-fg/10";
 
   return (
     <div className="flex h-full flex-col pb-6 text-fg/80">
       <main className="flex-1 overflow-y-auto px-1 lg:px-8 pt-4 mx-auto w-full max-w-md lg:max-w-none">
         {loading ? (
-          <GroupSessionSkeleton />
+          <GroupListSkeleton />
         ) : groups.length ? (
-          <GroupSessionList
+          <GroupList
             groups={groups}
-            allSessions={sessions}
             characters={characters}
-            expandedGroupId={expandedGroupId}
-            onToggleExpand={(item) => handleToggleExpand(item.id)}
-            onSelectSession={(session) => navigate(Routes.groupChat(session.id))}
-            onNewChat={async (item) => {
-              const session = await handleNewChat(item.id);
-              if (session) navigate(Routes.groupChat(session.id));
+            viewMode={viewMode}
+            openingGroupId={openingGroupId}
+            onOpenGroup={(group) => {
+              void handleOpenGroup(group).then((sessionId) => {
+                if (sessionId) navigate(Routes.groupChat(sessionId));
+              });
             }}
-            onLongPress={(item) => {
-              const selected = groups.find((group) => group.id === item.id);
-              if (selected) setSelectedGroup(selected);
-            }}
-            onSessionLongPress={(session) => setSelectedSession(session)}
+            onLongPress={(group) => setSelectedGroup(group)}
           />
         ) : (
           <EmptyState />
@@ -70,7 +87,7 @@ export function GroupChatsListPage() {
       </main>
 
       <BottomMenu
-        isOpen={Boolean(selectedGroup)}
+        isOpen={Boolean(selectedGroup) && !showDeleteConfirm}
         onClose={() => setSelectedGroup(null)}
         includeExitIcon={false}
         title={selectedGroup?.name || ""}
@@ -78,13 +95,49 @@ export function GroupChatsListPage() {
         {selectedGroup && (
           <div className="space-y-2">
             <button
-              onClick={() => openGroupSettings(selectedGroup)}
-              className="flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-fg/5 px-4 py-3 text-left transition hover:border-fg/20 hover:bg-fg/10"
+              onClick={() => {
+                const group = selectedGroup;
+                setSelectedGroup(null);
+                void handleNewChat(group.id).then((sessionId) => {
+                  if (sessionId) navigate(Routes.groupChat(sessionId));
+                });
+              }}
+              className={menuActionClass}
             >
-              <div className="flex h-8 w-8 items-center justify-center rounded-full border border-fg/10 bg-fg/10">
+              <div className={menuIconClass}>
+                <Plus className="h-4 w-4 text-fg/70" />
+              </div>
+              <span className="text-sm font-medium text-fg">{t("groupChats.list.newChat")}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                navigate(Routes.groupChatHistory(selectedGroup.id));
+                setSelectedGroup(null);
+              }}
+              className={menuActionClass}
+            >
+              <div className={menuIconClass}>
+                <History className="h-4 w-4 text-fg/70" />
+              </div>
+              <span className="text-sm font-medium text-fg">
+                {t("groupChats.list.chatHistory")}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                navigate(Routes.groupSettings(selectedGroup.id));
+                setSelectedGroup(null);
+              }}
+              className={menuActionClass}
+            >
+              <div className={menuIconClass}>
                 <Settings className="h-4 w-4 text-fg/70" />
               </div>
-              <span className="text-sm font-medium text-fg">{t("groupChats.list.editGroup")}</span>
+              <span className="text-sm font-medium text-fg">
+                {t("groupChats.list.groupSettings")}
+              </span>
             </button>
 
             <button
@@ -96,7 +149,9 @@ export function GroupChatsListPage() {
               <div className="flex h-8 w-8 items-center justify-center rounded-full border border-danger/30 bg-danger/20">
                 <Trash2 className="h-4 w-4 text-danger" />
               </div>
-              <span className="text-sm font-medium text-danger">{t("groupChats.list.deleteGroup")}</span>
+              <span className="text-sm font-medium text-danger">
+                {t("groupChats.list.deleteGroup")}
+              </span>
             </button>
           </div>
         )}
@@ -126,82 +181,7 @@ export function GroupChatsListPage() {
               disabled={deleting}
               className="flex-1 rounded-xl border border-danger/30 bg-danger/20 py-3 text-sm font-medium text-danger transition hover:bg-danger/30 disabled:opacity-50"
             >
-              {deleting ? t("common.buttons.deleting") : t("common.buttons.delete")}
-            </button>
-          </div>
-        </div>
-      </BottomMenu>
-
-      <BottomMenu
-        isOpen={Boolean(selectedSession) && !showSessionDeleteConfirm}
-        onClose={() => setSelectedSession(null)}
-        includeExitIcon={false}
-        title={selectedSession?.name || ""}
-      >
-        {selectedSession && (
-          <div className="space-y-2">
-            <button
-              onClick={() => {
-                navigate(Routes.groupChatSettings(selectedSession.id));
-                setSelectedSession(null);
-              }}
-              className="flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-fg/5 px-4 py-3 text-left transition hover:border-fg/20 hover:bg-fg/10"
-            >
-              <div className="flex h-8 w-8 items-center justify-center rounded-full border border-fg/10 bg-fg/10">
-                <Settings className="h-4 w-4 text-fg/70" />
-              </div>
-              <span className="text-sm font-medium text-fg">{t("groupChats.list.chatSettings")}</span>
-            </button>
-
-            <button
-              onClick={() => {
-                navigate(Routes.groupChat(selectedSession.id));
-                setSelectedSession(null);
-              }}
-              className="flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-fg/5 px-4 py-3 text-left transition hover:border-fg/20 hover:bg-fg/10"
-            >
-              <div className="flex h-8 w-8 items-center justify-center rounded-full border border-fg/10 bg-fg/10">
-                <MessageCircle className="h-4 w-4 text-fg/70" />
-              </div>
-              <span className="text-sm font-medium text-fg">{t("groupChats.list.openChat")}</span>
-            </button>
-
-            <button
-              onClick={() => setShowSessionDeleteConfirm(true)}
-              className="flex w-full items-center gap-3 rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-left transition hover:border-danger/50 hover:bg-danger/20"
-            >
-              <div className="flex h-8 w-8 items-center justify-center rounded-full border border-danger/30 bg-danger/20">
-                <Trash2 className="h-4 w-4 text-danger" />
-              </div>
-              <span className="text-sm font-medium text-danger">{t("groupChats.history.deleteSessionButton")}</span>
-            </button>
-          </div>
-        )}
-      </BottomMenu>
-
-      <BottomMenu
-        isOpen={showSessionDeleteConfirm}
-        onClose={() => setShowSessionDeleteConfirm(false)}
-        title={t("groupChats.history.deleteSessionTitle")}
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-fg/70">
-            {t("groupChats.history.deleteSessionDesc")}
-          </p>
-          <div className="flex gap-3">
-            <button
-              onClick={() => setShowSessionDeleteConfirm(false)}
-              disabled={deletingSession}
-              className="flex-1 rounded-xl border border-fg/10 bg-fg/5 py-3 text-sm font-medium text-fg transition hover:border-fg/20 hover:bg-fg/10 disabled:opacity-50"
-            >
-              {t("common.buttons.cancel")}
-            </button>
-            <button
-              onClick={handleSessionDelete}
-              disabled={deletingSession}
-              className="flex-1 rounded-xl border border-danger/30 bg-danger/20 py-3 text-sm font-medium text-danger transition hover:bg-danger/30 disabled:opacity-50"
-            >
-              {deletingSession ? t("common.buttons.deleting") : t("common.buttons.delete")}
+              {deleting ? t("common.buttons.deleting") : t("groupChats.list.deleteGroup")}
             </button>
           </div>
         </div>

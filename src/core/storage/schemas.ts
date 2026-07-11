@@ -2568,8 +2568,30 @@ export const GroupSessionSchema = z.object({
   memoryStatus: z.string().nullish().optional().default("idle"),
   memoryError: z.string().nullish().optional(),
   memoryProgressStep: z.number().int().nullish().optional(),
+  configOverrides: z.record(z.string(), z.unknown()).default({ version: 1 }),
 });
 export type GroupSession = z.infer<typeof GroupSessionSchema>;
+
+export const GROUP_SESSION_OVERRIDE_KEYS = [
+  "characterIds",
+  "mutedCharacterIds",
+  "personaId",
+  "chatType",
+  "startingScene",
+  "backgroundImagePath",
+  "lorebookIds",
+  "disableCharacterLorebooks",
+  "speakerSelectionMethod",
+  "memoryType",
+] as const;
+export type GroupSessionOverrideKey = (typeof GROUP_SESSION_OVERRIDE_KEYS)[number];
+
+export function hasGroupSessionOverride(
+  session: Pick<GroupSession, "configOverrides">,
+  key: GroupSessionOverrideKey,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(session.configOverrides ?? {}, key);
+}
 
 export const GroupSchema = z.object({
   id: z.uuid(),
@@ -2600,6 +2622,11 @@ export const GroupPreviewSchema = z.object({
   messageCount: z.number().int(),
   archived: z.boolean().default(false),
   chatType: z.enum(["conversation", "roleplay"]).default("conversation"),
+  latestSessionId: z.uuid().nullish(),
+  latestSessionUpdatedAt: z.number().int().nullish(),
+  sessionCount: z.number().int().default(0),
+  latestSessionMessage: z.string().nullish(),
+  latestSessionMessageCount: z.number().int().default(0),
 });
 export type GroupPreview = z.infer<typeof GroupPreviewSchema>;
 
@@ -2627,6 +2654,8 @@ export const GroupMessageVariantSchema = z.object({
   reasoning: z.string().nullish(),
   selectionReasoning: z.string().nullish(),
   modelId: z.uuid().nullish(),
+  attachments: z.array(ImageAttachmentSchema).default([]),
+  geminiContent: z.unknown().nullish(),
 });
 export type GroupMessageVariant = z.infer<typeof GroupMessageVariantSchema>;
 
@@ -2648,6 +2677,7 @@ export const GroupMessageSchema = z.object({
   reasoning: z.string().nullish(),
   selectionReasoning: z.string().nullish(),
   modelId: z.uuid().nullish(),
+  geminiContent: z.unknown().nullish(),
 });
 export type GroupMessage = z.infer<typeof GroupMessageSchema>;
 
@@ -2774,6 +2804,9 @@ export type CustomColorPreset = z.infer<typeof CustomColorPresetSchema>;
 export const ChatsViewModeSchema = z.enum(["hero", "gallery", "list"]);
 export type ChatsViewMode = z.infer<typeof ChatsViewModeSchema>;
 
+export const GroupChatsViewModeSchema = z.enum(["classic", "detailed"]);
+export type GroupChatsViewMode = z.infer<typeof GroupChatsViewModeSchema>;
+
 export const TrustedCertificateSchema = z.object({
   id: z.uuid(),
   name: z.string().min(1),
@@ -2798,6 +2831,7 @@ export const AppStateSchema = z.object({
   customColors: CustomColorsSchema.optional(),
   customColorPresets: z.array(CustomColorPresetSchema).default([]),
   chatsViewMode: ChatsViewModeSchema.default("hero"),
+  groupChatsViewMode: GroupChatsViewModeSchema.default("classic"),
   trustedCertificates: z.array(TrustedCertificateSchema).default([]),
   lastSeenAppVersion: z.string().optional(),
 });
@@ -3031,6 +3065,7 @@ export function createDefaultAppState(): AppState {
     settingsCardOpacity: 5,
     customColorPresets: [],
     chatsViewMode: "hero",
+    groupChatsViewMode: "classic",
     trustedCertificates: [],
   };
 }
@@ -3170,6 +3205,7 @@ export const LorebookEntrySchema = z.object({
   alwaysActive: z.boolean().default(false),
   keywords: z.array(z.string()).default([]),
   caseSensitive: z.boolean().default(false),
+  keywordMatchMode: z.enum(["literal", "regex"]).default("literal"),
   content: z.string(),
   priority: z.number().int().default(0),
   displayOrder: z.number().int().default(0),

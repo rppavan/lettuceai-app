@@ -1071,12 +1071,20 @@ export function CreationHelperPage() {
     }
   }, [session, navigate]);
 
-  const handleEditManually = useCallback(() => {
-    if (!session?.draft) return;
-    navigate("/create/character", {
-      state: { draftCharacter: session.draft },
-    });
-  }, [session, navigate]);
+  const handleEditManually = useCallback(async () => {
+    if (!session) return;
+    try {
+      const draft = await invoke<DraftCharacter>("creation_helper_complete", {
+        sessionId: session.id,
+      });
+      navigate("/create/character", {
+        state: { draftCharacter: draft },
+      });
+    } catch (err) {
+      console.error("Failed to prepare character draft:", err);
+      setError(resolveErrorMessage(err, t("characters.creationHelper.saveCharacterFailed")));
+    }
+  }, [session, navigate, resolveErrorMessage, t]);
 
   const handleSaveAndChat = useCallback(async () => {
     if (!session) return;

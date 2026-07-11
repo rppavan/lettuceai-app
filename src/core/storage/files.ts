@@ -847,6 +847,16 @@ export const storageBridge = {
       sessionId,
       authorNote,
     }).then((s) => JSON.parse(s)),
+  groupSessionUpdatePersona: (sessionId: string, personaId: string | null) =>
+    invoke<string>("group_session_update_persona", {
+      sessionId,
+      personaId,
+    }).then((s) => JSON.parse(s)),
+  groupSessionClearOverride: (sessionId: string, key: string) =>
+    invoke<string>("group_session_clear_config_override", {
+      sessionId,
+      key,
+    }).then((s) => JSON.parse(s)),
 
   // Group Participation
   groupParticipationStats: (sessionId: string) =>
@@ -894,12 +904,19 @@ export const storageBridge = {
   groupMessageCount: (sessionId: string) => invoke<number>("group_message_count", { sessionId }),
 
   // Group Chat (high-level operations)
-  groupChatSend: (sessionId: string, userMessage: string, stream?: boolean, requestId?: string) =>
+  groupChatSend: (
+    sessionId: string,
+    userMessage: string,
+    stream?: boolean,
+    requestId?: string,
+    attachments?: unknown[],
+  ) =>
     invoke<string>("group_chat_send", {
       sessionId,
       userMessage,
       stream: stream ?? true,
       requestId: requestId ?? null,
+      attachments: attachments ?? [],
     }).then((s) => JSON.parse(s)),
   groupChatAddUserMessage: (sessionId: string, userMessage: string) =>
     invoke<string>("group_chat_add_user_message", {
@@ -911,18 +928,28 @@ export const storageBridge = {
     messageId: string,
     forceCharacterId?: string | null,
     requestId?: string,
+    guidance?: string | null,
+    stream?: boolean,
   ) =>
     invoke<string>("group_chat_regenerate", {
       sessionId,
       messageId,
       forceCharacterId: forceCharacterId ?? null,
       requestId: requestId ?? null,
+      guidance: guidance ?? null,
+      stream: stream ?? true,
     }).then((s) => JSON.parse(s)),
-  groupChatContinue: (sessionId: string, forceCharacterId?: string | null, requestId?: string) =>
+  groupChatContinue: (
+    sessionId: string,
+    forceCharacterId?: string | null,
+    requestId?: string,
+    stream?: boolean,
+  ) =>
     invoke<string>("group_chat_continue", {
       sessionId,
       forceCharacterId: forceCharacterId ?? null,
       requestId: requestId ?? null,
+      stream: stream ?? true,
     }).then((s) => JSON.parse(s)),
   groupChatGetSelectionPrompt: (sessionId: string, userMessage: string) =>
     invoke<string>("group_chat_get_selection_prompt", { sessionId, userMessage }),

@@ -268,6 +268,10 @@ pub struct GroupCharacter {
     pub memory_type: String,
 }
 
+fn default_group_config_overrides_json() -> String {
+    "{\"version\":1}".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncLorebook {
     pub id: String,
@@ -287,11 +291,17 @@ pub struct SyncLorebookEntry {
     pub always_active: i64,
     pub keywords: String,
     pub case_sensitive: i64,
+    #[serde(default = "default_keyword_match_mode")]
+    pub keyword_match_mode: String,
     pub content: String,
     pub priority: i32,
     pub display_order: i32,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn default_keyword_match_mode() -> String {
+    "literal".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -715,6 +725,8 @@ pub struct GroupSession {
     pub speaker_selection_method: String,
     #[serde(default = "default_memory_type")]
     pub memory_type: String,
+    #[serde(default = "default_group_config_overrides_json")]
+    pub config_overrides: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -755,6 +767,10 @@ pub struct GroupMessage {
     pub reasoning: Option<String>,
     pub selection_reasoning: Option<String>,
     pub model_id: Option<String>,
+    #[serde(default)]
+    pub gemini_content: Option<String>,
+    #[serde(default)]
+    pub usage_json: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -776,4 +792,14 @@ pub struct GroupMessageVariant {
     pub reasoning: Option<String>,
     pub selection_reasoning: Option<String>,
     pub model_id: Option<String>,
+    #[serde(default = "default_json_array")]
+    pub attachments: String,
+    #[serde(default)]
+    pub gemini_content: Option<String>,
+    #[serde(default)]
+    pub usage_json: Option<String>,
+}
+
+fn default_json_array() -> String {
+    "[]".to_string()
 }

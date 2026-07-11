@@ -826,18 +826,26 @@ fn import_group(
         .and_then(|m| m.get("character_name"))
         .and_then(|v| v.as_str())
         .unwrap_or("Imported Group Chat");
+    let group_id = Uuid::new_v4().to_string();
+    let character_ids_json = serde_json::to_string(&unique_character_ids)
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    conn.execute(
+        "INSERT INTO group_characters (id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, lorebook_ids, disable_character_lorebooks, speaker_selection_method, memory_type) VALUES (?1, ?2, ?3, '[]', NULL, ?4, ?4, 0, 'conversation', '[]', 0, 'llm', 'manual')",
+        params![group_id, title, character_ids_json, now],
+    )
+    .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
     let none_str: Option<String> = None;
     conn.execute(
-        "INSERT INTO group_sessions (id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived,
+        "INSERT INTO group_sessions (id, group_character_id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived,
          chat_type, starting_scene, background_image_path, memories, memory_embeddings, memory_summary,
          memory_summary_token_count, memory_tool_events, speaker_selection_method)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             &new_session_id,
+            &group_id,
             title,
-            serde_json::to_string(&unique_character_ids)
-                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
+            character_ids_json,
             "[]",
             &none_str,
             now,

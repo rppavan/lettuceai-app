@@ -7,7 +7,7 @@ use crate::storage_manager::settings::{read_settings_typed, write_settings_typed
 use crate::utils::log_info;
 
 /// Current migration version
-pub const CURRENT_MIGRATION_VERSION: u32 = 77;
+pub const CURRENT_MIGRATION_VERSION: u32 = 79;
 
 pub fn run_migrations(app: &AppHandle) -> Result<(), String> {
     log_info(app, "migrations", "Starting migration check");
@@ -807,6 +807,26 @@ pub fn run_migrations(app: &AppHandle) -> Result<(), String> {
         );
         migrate_v76_to_v77(app)?;
         version = 77;
+    }
+
+    if version < 78 {
+        log_info(
+            app,
+            "migrations",
+            "Running migration v77 -> v78: Add group session overrides and response parity fields",
+        );
+        migrate_v77_to_v78(app)?;
+        version = 78;
+    }
+
+    if version < 79 {
+        log_info(
+            app,
+            "migrations",
+            "Running migration v78 -> v79: Ensure usage_json columns on group messages and variants",
+        );
+        migrate_v78_to_v79(app)?;
+        version = 79;
     }
 
     // Update the stored version
@@ -2321,6 +2341,7 @@ fn migrate_v19_to_v20(app: &AppHandle) -> Result<(), String> {
               always_active INTEGER NOT NULL DEFAULT 0,
               keywords TEXT NOT NULL DEFAULT '[]',
               case_sensitive INTEGER NOT NULL DEFAULT 0,
+              keyword_match_mode TEXT NOT NULL DEFAULT 'literal',
               content TEXT NOT NULL,
               priority INTEGER NOT NULL DEFAULT 0,
               display_order INTEGER NOT NULL DEFAULT 0,
@@ -2408,6 +2429,7 @@ fn migrate_v19_to_v20(app: &AppHandle) -> Result<(), String> {
           always_active INTEGER NOT NULL DEFAULT 0,
           keywords TEXT NOT NULL DEFAULT '[]',
           case_sensitive INTEGER NOT NULL DEFAULT 0,
+          keyword_match_mode TEXT NOT NULL DEFAULT 'literal',
           content TEXT NOT NULL,
           priority INTEGER NOT NULL DEFAULT 0,
           display_order INTEGER NOT NULL DEFAULT 0,
@@ -4089,15 +4111,137 @@ fn migrate_v75_to_v76(app: &AppHandle) -> Result<(), String> {
     let conn = crate::storage_manager::db::open_db(app)?;
 
     let _ = conn.execute("ALTER TABLE messages ADD COLUMN mtp_stats TEXT", []);
-    let _ = conn.execute(
-        "ALTER TABLE message_variants ADD COLUMN mtp_stats TEXT",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE message_variants ADD COLUMN mtp_stats TEXT", []);
     let _ = conn.execute("ALTER TABLE group_messages ADD COLUMN mtp_stats TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE group_message_variants ADD COLUMN mtp_stats TEXT",
         [],
     );
+    Ok(())
+}
+
+fn migrate_v78_to_v79(app: &AppHandle) -> Result<(), String> {
+    let conn = crate::storage_manager::db::open_db(app)?;
+    let _ = conn.execute("ALTER TABLE group_messages ADD COLUMN usage_json TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE group_message_variants ADD COLUMN usage_json TEXT",
+        [],
+    );
+    Ok(())
+}
+
+fn migrate_v77_to_v78(app: &AppHandle) -> Result<(), String> {
+    use rusqlite::params;
+
+    let conn = crate::storage_manager::db::open_db(app)?;
+    let _ = conn.execute(
+        "ALTER TABLE group_sessions ADD COLUMN config_overrides TEXT NOT NULL DEFAULT '{\"version\":1}'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE group_messages ADD COLUMN gemini_content TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE group_message_variants ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE group_message_variants ADD COLUMN gemini_content TEXT",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE group_messages ADD COLUMN usage_json TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE group_message_variants ADD COLUMN usage_json TEXT",
+        [],
+    );
+
+    let session_ids: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM group_sessions")
+            .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?
+    };
+
+    for session_id in session_ids {
+        let session: (Option<String>, String, String, Option<String>, String, Option<String>, Option<String>, String, i64, String, String) = conn
+            .query_row(
+                "SELECT group_character_id, character_ids, muted_character_ids, persona_id, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, speaker_selection_method, memory_type FROM group_sessions WHERE id = ?1",
+                params![session_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?)),
+            )
+            .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+
+        let group_id = if let Some(group_id) = session.0.clone() {
+            group_id
+        } else {
+            let group_id = uuid::Uuid::new_v4().to_string();
+            let now = crate::storage_manager::db::now_ms() as i64;
+            conn.execute(
+                "INSERT INTO group_characters (id, name, character_ids, muted_character_ids, persona_id, created_at, updated_at, archived, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, speaker_selection_method, memory_type) SELECT ?1, name, character_ids, muted_character_ids, persona_id, ?2, ?2, 0, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, speaker_selection_method, memory_type FROM group_sessions WHERE id = ?3",
+                params![group_id, now, session_id],
+            )
+            .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+            conn.execute(
+                "UPDATE group_sessions SET group_character_id = ?1 WHERE id = ?2",
+                params![group_id, session_id],
+            )
+            .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+            group_id
+        };
+
+        let profile: (String, String, Option<String>, String, Option<String>, Option<String>, String, i64, String, String) = conn
+            .query_row(
+                "SELECT character_ids, muted_character_ids, persona_id, chat_type, starting_scene, background_image_path, lorebook_ids, disable_character_lorebooks, speaker_selection_method, memory_type FROM group_characters WHERE id = ?1",
+                params![group_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
+            )
+            .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+
+        let mut overrides = serde_json::Map::new();
+        overrides.insert("version".to_string(), serde_json::json!(1));
+        macro_rules! add_override {
+            ($key:literal, $session:expr, $profile:expr) => {
+                if $session != $profile {
+                    overrides.insert($key.to_string(), serde_json::json!($session));
+                }
+            };
+        }
+        if session.1 != profile.0 {
+            overrides.insert(
+                "characterIds".to_string(),
+                serde_json::from_str(&session.1).unwrap_or_else(|_| serde_json::json!([])),
+            );
+        }
+        if session.2 != profile.1 {
+            overrides.insert(
+                "mutedCharacterIds".to_string(),
+                serde_json::from_str(&session.2).unwrap_or_else(|_| serde_json::json!([])),
+            );
+        }
+        add_override!("personaId", session.3, profile.2);
+        add_override!("chatType", session.4, profile.3);
+        add_override!("startingScene", session.5, profile.4);
+        add_override!("backgroundImagePath", session.6, profile.5);
+        if session.7 != profile.6 {
+            overrides.insert(
+                "lorebookIds".to_string(),
+                serde_json::from_str(&session.7).unwrap_or_else(|_| serde_json::json!([])),
+            );
+        }
+        add_override!("disableCharacterLorebooks", session.8, profile.7);
+        add_override!("speakerSelectionMethod", session.9, profile.8);
+        add_override!("memoryType", session.10, profile.9);
+        conn.execute(
+            "UPDATE group_sessions SET config_overrides = ?1 WHERE id = ?2",
+            params![Value::Object(overrides).to_string(), session_id],
+        )
+        .map_err(|error| crate::utils::err_to_string(module_path!(), line!(), error))?;
+    }
 
     Ok(())
 }

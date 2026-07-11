@@ -1969,15 +1969,23 @@ export const enMessages = {
     list: {
       editGroup: "Edit Group",
       deleteGroup: "Delete Group",
-      deleteConfirmTitle: "Delete Group Chat?",
+      deleteConfirmTitle: "Delete Group?",
       deleteConfirmMessage:
-        'Are you sure you want to delete "{{name}}"? This will also delete all messages in this group chat.',
+        'Are you sure you want to delete the group "{{name}}"? This deletes the group and all of its chats.',
       noGroupChatsYet: "No group chats yet",
       noGroupChatsDesc:
         "Create your first group chat from the + button below to have conversations with multiple characters at once",
       newChat: "New Chat",
       openChat: "Open Chat",
       chatSettings: "Chat Settings",
+      groupSettings: "Group Settings",
+      chatHistory: "Chat History",
+      noChatsYet: "No chats yet",
+      emptyChatPreview: "No messages yet",
+      startFirstChatHint: "Tap to start the first chat",
+      startingChat: "Starting chat...",
+      startChatFailed: "Couldn't start a new chat. Please try again.",
+      deleteGroupFailed: "Couldn't delete the group. Please try again.",
       sessionCount: "{{count}} chat(s)",
     },
     create: {
@@ -2058,6 +2066,7 @@ export const enMessages = {
     history: {
       title: "Group Chat History",
       subtitle: "All group conversations",
+      subtitleForGroup: "Chats with {{name}}",
       searchPlaceholder: "Search group chats...",
       active: "Active ({{count}})",
       archived: "Archived ({{count}})",
@@ -2073,10 +2082,18 @@ export const enMessages = {
     session: {
       chatTitlePlaceholder: "Chat title...",
       newChat: "New Chat",
+      duplicate: "Duplicate",
+      export: "Export",
       rename: "Rename",
       unarchive: "Unarchive",
       archive: "Archive",
       messageCount: "{{count}} message(s)",
+    },
+    overrides: {
+      overriddenLabel: "Overridden for this chat",
+      useGroupDefault: "Use group default",
+      participantsOverridden: "Participants changed for this chat",
+      mutedOverridden: "Muted participants changed for this chat",
     },
     memories: {
       tabMemories: "Memories",
@@ -2295,9 +2312,18 @@ export const enMessages = {
       removeCharacterFrom: "from the group defaults?",
       removing: "Removing...",
       remove: "Remove",
+      defaultsHint:
+        "These are the group defaults. Changes apply to chats that still follow the group default for a setting. Chats with their own override keep it.",
     },
     sessionSettings: {
       subtitle: "Manage group chat preferences",
+      groupActionsTitle: "Group",
+      groupActionsSubtitle: "This chat belongs to {{name}}",
+      newChatDesc: "Start a fresh chat using group defaults",
+      chatHistoryDesc: "View and manage this group's chats",
+      groupSettingsDesc: "Edit defaults shared by all chats",
+      overrideHint:
+        "Settings below apply only to this chat. Changing a setting that follows the group default creates an override for this chat.",
       authorNoteActive: "Active for this chat",
       authorNoteEmpty: "Private direction for replies",
       lorebooksAttached: "{{count}} attached",
@@ -2399,6 +2425,7 @@ export const enMessages = {
       selectingCharacter: "Selecting character...",
       sessionNotFound: "Group session not found",
       backToGroupChats: "Back to Group Chats",
+      requestFailed: "Group chat request failed",
       startConversation: "Start a conversation with {{names}}",
       scrollToBottom: "Scroll to bottom",
       addContent: "Add Content",
@@ -2518,6 +2545,8 @@ export const enMessages = {
       selectCharacterForRegeneration: "Select which character should respond instead:",
       ttftTitle: "Time to first token",
       tokenSpeedTitle: "Completion token speed",
+      branchToCharacter: "Branch to 1-on-1 from here",
+      selectCharacterForBranch: "Continue from this point in a private chat with this character",
     },
     timeAgo: {
       justNow: "Just now",
@@ -2967,6 +2996,13 @@ export const enMessages = {
     lorebook: {
       keywords: "KEYWORDS",
       caseSensitive: "Case sensitive",
+      regularExpression: "Use regular expressions",
+      regularExpressions: "Regular expressions",
+      regularExpressionsLabel: "REGULAR EXPRESSIONS",
+      regularExpressionHint: "Enter raw patterns such as apple|banana. Do not wrap patterns in /.",
+      regularExpressionPlaceholder: "e.g. apple|banana",
+      matchType: "Match type",
+      literalText: "Literal text",
       typeKeyword: "Type a keyword...",
       addButton: "Add",
       untitledEntry: "Untitled Entry",

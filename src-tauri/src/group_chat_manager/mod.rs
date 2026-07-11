@@ -7,6 +7,8 @@
 //! - Coordinating with the chat_manager for actual response generation
 //! - Full dynamic memory system support (decay, hot/cold, summarization, tool updates)
 
+mod generation;
+mod persistence;
 pub mod selection;
 
 use serde::{Deserialize, Serialize};
@@ -50,9 +52,7 @@ use crate::chat_manager::prompts::{
     self, APP_DYNAMIC_MEMORY_LOCAL_TEMPLATE_ID, APP_DYNAMIC_MEMORY_TEMPLATE_ID,
     APP_DYNAMIC_SUMMARY_TEMPLATE_ID,
 };
-use crate::chat_manager::request::{
-    extract_error_message, extract_reasoning, extract_text, extract_usage,
-};
+use crate::chat_manager::request::{extract_error_message, extract_text, extract_usage};
 use crate::chat_manager::storage::{
     load_personas, load_settings, resolve_credential_for_model, select_model_with_credential,
 };
@@ -69,7 +69,7 @@ use crate::embedding;
 use crate::storage_manager::db::{now_ms, DbConnection, SwappablePool};
 use crate::storage_manager::group_sessions::{
     self, group_session_update_memories_internal, GroupMessage, GroupParticipation, GroupSession,
-    MemoryEmbedding, UsageSummary,
+    ImageAttachment, MemoryEmbedding, UsageSummary,
 };
 use crate::storage_manager::lorebook::{
     get_enabled_lorebook_entry_contexts_for_ids, get_lorebook, LorebookEntry,
@@ -454,13 +454,8 @@ fn is_cancelled_request_error(message: &str) -> bool {
 #[derive(Clone, Copy)]
 struct LlamaSamplerProfileDefaults {
     name: &'static str,
-    temperature: f64,
-    top_p: f64,
-    top_k: Option<u32>,
     min_p: Option<f64>,
     typical_p: Option<f64>,
-    frequency_penalty: Option<f64>,
-    presence_penalty: Option<f64>,
 }
 
 fn normalize_llama_sampler_profile(value: &str) -> Option<String> {
@@ -530,43 +525,23 @@ fn llama_sampler_profile_defaults(profile: &str) -> LlamaSamplerProfileDefaults 
     match profile {
         "creative" => LlamaSamplerProfileDefaults {
             name: "creative",
-            temperature: 0.95,
-            top_p: 0.98,
-            top_k: Some(80),
             min_p: Some(0.02),
             typical_p: None,
-            frequency_penalty: Some(0.0),
-            presence_penalty: Some(0.25),
         },
         "stable" => LlamaSamplerProfileDefaults {
             name: "stable",
-            temperature: 0.55,
-            top_p: 0.90,
-            top_k: Some(32),
             min_p: Some(0.08),
             typical_p: Some(0.97),
-            frequency_penalty: Some(0.2),
-            presence_penalty: Some(0.0),
         },
         "reasoning" => LlamaSamplerProfileDefaults {
             name: "reasoning",
-            temperature: 0.35,
-            top_p: 0.90,
-            top_k: Some(24),
             min_p: None,
             typical_p: Some(0.95),
-            frequency_penalty: Some(0.1),
-            presence_penalty: Some(0.0),
         },
         _ => LlamaSamplerProfileDefaults {
             name: "balanced",
-            temperature: 0.8,
-            top_p: 0.95,
-            top_k: Some(40),
             min_p: Some(0.05),
             typical_p: None,
-            frequency_penalty: Some(0.15),
-            presence_penalty: Some(0.0),
         },
     }
 }
@@ -1217,6 +1192,61 @@ async fn record_group_usage(
     }
 }
 
+fn record_group_failed_usage(
+    app: &AppHandle,
+    usage: &Option<crate::chat_manager::types::UsageSummary>,
+    session: &GroupSession,
+    character: &Character,
+    model: &Model,
+    provider_cred: &ProviderCredential,
+    operation_type: UsageOperationType,
+    error_message: &str,
+) {
+    let Some(usage_info) = usage else {
+        return;
+    };
+    let mut request_usage = RequestUsage {
+        id: Uuid::new_v4().to_string(),
+        timestamp: now_millis().unwrap_or(0),
+        session_id: session.id.clone(),
+        character_id: character.id.clone(),
+        character_name: character.name.clone(),
+        model_id: model.id.clone(),
+        model_name: model.name.clone(),
+        provider_id: provider_cred.provider_id.clone(),
+        provider_label: provider_cred.label.clone(),
+        operation_type,
+        finish_reason: usage_info
+            .finish_reason
+            .as_deref()
+            .and_then(UsageFinishReason::from_str),
+        prompt_tokens: usage_info.prompt_tokens,
+        completion_tokens: usage_info.completion_tokens,
+        total_tokens: usage_info.total_tokens,
+        cached_prompt_tokens: usage_info.cached_prompt_tokens,
+        cache_write_tokens: usage_info.cache_write_tokens,
+        memory_tokens: None,
+        summary_tokens: None,
+        reasoning_tokens: usage_info.reasoning_tokens,
+        image_tokens: usage_info.image_tokens,
+        audio_tokens: usage_info.audio_tokens,
+        web_search_requests: usage_info.web_search_requests,
+        api_cost: usage_info.api_cost,
+        cost: None,
+        success: false,
+        error_message: Some(error_message.to_string()),
+        metadata: Default::default(),
+    };
+    insert_extended_usage_metadata(&mut request_usage.metadata, usage_info);
+    if let Err(error) = add_usage_record(app, request_usage) {
+        log_error(
+            app,
+            "group_chat_response",
+            format!("failed to record failed group usage: {error}"),
+        );
+    }
+}
+
 /// Record usage for decision maker (speaker selection) operations
 async fn record_decision_maker_usage(
     app: &AppHandle,
@@ -1370,68 +1400,14 @@ fn resolve_group_conversation_index_by_message_id(
 
 /// Resolve the last valid cursor (windowEnd) from memory tool events by anchoring on message IDs.
 /// Returns (window_end_index, cursor_rewound).
-fn group_memory_event_advances_cursor(event: &Value) -> bool {
-    !matches!(event.get("status").and_then(Value::as_str), Some("error"))
-}
-
 fn resolve_last_valid_group_window_end(
     conn: &rusqlite::Connection,
     session: &GroupSession,
 ) -> Result<(usize, bool), String> {
-    if session.memory_tool_events.is_empty() {
-        return Ok((0, false));
-    }
-
-    for (rev_idx, event) in session
-        .memory_tool_events
-        .iter()
-        .rev()
-        .filter(|event| group_memory_event_advances_cursor(event))
-        .enumerate()
-    {
-        let end_id = event
-            .get("windowMessageIds")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.last())
-            .and_then(|v| v.as_str());
-
-        let Some(end_id) = end_id else {
-            continue;
-        };
-
-        if let Some(window_end) =
-            resolve_group_conversation_index_by_message_id(conn, &session.id, end_id)?
-        {
-            return Ok((window_end, rev_idx != 0));
-        }
-    }
-
-    Ok((0, true))
-}
-
-#[cfg(test)]
-mod group_memory_cursor_tests {
-    use super::group_memory_event_advances_cursor;
-    use serde_json::json;
-
-    #[test]
-    fn failed_memory_event_does_not_advance_cursor() {
-        assert!(!group_memory_event_advances_cursor(&json!({
-            "status": "error",
-            "windowEnd": 346
-        })));
-    }
-
-    #[test]
-    fn complete_and_legacy_memory_events_advance_cursor() {
-        assert!(group_memory_event_advances_cursor(&json!({
-            "status": "complete",
-            "windowEnd": 288
-        })));
-        assert!(group_memory_event_advances_cursor(&json!({
-            "windowEnd": 288
-        })));
-    }
+    crate::conversation_manager::memory::resolve_last_valid_window_end(
+        &session.memory_tool_events,
+        |end_id| resolve_group_conversation_index_by_message_id(conn, &session.id, end_id),
+    )
 }
 
 fn cancel_group_dynamic_memory_cycle(
@@ -1535,6 +1511,7 @@ fn fetch_group_conversation_messages_range(
                 reasoning: None,
                 selection_reasoning: None,
                 model_id: None,
+                gemini_content: None,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -5194,9 +5171,11 @@ fn save_user_message(
     conn: &rusqlite::Connection,
     session_id: &str,
     content: &str,
+    message_id: Option<String>,
+    attachments: &[ImageAttachment],
 ) -> Result<GroupMessage, String> {
     let now = now_ms();
-    let id = Uuid::new_v4().to_string();
+    let id = message_id.unwrap_or_else(|| Uuid::new_v4().to_string());
 
     let max_turn: Option<i32> = conn
         .query_row(
@@ -5210,8 +5189,15 @@ fn save_user_message(
     conn.execute(
         "INSERT INTO group_messages (id, session_id, role, content, speaker_character_id, turn_number,
          created_at, is_pinned, attachments)
-         VALUES (?1, ?2, 'user', ?3, NULL, ?4, ?5, 0, '[]')",
-        rusqlite::params![id, session_id, content, turn_number, now],
+         VALUES (?1, ?2, 'user', ?3, NULL, ?4, ?5, 0, ?6)",
+        rusqlite::params![
+            id,
+            session_id,
+            content,
+            turn_number,
+            now,
+            serde_json::to_string(attachments).unwrap_or_else(|_| "[]".to_string())
+        ],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
@@ -5233,12 +5219,13 @@ fn save_user_message(
         variants: None,
         selected_variant_id: None,
         is_pinned: false,
-        attachments: vec![],
+        attachments: attachments.to_vec(),
         used_lorebook_entries: Vec::new(),
         memory_refs: Vec::new(),
         reasoning: None,
         selection_reasoning: None,
         model_id: None,
+        gemini_content: None,
     })
 }
 
@@ -5247,6 +5234,7 @@ fn save_assistant_message(
     app: &AppHandle,
     conn: &rusqlite::Connection,
     session_id: &str,
+    message_id: Option<String>,
     character_id: &str,
     content: &str,
     reasoning: Option<&str>,
@@ -5255,9 +5243,11 @@ fn save_assistant_message(
     model_id: Option<&str>,
     used_lorebook_entries: &[String],
     memory_refs: &[String],
+    attachments: &[ImageAttachment],
+    gemini_content: Option<&Value>,
 ) -> Result<GroupMessage, String> {
     let now = now_ms();
-    let id = Uuid::new_v4().to_string();
+    let id = message_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let variant_id = Uuid::new_v4().to_string();
 
     let max_turn: Option<i32> = conn
@@ -5285,8 +5275,8 @@ fn save_assistant_message(
 
     conn.execute(
         "INSERT INTO group_messages (id, session_id, role, content, speaker_character_id, turn_number,
-         created_at, prompt_tokens, completion_tokens, total_tokens, selected_variant_id, is_pinned, attachments, used_lorebook_entries, reasoning, selection_reasoning, model_id, memory_refs)
-         VALUES (?1, ?2, 'assistant', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, '[]', ?11, ?12, ?13, ?14, ?15)",
+         created_at, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, selected_variant_id, is_pinned, attachments, used_lorebook_entries, reasoning, selection_reasoning, model_id, memory_refs, gemini_content, usage_json)
+         VALUES (?1, ?2, 'assistant', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         rusqlite::params![
             id,
             session_id,
@@ -5297,20 +5287,28 @@ fn save_assistant_message(
             prompt_tokens,
             completion_tokens,
             total_tokens,
+            usage.and_then(|value| value.first_token_ms),
+            usage.and_then(|value| value.tokens_per_second),
+            usage
+                .and_then(|value| value.mtp_stats.as_ref())
+                .and_then(|value| serde_json::to_string(value).ok()),
             variant_id,
+            serde_json::to_string(attachments).unwrap_or_else(|_| "[]".to_string()),
             serde_json::to_string(used_lorebook_entries).unwrap_or_else(|_| "[]".to_string()),
             reasoning,
             selection_reasoning,
             model_id,
-            serde_json::to_string(memory_refs).unwrap_or_else(|_| "[]".to_string())
+            serde_json::to_string(memory_refs).unwrap_or_else(|_| "[]".to_string()),
+            gemini_content.and_then(|value| serde_json::to_string(value).ok()),
+            usage.and_then(|value| serde_json::to_string(value).ok())
         ],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
 
     // Insert the first variant
     conn.execute(
-        "INSERT INTO group_message_variants (id, message_id, content, speaker_character_id, created_at, prompt_tokens, completion_tokens, total_tokens, reasoning, selection_reasoning, model_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO group_message_variants (id, message_id, content, speaker_character_id, created_at, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, reasoning, selection_reasoning, model_id, attachments, gemini_content, usage_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         rusqlite::params![
             variant_id,
             id,
@@ -5320,9 +5318,17 @@ fn save_assistant_message(
             prompt_tokens,
             completion_tokens,
             total_tokens,
+            usage.and_then(|value| value.first_token_ms),
+            usage.and_then(|value| value.tokens_per_second),
+            usage
+                .and_then(|value| value.mtp_stats.as_ref())
+                .and_then(|value| serde_json::to_string(value).ok()),
             reasoning,
             selection_reasoning,
-            model_id
+            model_id,
+            serde_json::to_string(attachments).unwrap_or_else(|_| "[]".to_string()),
+            gemini_content.and_then(|value| serde_json::to_string(value).ok()),
+            usage.and_then(|value| serde_json::to_string(value).ok())
         ],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -5365,22 +5371,26 @@ fn save_assistant_message(
         variants: None,
         selected_variant_id: Some(variant_id),
         is_pinned: false,
-        attachments: vec![],
+        attachments: attachments.to_vec(),
         used_lorebook_entries: used_lorebook_entries.to_vec(),
         memory_refs: memory_refs.to_vec(),
         reasoning: reasoning.map(|s| s.to_string()),
         selection_reasoning: selection_reasoning.map(|s| s.to_string()),
         model_id: model_id.map(|s| s.to_string()),
+        gemini_content: gemini_content.cloned(),
     })
 }
 
 /// Convert group messages to API message format for the character response
 fn build_messages_for_api(
+    app: &AppHandle,
     group_messages: &[GroupMessage],
     characters: &[CharacterInfo],
     selected_character: &CharacterInfo,
     persona: Option<&Persona>,
     include_speaker_prefix: bool,
+    allow_image_input: bool,
+    allow_audio_input: bool,
 ) -> Vec<serde_json::Value> {
     let mut messages = Vec::new();
     let _char_name = &selected_character.name;
@@ -5393,10 +5403,19 @@ fn build_messages_for_api(
             } else {
                 msg.content.clone()
             };
-            messages.push(json!({
-                "role": "user",
-                "content": content
-            }));
+            let loaded_attachments = persistence::load_attachment_data(app, &msg.attachments);
+            let content =
+                if !loaded_attachments.is_empty() && (allow_image_input || allow_audio_input) {
+                    crate::chat_manager::messages::build_multimodal_content(
+                        &content,
+                        &loaded_attachments,
+                        allow_image_input,
+                        allow_audio_input,
+                    )
+                } else {
+                    Value::String(content)
+                };
+            messages.push(json!({ "role": "user", "content": content }));
         } else if msg.role == "assistant" {
             if let Some(ref speaker_id) = msg.speaker_character_id {
                 let speaker_name = characters
@@ -5422,10 +5441,16 @@ fn build_messages_for_api(
                     "user"
                 };
 
-                messages.push(json!({
+                let mut api_message = json!({
                     "role": role,
                     "content": content
-                }));
+                });
+                if role == "assistant" {
+                    if let Some(gemini_content) = &msg.gemini_content {
+                        api_message["gemini_content"] = gemini_content.clone();
+                    }
+                }
+                messages.push(api_message);
             }
         }
     }
@@ -6407,6 +6432,17 @@ async fn select_speaker_via_llm_with_tracking(
 }
 
 /// Generate actual response from the selected character
+struct GroupGenerationOutput {
+    content: String,
+    reasoning: Option<String>,
+    usage: Option<UsageSummary>,
+    model_id: String,
+    used_lorebook_entries: Vec<String>,
+    memory_refs: Vec<String>,
+    generated_image_data_urls: Vec<String>,
+    gemini_content: Option<Value>,
+}
+
 async fn generate_character_response(
     app: &AppHandle,
     context: &mut GroupChatContext,
@@ -6414,18 +6450,10 @@ async fn generate_character_response(
     settings: &Settings,
     pool: &State<'_, SwappablePool>,
     request_id: &str,
+    stream: bool,
+    guidance: Option<&str>,
     operation_type: UsageOperationType,
-) -> Result<
-    (
-        String,
-        Option<String>,
-        Option<UsageSummary>,
-        String,
-        Vec<String>,
-        Vec<String>,
-    ),
-    String,
-> {
+) -> Result<GroupGenerationOutput, String> {
     let conn = pool.get_connection()?;
 
     // Load full character data
@@ -6440,7 +6468,6 @@ async fn generate_character_response(
 
     // Get model and credentials
     let (model, credential) = select_model_with_credential(settings, &character)?;
-    let api_key = require_api_key(app, credential, "group_chat")?;
 
     let dynamic_settings = effective_group_dynamic_memory_settings(settings);
 
@@ -6577,11 +6604,14 @@ async fn generate_character_response(
 
     let no_chat_history = messages_for_generation.is_empty();
     let mut api_messages = build_messages_for_api(
+        app,
         &messages_for_generation,
         &context.characters,
         selected_char_info,
         persona.as_ref(),
         true,
+        model.input_scopes.iter().any(|scope| scope == "image"),
+        model.input_scopes.iter().any(|scope| scope == "audio"),
     );
     let system_role = crate::chat_manager::request_builder::system_role_for(credential);
     insert_in_chat_prompt_entries(&mut api_messages, &system_role, &in_chat_entries);
@@ -6598,311 +6628,356 @@ async fn generate_character_response(
             "content": format!("[Begin the conversation. Respond as {}.]", selected_char_info.name)
         }));
     }
+    if let Some(guidance) = guidance {
+        messages_for_api.push(json!({
+            "role": "user",
+            "content": format!(
+                "[REGENERATE INSTRUCTION]\nRegenerate your previous response to the last message. Follow this additional user instruction for the new response:\n{}",
+                guidance
+            )
+        }));
+    }
 
-    let sampler_profile = if credential.provider_id == "llamacpp" {
-        Some(resolve_llama_sampler_profile(model, settings))
-    } else {
-        None
-    };
-    let sampler_defaults = sampler_profile
-        .as_deref()
-        .map(llama_sampler_profile_defaults);
-    let temperature = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|a| a.temperature)
-        .unwrap_or_else(|| sampler_defaults.map_or(0.7, |defaults| defaults.temperature));
-    let top_p = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|a| a.top_p)
-        .unwrap_or_else(|| sampler_defaults.map_or(1.0, |defaults| defaults.top_p));
-    let max_tokens = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|a| a.max_output_tokens)
-        .unwrap_or(2048);
-    let context_length = resolve_context_length(model, settings);
-    let reasoning_enabled = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|a| a.reasoning_enabled)
-        .unwrap_or(false);
-    let reasoning_effort = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|a| a.reasoning_effort.clone());
-    let reasoning_budget = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|a| a.reasoning_budget_tokens);
-    let presence_penalty = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|a| a.presence_penalty)
-        .or_else(|| sampler_defaults.and_then(|defaults| defaults.presence_penalty));
-    let frequency_penalty = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|a| a.frequency_penalty)
-        .or_else(|| sampler_defaults.and_then(|defaults| defaults.frequency_penalty));
-    let top_k = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|a| a.top_k)
-        .or_else(|| sampler_defaults.and_then(|defaults| defaults.top_k));
-    let prompt_caching_enabled = model
-        .advanced_model_settings
-        .as_ref()
-        .and_then(|s| s.prompt_caching_enabled)
-        .unwrap_or(false);
-    let extra_body_fields = if credential.provider_id == "llamacpp" {
-        build_llama_extra_fields(model, settings)
-    } else if credential.provider_id == "ollama" {
-        build_ollama_extra_fields(
-            model,
-            settings,
-            context_length,
-            max_tokens,
-            temperature,
-            top_p,
-            top_k,
-            frequency_penalty,
-            presence_penalty,
-        )
-    } else {
-        None
-    };
-
-    let built = crate::chat_manager::request_builder::build_chat_request(
+    let execution = generation::execute_group_generation(generation::GroupGenerationRequest {
+        app,
+        session: &context.session,
+        character: &character,
+        model,
         credential,
-        &api_key,
-        &model.name,
-        &messages_for_api,
-        None, // system prompt already handled via push_system_message
-        Some(temperature),
-        Some(top_p),
-        max_tokens,
-        context_length,
-        true,                   // Stream
-        None,                   // request_id will be passed via ApiRequest
-        frequency_penalty,      // frequency_penalty
-        presence_penalty,       // presence_penalty
-        top_k,                  // top_k
-        None,                   // No tools for response generation
-        reasoning_enabled,      // reasoning_enabled
-        reasoning_effort,       // reasoning_effort
-        reasoning_budget,       // reasoning_budget
-        prompt_caching_enabled, // prompt_caching_enabled
-        extra_body_fields,
-    );
+        settings,
+        messages: &messages_for_api,
+        request_id,
+        stream,
+        operation_type,
+    })
+    .await?;
+    let memory_refs: Vec<String> = retrieved_memories
+        .iter()
+        .map(|memory| match memory.match_score {
+            Some(score) => format!("{}::{}", score, memory.text),
+            None => memory.text.clone(),
+        })
+        .collect();
 
-    log_info(
-        app,
-        "group_chat",
-        format!(
-            "Generating response from {} via {} model {}",
-            character.name, credential.provider_id, model.name
-        ),
-    );
+    return Ok(GroupGenerationOutput {
+        content: execution.text,
+        reasoning: execution.reasoning,
+        usage: execution.usage,
+        model_id: model.id.clone(),
+        used_lorebook_entries,
+        memory_refs,
+        generated_image_data_urls: execution.generated_image_data_urls,
+        gemini_content: execution.gemini_content,
+    });
 
-    // Log request details for debugging
-    log_info(
-        app,
-        "group_chat_response",
-        format!(
-            "Request details: endpoint={} model={} stream={} temp={} max_tokens={}",
-            built.url, model.name, true, temperature, max_tokens
-        ),
-    );
+    #[cfg(any())]
+    {
+        let sampler_profile = if credential.provider_id == "llamacpp" {
+            Some(resolve_llama_sampler_profile(model, settings))
+        } else {
+            None
+        };
+        let sampler_defaults = sampler_profile
+            .as_deref()
+            .map(llama_sampler_profile_defaults);
+        let temperature = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|a| a.temperature)
+            .unwrap_or_else(|| sampler_defaults.map_or(0.7, |defaults| defaults.temperature));
+        let top_p = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|a| a.top_p)
+            .unwrap_or_else(|| sampler_defaults.map_or(1.0, |defaults| defaults.top_p));
+        let max_tokens = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|a| a.max_output_tokens)
+            .unwrap_or(2048);
+        let context_length = resolve_context_length(model, settings);
+        let reasoning_enabled = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|a| a.reasoning_enabled)
+            .unwrap_or(false);
+        let reasoning_effort = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|a| a.reasoning_effort.clone());
+        let reasoning_budget = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|a| a.reasoning_budget_tokens);
+        let presence_penalty = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|a| a.presence_penalty)
+            .or_else(|| sampler_defaults.and_then(|defaults| defaults.presence_penalty));
+        let frequency_penalty = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|a| a.frequency_penalty)
+            .or_else(|| sampler_defaults.and_then(|defaults| defaults.frequency_penalty));
+        let top_k = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|a| a.top_k)
+            .or_else(|| sampler_defaults.and_then(|defaults| defaults.top_k));
+        let prompt_caching_enabled = model
+            .advanced_model_settings
+            .as_ref()
+            .and_then(|s| s.prompt_caching_enabled)
+            .unwrap_or(false);
+        let extra_body_fields = if credential.provider_id == "llamacpp" {
+            build_llama_extra_fields(model, settings)
+        } else if credential.provider_id == "ollama" {
+            build_ollama_extra_fields(
+                model,
+                settings,
+                context_length,
+                max_tokens,
+                temperature,
+                top_p,
+                top_k,
+                frequency_penalty,
+                presence_penalty,
+            )
+        } else {
+            None
+        };
 
-    log_info(
-        app,
-        "group_chat_response",
-        format!(
-            "Request body: {}",
-            serde_json::to_string_pretty(&built.body)
-                .unwrap_or_else(|_| "unable to serialize".to_string())
-        ),
-    );
+        let built = crate::chat_manager::request_builder::build_chat_request(
+            credential,
+            &api_key,
+            &model.name,
+            &messages_for_api,
+            None, // system prompt already handled via push_system_message
+            Some(temperature),
+            Some(top_p),
+            max_tokens,
+            context_length,
+            true,                   // Stream
+            None,                   // request_id will be passed via ApiRequest
+            frequency_penalty,      // frequency_penalty
+            presence_penalty,       // presence_penalty
+            top_k,                  // top_k
+            None,                   // No tools for response generation
+            reasoning_enabled,      // reasoning_enabled
+            reasoning_effort,       // reasoning_effort
+            reasoning_budget,       // reasoning_budget
+            prompt_caching_enabled, // prompt_caching_enabled
+            extra_body_fields,
+        );
 
-    let api_request_payload = ApiRequest {
-        url: built.url,
-        method: Some("POST".into()),
-        headers: Some(built.headers),
-        query: None,
-        body: Some(built.body),
-        timeout_ms: Some(crate::transport::DEFAULT_REQUEST_TIMEOUT_MS),
-        stream: Some(true),
-        request_id: Some(request_id.to_string()),
-        provider_id: Some(credential.provider_id.clone()),
-    };
-
-    log_info(
-        app,
-        "group_chat_response",
-        format!(
-            "Sending streaming request for {} with request_id={}",
-            character.name, request_id
-        ),
-    );
-
-    let api_response = api_request(app.clone(), api_request_payload).await?;
-
-    log_info(
-        app,
-        "group_chat_response",
-        format!(
-            "API response received: status={} ok={}",
-            api_response.status, api_response.ok
-        ),
-    );
-
-    if !api_response.ok {
-        let fallback = format!("Provider returned status {}", api_response.status);
-        let err_message = extract_error_message(api_response.data()).unwrap_or(fallback.clone());
-
-        log_error(
+        log_info(
             app,
-            "group_chat_response",
+            "group_chat",
             format!(
-                "API request failed: status={} error={}",
-                api_response.status, err_message
+                "Generating response from {} via {} model {}",
+                character.name, credential.provider_id, model.name
             ),
         );
 
-        // Log the full response body for debugging
+        // Log request details for debugging
         log_info(
             app,
             "group_chat_response",
             format!(
-                "Full error response: {}",
-                serde_json::to_string_pretty(api_response.data())
+                "Request details: endpoint={} model={} stream={} temp={} max_tokens={}",
+                built.url, model.name, true, temperature, max_tokens
+            ),
+        );
+
+        log_info(
+            app,
+            "group_chat_response",
+            format!(
+                "Request body: {}",
+                serde_json::to_string_pretty(&built.body)
                     .unwrap_or_else(|_| "unable to serialize".to_string())
             ),
         );
 
-        return Err(format!(
-            "Character response API request failed with status {}: {}",
-            api_response.status, err_message
-        ));
-    }
+        let api_request_payload = ApiRequest {
+            url: built.url,
+            method: Some("POST".into()),
+            headers: Some(built.headers),
+            query: None,
+            body: Some(built.body),
+            timeout_ms: Some(crate::transport::DEFAULT_REQUEST_TIMEOUT_MS),
+            stream: Some(true),
+            request_id: Some(request_id.to_string()),
+            provider_id: Some(credential.provider_id.clone()),
+        };
 
-    let data_preview = match api_response.data() {
-        serde_json::Value::String(s) => {
-            let preview = crate::serde_utils::truncate_for_log(s, 500);
-            format!("String({} bytes): {}", s.len(), preview)
+        log_info(
+            app,
+            "group_chat_response",
+            format!(
+                "Sending streaming request for {} with request_id={}",
+                character.name, request_id
+            ),
+        );
+
+        let api_response = api_request(app.clone(), api_request_payload).await?;
+
+        log_info(
+            app,
+            "group_chat_response",
+            format!(
+                "API response received: status={} ok={}",
+                api_response.status, api_response.ok
+            ),
+        );
+
+        if !api_response.ok {
+            let fallback = format!("Provider returned status {}", api_response.status);
+            let err_message =
+                extract_error_message(api_response.data()).unwrap_or(fallback.clone());
+
+            log_error(
+                app,
+                "group_chat_response",
+                format!(
+                    "API request failed: status={} error={}",
+                    api_response.status, err_message
+                ),
+            );
+
+            // Log the full response body for debugging
+            log_info(
+                app,
+                "group_chat_response",
+                format!(
+                    "Full error response: {}",
+                    serde_json::to_string_pretty(api_response.data())
+                        .unwrap_or_else(|_| "unable to serialize".to_string())
+                ),
+            );
+
+            return Err(format!(
+                "Character response API request failed with status {}: {}",
+                api_response.status, err_message
+            ));
         }
-        serde_json::Value::Object(obj) => {
-            format!("Object with keys: {:?}", obj.keys().collect::<Vec<_>>())
-        }
-        other => format!("{:?}", other),
-    };
-    log_info(
-        app,
-        "group_chat_response",
-        format!("Response data type: {}", data_preview),
-    );
 
-    let text = extract_text(api_response.data(), Some(&model.provider_id));
+        let data_preview = match api_response.data() {
+            serde_json::Value::String(s) => {
+                let preview = crate::serde_utils::truncate_for_log(s, 500);
+                format!("String({} bytes): {}", s.len(), preview)
+            }
+            serde_json::Value::Object(obj) => {
+                format!("Object with keys: {:?}", obj.keys().collect::<Vec<_>>())
+            }
+            other => format!("{:?}", other),
+        };
+        log_info(
+            app,
+            "group_chat_response",
+            format!("Response data type: {}", data_preview),
+        );
 
-    log_info(
-        app,
-        "group_chat_response",
-        format!(
-            "Extracted text: {:?} (len={})",
-            text.as_ref()
-                .map(|t| crate::serde_utils::truncate_for_log(t, 100)),
-            text.as_ref().map(|t| t.len()).unwrap_or(0)
-        ),
-    );
+        let text = extract_text(api_response.data(), Some(&model.provider_id));
 
-    let text = text.ok_or_else(|| "Empty response from provider".to_string())?;
+        log_info(
+            app,
+            "group_chat_response",
+            format!(
+                "Extracted text: {:?} (len={})",
+                text.as_ref()
+                    .map(|t| crate::serde_utils::truncate_for_log(t, 100)),
+                text.as_ref().map(|t| t.len()).unwrap_or(0)
+            ),
+        );
 
-    // Post-generation content filter check
-    if let Some(filter) = app.try_state::<crate::content_filter::ContentFilter>() {
-        if filter.is_enabled() {
-            let result = filter.check_text(&text);
-            if result.blocked {
-                crate::utils::log_warn(
-                    app,
-                    "group_chat_response",
-                    format!(
-                        "Content blocked by Pure Mode (score={:.1}, terms={:?})",
-                        result.score, result.matched_terms
-                    ),
-                );
-                return Err(
-                    "Response blocked by Pure Mode. Try rephrasing your message.".to_string(),
-                );
+        let text = text.ok_or_else(|| "Empty response from provider".to_string())?;
+
+        // Post-generation content filter check
+        if let Some(filter) = app.try_state::<crate::content_filter::ContentFilter>() {
+            if filter.is_enabled() {
+                let result = filter.check_text(&text);
+                if result.blocked {
+                    crate::utils::log_warn(
+                        app,
+                        "group_chat_response",
+                        format!(
+                            "Content blocked by Pure Mode (score={:.1}, terms={:?})",
+                            result.score, result.matched_terms
+                        ),
+                    );
+                    return Err(
+                        "Response blocked by Pure Mode. Try rephrasing your message.".to_string(),
+                    );
+                }
             }
         }
+
+        let usage = extract_usage(api_response.data());
+        let reasoning = extract_reasoning(api_response.data(), Some(&model.provider_id));
+
+        log_info(
+            app,
+            "generate_character_response",
+            format!(
+                "Extracted reasoning: {} (len={})",
+                if reasoning.is_some() { "YES" } else { "NO" },
+                reasoning.as_ref().map(|r| r.len()).unwrap_or(0)
+            ),
+        );
+
+        let message_usage = usage.as_ref().map(|u| UsageSummary {
+            prompt_tokens: u.prompt_tokens.map(|v| v as i32),
+            completion_tokens: u.completion_tokens.map(|v| v as i32),
+            total_tokens: u.total_tokens.map(|v| v as i32),
+            first_token_ms: u.first_token_ms.map(|v| v as i64),
+            tokens_per_second: u.tokens_per_second,
+            mtp_stats: u
+                .mtp_stats
+                .as_ref()
+                .and_then(|s| serde_json::to_value(s).ok()),
+        });
+
+        record_group_usage(
+            app,
+            &usage,
+            &context.session,
+            &character,
+            model,
+            credential,
+            &api_key,
+            operation_type,
+            "group_chat_response",
+        )
+        .await;
+
+        let model_id_to_return = model.id.clone();
+        log_info(
+            app,
+            "generate_character_response",
+            format!(
+                "✓ Generated response with model_id: {} (model name: {})",
+                model_id_to_return, model.display_name
+            ),
+        );
+
+        let memory_refs: Vec<String> = retrieved_memories
+            .iter()
+            .map(|m| match m.match_score {
+                Some(score) => format!("{}::{}", score, m.text),
+                None => m.text.clone(),
+            })
+            .collect();
+
+        Ok((
+            text,
+            reasoning,
+            message_usage,
+            model_id_to_return,
+            used_lorebook_entries,
+            memory_refs,
+        ))
     }
-
-    let usage = extract_usage(api_response.data());
-    let reasoning = extract_reasoning(api_response.data(), Some(&model.provider_id));
-
-    log_info(
-        app,
-        "generate_character_response",
-        format!(
-            "Extracted reasoning: {} (len={})",
-            if reasoning.is_some() { "YES" } else { "NO" },
-            reasoning.as_ref().map(|r| r.len()).unwrap_or(0)
-        ),
-    );
-
-    let message_usage = usage.as_ref().map(|u| UsageSummary {
-        prompt_tokens: u.prompt_tokens.map(|v| v as i32),
-        completion_tokens: u.completion_tokens.map(|v| v as i32),
-        total_tokens: u.total_tokens.map(|v| v as i32),
-        first_token_ms: u.first_token_ms.map(|v| v as i64),
-        tokens_per_second: u.tokens_per_second,
-        mtp_stats: u
-            .mtp_stats
-            .as_ref()
-            .and_then(|s| serde_json::to_value(s).ok()),
-    });
-
-    record_group_usage(
-        app,
-        &usage,
-        &context.session,
-        &character,
-        model,
-        credential,
-        &api_key,
-        operation_type,
-        "group_chat_response",
-    )
-    .await;
-
-    let model_id_to_return = model.id.clone();
-    log_info(
-        app,
-        "generate_character_response",
-        format!(
-            "✓ Generated response with model_id: {} (model name: {})",
-            model_id_to_return, model.display_name
-        ),
-    );
-
-    let memory_refs: Vec<String> = retrieved_memories
-        .iter()
-        .map(|m| match m.match_score {
-            Some(score) => format!("{}::{}", score, m.text),
-            None => m.text.clone(),
-        })
-        .collect();
-
-    Ok((
-        text,
-        reasoning,
-        message_usage,
-        model_id_to_return,
-        used_lorebook_entries,
-        memory_refs,
-    ))
 }
 
 #[tauri::command]
@@ -6912,7 +6987,7 @@ pub fn group_chat_add_user_message(
     pool: State<'_, SwappablePool>,
 ) -> Result<String, String> {
     let conn = pool.get_connection()?;
-    let message = save_user_message(&conn, &session_id, &user_message)?;
+    let message = save_user_message(&conn, &session_id, &user_message, None, &[])?;
     serde_json::to_string(&message)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
 }
@@ -6922,8 +6997,9 @@ pub async fn group_chat_send(
     app: AppHandle,
     session_id: String,
     user_message: String,
-    _stream: Option<bool>,
+    stream: Option<bool>,
     request_id: Option<String>,
+    attachments: Option<Vec<ImageAttachment>>,
     pool: State<'_, SwappablePool>,
 ) -> Result<String, String> {
     log_info(
@@ -6939,7 +7015,27 @@ pub async fn group_chat_send(
     let mut abort_rx = abort_registry.register(req_id.clone());
     let _abort_guard = AbortGuard::new(&abort_registry, req_id.clone());
     let mut context = build_selection_context(&conn, &session_id, &user_message)?;
-    let user_msg = save_user_message(&conn, &session_id, &user_message)?;
+    let user_message_id = Uuid::new_v4().to_string();
+    let attachment_owner = context
+        .session
+        .group_character_id
+        .as_deref()
+        .unwrap_or(&context.session.id);
+    let persisted_user_attachments = persistence::persist_group_attachments(
+        &app,
+        attachment_owner,
+        &session_id,
+        &user_message_id,
+        "user",
+        attachments.unwrap_or_default(),
+    )?;
+    let user_msg = save_user_message(
+        &conn,
+        &session_id,
+        &user_message,
+        Some(user_message_id),
+        &persisted_user_attachments,
+    )?;
     let mention_result = parse_mentions(&user_message, &context.characters);
 
     emit_group_chat_status(&app, &session_id, "selecting_character", Map::new());
@@ -7091,18 +7187,13 @@ pub async fn group_chat_send(
         &settings,
         &pool,
         &req_id,
+        stream.unwrap_or(true),
+        None,
         UsageOperationType::GroupChatMessage,
     )
     .await;
 
-    let (
-        response_content,
-        reasoning,
-        message_usage,
-        model_id_str,
-        used_lorebook_entries,
-        memory_refs,
-    ) = match response_result {
+    let output = match response_result {
         Ok(result) => result,
         Err(err) => {
             if !is_request_abort_error(&err) {
@@ -7111,8 +7202,32 @@ pub async fn group_chat_send(
             return Err(err);
         }
     };
+    let GroupGenerationOutput {
+        content: response_content,
+        reasoning,
+        usage: message_usage,
+        model_id: model_id_str,
+        used_lorebook_entries,
+        memory_refs,
+        generated_image_data_urls,
+        gemini_content,
+    } = output;
 
     let conn = pool.get_connection()?;
+    let assistant_message_id = Uuid::new_v4().to_string();
+    let attachment_owner = context
+        .session
+        .group_character_id
+        .as_deref()
+        .unwrap_or(&context.session.id);
+    let assistant_attachments = persistence::persist_group_attachments(
+        &app,
+        attachment_owner,
+        &session_id,
+        &assistant_message_id,
+        "assistant",
+        persistence::generated_image_attachments(generated_image_data_urls),
+    )?;
 
     log_info(
         &app,
@@ -7128,6 +7243,7 @@ pub async fn group_chat_send(
         &app,
         &conn,
         &session_id,
+        Some(assistant_message_id),
         &selected_character_id,
         &response_content,
         reasoning.as_deref(),
@@ -7136,6 +7252,8 @@ pub async fn group_chat_send(
         Some(&model_id_str),
         &used_lorebook_entries,
         &memory_refs,
+        &assistant_attachments,
+        gemini_content.as_ref(),
     )?;
 
     let _ = crate::storage_manager::llm_metrics::llm_metrics_attach_message(
@@ -7274,20 +7392,22 @@ pub fn group_chat_dynamic_memory_cycle_status(
     let since = total.saturating_sub(last_window_end);
     let approval = app.state::<crate::dynamic_memory_approval::DynamicMemoryApprovalManager>();
 
-    Ok(crate::chat_manager::memory::flow::DynamicMemoryCycleStatus {
-        run_mode: dynamic.run_mode.clone(),
-        interval,
-        messages_since_last_cycle: since,
-        messages_until_next_cycle: interval.saturating_sub(since),
-        total_conversation_messages: total,
-        pending_approval_count: approval.pending(&session_id),
-        skipped: approval.was_skipped(&session_id),
-        latest_cycle_status: session
-            .memory_tool_events
-            .last()
-            .and_then(|event| event.get("status").and_then(Value::as_str))
-            .map(str::to_string),
-    })
+    Ok(
+        crate::chat_manager::memory::flow::DynamicMemoryCycleStatus {
+            run_mode: dynamic.run_mode.clone(),
+            interval,
+            messages_since_last_cycle: since,
+            messages_until_next_cycle: interval.saturating_sub(since),
+            total_conversation_messages: total,
+            pending_approval_count: approval.pending(&session_id),
+            skipped: approval.was_skipped(&session_id),
+            latest_cycle_status: session
+                .memory_tool_events
+                .last()
+                .and_then(|event| event.get("status").and_then(Value::as_str))
+                .map(str::to_string),
+        },
+    )
 }
 
 #[tauri::command]
@@ -7296,6 +7416,8 @@ pub async fn group_chat_regenerate(
     session_id: String,
     message_id: String,
     force_character_id: Option<String>,
+    guidance: Option<String>,
+    stream: Option<bool>,
     request_id: Option<String>,
     pool: State<'_, SwappablePool>,
 ) -> Result<String, String> {
@@ -7333,6 +7455,11 @@ pub async fn group_chat_regenerate(
         )
         .unwrap_or_default();
 
+    let guidance = guidance
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let mut context = build_selection_context(&conn, &session_id, &user_message)?;
     context
         .recent_messages
@@ -7450,18 +7577,13 @@ pub async fn group_chat_regenerate(
         &settings,
         &pool,
         &req_id,
+        stream.unwrap_or(true),
+        guidance.as_deref(),
         UsageOperationType::GroupChatRegenerate,
     )
     .await;
 
-    let (
-        response_content,
-        reasoning,
-        message_usage,
-        model_id_str,
-        used_lorebook_entries,
-        _memory_refs,
-    ) = match response_result {
+    let output = match response_result {
         Ok(result) => result,
         Err(err) => {
             if !is_request_abort_error(&err) {
@@ -7470,14 +7592,46 @@ pub async fn group_chat_regenerate(
             return Err(err);
         }
     };
+    let GroupGenerationOutput {
+        content: response_content,
+        reasoning,
+        usage: message_usage,
+        model_id: model_id_str,
+        used_lorebook_entries,
+        memory_refs,
+        generated_image_data_urls,
+        gemini_content,
+    } = output;
 
     let conn = pool.get_connection()?;
     let now = now_ms();
     let variant_id = Uuid::new_v4().to_string();
+    let attachment_owner = context
+        .session
+        .group_character_id
+        .as_deref()
+        .unwrap_or(&context.session.id);
+    let assistant_attachments = persistence::persist_group_attachments(
+        &app,
+        attachment_owner,
+        &session_id,
+        &message_id,
+        "assistant",
+        persistence::generated_image_attachments(generated_image_data_urls),
+    )?;
+    let attachments_json =
+        serde_json::to_string(&assistant_attachments).unwrap_or_else(|_| "[]".to_string());
+    let gemini_content_json = gemini_content
+        .as_ref()
+        .and_then(|value| serde_json::to_string(value).ok());
+    let mtp_stats_json = message_usage
+        .as_ref()
+        .and_then(|usage| usage.mtp_stats.as_ref())
+        .and_then(|value| serde_json::to_string(value).ok());
 
     conn.execute(
-        "INSERT INTO group_message_variants (id, message_id, content, speaker_character_id, created_at, reasoning, selection_reasoning, prompt_tokens, completion_tokens, total_tokens, model_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO group_message_variants (id, message_id, content, speaker_character_id, created_at, reasoning, selection_reasoning, prompt_tokens, completion_tokens, total_tokens, first_token_ms, tokens_per_second, mtp_stats, model_id, attachments, gemini_content, usage_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         rusqlite::params![
             variant_id,
             message_id,
@@ -7489,7 +7643,13 @@ pub async fn group_chat_regenerate(
             message_usage.as_ref().and_then(|u| u.prompt_tokens),
             message_usage.as_ref().and_then(|u| u.completion_tokens),
             message_usage.as_ref().and_then(|u| u.total_tokens),
+            message_usage.as_ref().and_then(|u| u.first_token_ms),
+            message_usage.as_ref().and_then(|u| u.tokens_per_second),
+            mtp_stats_json,
             model_id_str,
+            attachments_json,
+            gemini_content_json,
+            message_usage.as_ref().and_then(|usage| serde_json::to_string(usage).ok()),
         ],
     )
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -7504,7 +7664,7 @@ pub async fn group_chat_regenerate(
     );
 
     conn.execute(
-        "UPDATE group_messages SET content = ?1, speaker_character_id = ?2, selected_variant_id = ?3, used_lorebook_entries = ?4, reasoning = ?5, selection_reasoning = ?6, model_id = ?7 WHERE id = ?8",
+        "UPDATE group_messages SET content = ?1, speaker_character_id = ?2, selected_variant_id = ?3, used_lorebook_entries = ?4, reasoning = ?5, selection_reasoning = ?6, model_id = ?7, prompt_tokens = ?8, completion_tokens = ?9, total_tokens = ?10, first_token_ms = ?11, tokens_per_second = ?12, mtp_stats = ?13, attachments = ?14, gemini_content = ?15, memory_refs = ?16, usage_json = ?17 WHERE id = ?18",
         rusqlite::params![
             response_content,
             selected_character_id,
@@ -7513,6 +7673,16 @@ pub async fn group_chat_regenerate(
             reasoning,
             selection_reasoning,
             model_id_str,
+            message_usage.as_ref().and_then(|u| u.prompt_tokens),
+            message_usage.as_ref().and_then(|u| u.completion_tokens),
+            message_usage.as_ref().and_then(|u| u.total_tokens),
+            message_usage.as_ref().and_then(|u| u.first_token_ms),
+            message_usage.as_ref().and_then(|u| u.tokens_per_second),
+            mtp_stats_json,
+            attachments_json,
+            gemini_content_json,
+            serde_json::to_string(&memory_refs).unwrap_or_else(|_| "[]".to_string()),
+            message_usage.as_ref().and_then(|usage| serde_json::to_string(usage).ok()),
             message_id
         ],
     )
@@ -7558,6 +7728,7 @@ pub async fn group_chat_continue(
     app: AppHandle,
     session_id: String,
     force_character_id: Option<String>,
+    stream: Option<bool>,
     request_id: Option<String>,
     pool: State<'_, SwappablePool>,
 ) -> Result<String, String> {
@@ -7693,18 +7864,13 @@ pub async fn group_chat_continue(
         &settings,
         &pool,
         &req_id,
+        stream.unwrap_or(true),
+        None,
         UsageOperationType::GroupChatContinue,
     )
     .await;
 
-    let (
-        response_content,
-        reasoning,
-        message_usage,
-        model_id_str,
-        used_lorebook_entries,
-        memory_refs,
-    ) = match response_result {
+    let output = match response_result {
         Ok(result) => result,
         Err(err) => {
             if !is_request_abort_error(&err) {
@@ -7713,12 +7879,37 @@ pub async fn group_chat_continue(
             return Err(err);
         }
     };
+    let GroupGenerationOutput {
+        content: response_content,
+        reasoning,
+        usage: message_usage,
+        model_id: model_id_str,
+        used_lorebook_entries,
+        memory_refs,
+        generated_image_data_urls,
+        gemini_content,
+    } = output;
 
     let conn = pool.get_connection()?;
+    let assistant_message_id = Uuid::new_v4().to_string();
+    let attachment_owner = context
+        .session
+        .group_character_id
+        .as_deref()
+        .unwrap_or(&context.session.id);
+    let assistant_attachments = persistence::persist_group_attachments(
+        &app,
+        attachment_owner,
+        &session_id,
+        &assistant_message_id,
+        "assistant",
+        persistence::generated_image_attachments(generated_image_data_urls),
+    )?;
     let message = save_assistant_message(
         &app,
         &conn,
         &session_id,
+        Some(assistant_message_id),
         &selected_character_id,
         &response_content,
         reasoning.as_deref(),
@@ -7727,6 +7918,8 @@ pub async fn group_chat_continue(
         Some(&model_id_str),
         &used_lorebook_entries,
         &memory_refs,
+        &assistant_attachments,
+        gemini_content.as_ref(),
     )?;
 
     let _ = crate::storage_manager::llm_metrics::llm_metrics_attach_message(

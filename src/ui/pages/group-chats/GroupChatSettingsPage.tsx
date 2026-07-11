@@ -20,6 +20,8 @@ import {
   BookOpen,
   NotebookPen,
   Clapperboard,
+  History,
+  Settings,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -34,6 +36,11 @@ import { GroupAuthorNoteBottomMenu } from "./components";
 import { Switch } from "../../components/Switch";
 import { processBackgroundImage } from "../../../core/utils/image";
 import { storageBridge } from "../../../core/storage/files";
+import {
+  hasGroupSessionOverride,
+  type GroupSessionOverrideKey,
+} from "../../../core/storage/schemas";
+import { toast } from "../../components/toast";
 import { useAvatar } from "../../hooks/useAvatar";
 import { AvatarImage } from "../../components/AvatarImage";
 import React, { useState } from "react";
@@ -49,6 +56,39 @@ const PARTICIPATION_COLORS = [
   "bg-cyan-400",
   "bg-fuchsia-400",
 ];
+
+function OverrideStatusRow({
+  show,
+  label,
+  onReset,
+  disabled = false,
+}: {
+  show: boolean;
+  label?: string;
+  onReset: () => void;
+  disabled?: boolean;
+}) {
+  const { t } = useI18n();
+  if (!show) return null;
+  return (
+    <div className="mt-1.5 flex items-center justify-between gap-2 px-1">
+      <span className={cn(typography.caption.size, "text-fg/45")}>
+        {label ?? t("groupChats.overrides.overriddenLabel")}
+      </span>
+      <button
+        type="button"
+        onClick={onReset}
+        disabled={disabled}
+        className={cn(
+          typography.caption.size,
+          "font-medium text-accent/80 transition hover:text-accent disabled:opacity-50",
+        )}
+      >
+        {t("groupChats.overrides.useGroupDefault")}
+      </button>
+    </div>
+  );
+}
 
 // Main Component
 // ============================================================================
@@ -76,6 +116,7 @@ export function GroupChatSettingsPage({
     sessionLoading,
     backgroundImageData,
     updateSession,
+    group,
   } = useGroupChatLayoutContext();
 
   const {
@@ -94,6 +135,7 @@ export function GroupChatSettingsPage({
     setShowRemoveConfirm,
     handleSaveName,
     handleChangePersona,
+    handleClearOverride,
     handleAddCharacter,
     handleRemoveCharacter,
     handleChangeSpeakerSelectionMethod,
@@ -124,6 +166,7 @@ export function GroupChatSettingsPage({
   const [importingChatpkg, setImportingChatpkg] = useState(false);
   const [cloning, setCloning] = useState(false);
   const [branching, setBranching] = useState(false);
+  const [creatingChat, setCreatingChat] = useState(false);
   const personaAvatarUrl = useAvatar(
     "persona",
     currentPersona?.id ?? "",
@@ -193,6 +236,30 @@ export function GroupChatSettingsPage({
       backOrReplace(Routes.groupChat(groupSessionId));
     } else {
       backOrReplace(Routes.groupChats);
+    }
+  };
+
+  const hasProfile = Boolean(session?.groupCharacterId && group);
+
+  const isOverridden = (key: GroupSessionOverrideKey) =>
+    Boolean(session?.groupCharacterId) && !!session && hasGroupSessionOverride(session, key);
+
+  const goToFromSettings = (path: string) => {
+    if (isDrawer) onClose?.();
+    navigate(path);
+  };
+
+  const handleNewChat = async () => {
+    if (!session?.groupCharacterId || creatingChat) return;
+    setCreatingChat(true);
+    try {
+      const newSession = await storageBridge.groupCreateSession(session.groupCharacterId);
+      goToFromSettings(Routes.groupChat(newSession.id));
+    } catch (err) {
+      console.error("Failed to create new group chat:", err);
+      toast.error(t("groupChats.list.startChatFailed"));
+    } finally {
+      setCreatingChat(false);
     }
   };
 
@@ -334,7 +401,7 @@ export function GroupChatSettingsPage({
           onClick={() => navigate(Routes.groupChats)}
           className="mt-4 rounded-xl border border-fg/10 bg-fg/5 px-4 py-2 text-sm"
         >
-          Back to Group Chats
+          {t("groupChats.chatSettingsExtra.backToGroupChats")}
         </button>
       </div>
     );
@@ -581,56 +648,53 @@ export function GroupChatSettingsPage({
                     />
                   </label>
                 )}
+                <OverrideStatusRow
+                  show={isOverridden("backgroundImagePath")}
+                  onReset={() => void handleClearOverride("backgroundImagePath")}
+                  disabled={saving || savingBackground}
+                />
               </div>
             </div>
           </section>
 
-          {/* Quick Actions
-          <section className={spacing.item}>
-            <SectionHeader title="Quick Actions" />
-            <div className={spacing.field}>
-              <button
-                onClick={() => navigate(Routes.groupChatHistory)}
-                className={cn(
-                  "group flex w-full min-h-14 items-center justify-between",
-                  radius.md,
-                  "border p-4 text-left",
-                  interactive.transition.default,
-                  interactive.active.scale,
-                  "border-fg/10 bg-surface-el/85 backdrop-blur-sm hover:border-fg/20 hover:bg-fg/10",
-                )}
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div
-                    className={cn(
-                      "flex h-10 w-10 items-center justify-center",
-                      radius.full,
-                      "border border-fg/15 bg-fg/10 text-fg/80",
-                    )}
-                  >
-                    <History className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div
-                      className={cn(
-                        typography.overline.size,
-                        typography.overline.weight,
-                        typography.overline.tracking,
-                        typography.overline.transform,
-                        "text-fg/50",
-                      )}
-                    >
-                      Chat History
-                    </div>
-                    <div className={cn(typography.bodySmall.size, "text-fg truncate")}>
-                      View and manage conversations
-                    </div>
-                  </div>
-                </div>
-                <ChevronRight className="h-4 w-4 shrink-0 text-fg/30 transition-colors group-hover:text-fg/60" />
-              </button>
-            </div>
-          </section>*/}
+          {hasProfile && group && (
+            <section className={spacing.item}>
+              <SectionHeader
+                title={t("groupChats.sessionSettings.groupActionsTitle")}
+                subtitle={t("groupChats.sessionSettings.groupActionsSubtitle", {
+                  name: group.name,
+                })}
+              />
+              <div className={spacing.field}>
+                <QuickChip
+                  icon={<Plus className="h-4 w-4" />}
+                  label={t("groupChats.list.newChat")}
+                  value={
+                    creatingChat
+                      ? t("groupChats.list.startingChat")
+                      : t("groupChats.sessionSettings.newChatDesc")
+                  }
+                  onClick={() => void handleNewChat()}
+                  disabled={creatingChat}
+                />
+                <QuickChip
+                  icon={<History className="h-4 w-4" />}
+                  label={t("groupChats.list.chatHistory")}
+                  value={t("groupChats.sessionSettings.chatHistoryDesc")}
+                  onClick={() => goToFromSettings(Routes.groupChatHistory(group.id))}
+                />
+                <QuickChip
+                  icon={<Settings className="h-4 w-4" />}
+                  label={t("groupChats.list.groupSettings")}
+                  value={t("groupChats.sessionSettings.groupSettingsDesc")}
+                  onClick={() => goToFromSettings(Routes.groupSettings(group.id))}
+                />
+              </div>
+              <p className={cn(typography.caption.size, "mt-2 px-1 text-fg/45")}>
+                {t("groupChats.sessionSettings.overrideHint")}
+              </p>
+            </section>
+          )}
 
           {/* Quick Settings */}
           <section className={spacing.item}>
@@ -639,33 +703,47 @@ export function GroupChatSettingsPage({
               subtitle={t("chats.settings.quickSettingsDesc")}
             />
             <div className="grid grid-cols-1 gap-2">
-              <QuickChip
-                icon={
-                  personaAvatarUrl ? (
-                    <div className="h-full w-full overflow-hidden rounded-full">
-                      <AvatarImage
-                        src={personaAvatarUrl}
-                        alt={currentPersona?.title ?? "Persona"}
-                        crop={currentPersona?.avatarCrop}
-                        applyCrop
-                      />
-                    </div>
-                  ) : (
-                    <User className="h-4 w-4" />
-                  )
-                }
-                label={t("groupChats.sessionSettings.personaLabel")}
-                value={currentPersonaDisplay}
-                onClick={() => setShowPersonaSelector(true)}
-              />
-              <QuickChip
-                icon={<BookOpen className="h-4 w-4" />}
-                label={t("groupChats.settingsPageExtra.manageLorebooks")}
-                value={t("groupChats.sessionSettings.lorebooksAttached", {
-                  count: String(session.lorebookIds?.length ?? 0),
-                })}
-                onClick={() => navigate(Routes.groupChatLorebook(session.id))}
-              />
+              <div>
+                <QuickChip
+                  icon={
+                    personaAvatarUrl ? (
+                      <div className="h-full w-full overflow-hidden rounded-full">
+                        <AvatarImage
+                          src={personaAvatarUrl}
+                          alt={currentPersona?.title ?? "Persona"}
+                          crop={currentPersona?.avatarCrop}
+                          applyCrop
+                        />
+                      </div>
+                    ) : (
+                      <User className="h-4 w-4" />
+                    )
+                  }
+                  label={t("groupChats.sessionSettings.personaLabel")}
+                  value={currentPersonaDisplay}
+                  onClick={() => setShowPersonaSelector(true)}
+                />
+                <OverrideStatusRow
+                  show={isOverridden("personaId")}
+                  onReset={() => void handleClearOverride("personaId")}
+                  disabled={saving}
+                />
+              </div>
+              <div>
+                <QuickChip
+                  icon={<BookOpen className="h-4 w-4" />}
+                  label={t("groupChats.settingsPageExtra.manageLorebooks")}
+                  value={t("groupChats.sessionSettings.lorebooksAttached", {
+                    count: String(session.lorebookIds?.length ?? 0),
+                  })}
+                  onClick={() => navigate(Routes.groupChatLorebook(session.id))}
+                />
+                <OverrideStatusRow
+                  show={isOverridden("lorebookIds")}
+                  onReset={() => void handleClearOverride("lorebookIds")}
+                  disabled={saving}
+                />
+              </div>
               <QuickChip
                 icon={<NotebookPen className="h-4 w-4" />}
                 label={t("chats.authorNote.title")}
@@ -677,23 +755,30 @@ export function GroupChatSettingsPage({
                 onClick={() => setShowAuthorNoteMenu(true)}
               />
             </div>
-            <div
-              className={cn(
-                "flex w-full items-center justify-between gap-3 rounded-xl border border-fg/10 bg-surface-el/85 px-4 py-3 text-left",
-                interactive.transition.default,
-              )}
-            >
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-fg">
-                  {t("groupChats.sessionSettings.disableCharacterLorebooks")}
+            <div>
+              <div
+                className={cn(
+                  "flex w-full items-center justify-between gap-3 rounded-xl border border-fg/10 bg-surface-el/85 px-4 py-3 text-left",
+                  interactive.transition.default,
+                )}
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-fg">
+                    {t("groupChats.sessionSettings.disableCharacterLorebooks")}
+                  </div>
+                  <div className="mt-0.5 text-xs text-fg/50">
+                    {t("groupChats.sessionSettings.disableCharacterLorebooksDesc")}
+                  </div>
                 </div>
-                <div className="mt-0.5 text-xs text-fg/50">
-                  {t("groupChats.sessionSettings.disableCharacterLorebooksDesc")}
-                </div>
+                <Switch
+                  checked={!!session.disableCharacterLorebooks}
+                  onChange={(next) => void handleSetDisableCharacterLorebooks(next)}
+                />
               </div>
-              <Switch
-                checked={!!session.disableCharacterLorebooks}
-                onChange={(next) => void handleSetDisableCharacterLorebooks(next)}
+              <OverrideStatusRow
+                show={isOverridden("disableCharacterLorebooks")}
+                onReset={() => void handleClearOverride("disableCharacterLorebooks")}
+                disabled={saving}
               />
             </div>
           </section>
@@ -795,6 +880,11 @@ export function GroupChatSettingsPage({
                 </div>
               )}
             </div>
+            <OverrideStatusRow
+              show={isOverridden("speakerSelectionMethod")}
+              onReset={() => void handleClearOverride("speakerSelectionMethod")}
+              disabled={saving}
+            />
           </section>
 
           {/* Characters Section */}
@@ -932,6 +1022,18 @@ export function GroupChatSettingsPage({
               </AnimatePresence>
             </div>
 
+            <OverrideStatusRow
+              show={isOverridden("characterIds")}
+              label={t("groupChats.overrides.participantsOverridden")}
+              onReset={() => void handleClearOverride("characterIds")}
+              disabled={saving}
+            />
+            <OverrideStatusRow
+              show={isOverridden("mutedCharacterIds")}
+              label={t("groupChats.overrides.mutedOverridden")}
+              onReset={() => void handleClearOverride("mutedCharacterIds")}
+              disabled={saving}
+            />
             {groupCharacters.length <= 2 && (
               <p className="mt-2 text-xs text-fg/40 text-center">
                 {t("groupChats.sessionSettings.groupMinCharacters")}

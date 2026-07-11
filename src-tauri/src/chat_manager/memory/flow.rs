@@ -1114,67 +1114,14 @@ fn resolve_conversation_index_by_message_id(
 /// Resolve the last valid cursor (windowEnd) from memory tool events by anchoring on message IDs.
 /// This self-heals when messages are deleted (counts shrink) or the conversation is rewound.
 /// Returns (window_end_index, cursor_rewound).
-fn memory_event_advances_cursor(event: &Value) -> bool {
-    !matches!(event.get("status").and_then(Value::as_str), Some("error"))
-}
-
 fn resolve_last_valid_window_end(
     app: &AppHandle,
     session: &Session,
 ) -> Result<(usize, bool), String> {
-    if session.memory_tool_events.is_empty() {
-        return Ok((0, false));
-    }
-
-    // Walk backwards to find the newest event whose last summarized message still exists.
-    for (rev_idx, event) in session
-        .memory_tool_events
-        .iter()
-        .rev()
-        .filter(|event| memory_event_advances_cursor(event))
-        .enumerate()
-    {
-        let end_id = event
-            .get("windowMessageIds")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.last())
-            .and_then(|v| v.as_str());
-
-        let Some(end_id) = end_id else {
-            continue;
-        };
-
-        if let Some(window_end) =
-            resolve_conversation_index_by_message_id(app, &session.id, end_id)?
-        {
-            // If we had to skip one or more newer events, the conversation was rewound.
-            return Ok((window_end, rev_idx != 0));
-        }
-    }
-
-    // No event could be anchored; treat as rewind (cursor reset).
-    Ok((0, true))
-}
-
-#[cfg(test)]
-mod memory_cursor_tests {
-    use super::memory_event_advances_cursor;
-    use serde_json::json;
-
-    #[test]
-    fn failed_memory_event_does_not_advance_cursor() {
-        assert!(!memory_event_advances_cursor(&json!({
-            "status": "error",
-            "windowEnd": 346
-        })));
-    }
-
-    #[test]
-    fn successful_legacy_memory_event_advances_cursor() {
-        assert!(memory_event_advances_cursor(&json!({
-            "windowEnd": 288
-        })));
-    }
+    crate::conversation_manager::memory::resolve_last_valid_window_end(
+        &session.memory_tool_events,
+        |end_id| resolve_conversation_index_by_message_id(app, &session.id, end_id),
+    )
 }
 
 fn cancel_dynamic_memory_cycle(
@@ -1248,6 +1195,7 @@ fn fetch_conversation_messages_range(
                 attachments: Vec::new(),
                 reasoning: None,
                 model_id: None,
+                gemini_content: None,
             })
         })
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;

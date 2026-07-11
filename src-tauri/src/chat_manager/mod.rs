@@ -74,3 +74,5 @@ pub use commands::{
     skip_dynamic_memory_cycle, trigger_dynamic_memory, update_prompt_template,
     validate_template_variables,
 };
+
+pub(crate) use commands::take_aborted_request;
