@@ -7,7 +7,7 @@ use crate::storage_manager::settings::{read_settings_typed, write_settings_typed
 use crate::utils::log_info;
 
 /// Current migration version
-pub const CURRENT_MIGRATION_VERSION: u32 = 79;
+pub const CURRENT_MIGRATION_VERSION: u32 = 80;
 
 pub fn run_migrations(app: &AppHandle) -> Result<(), String> {
     log_info(app, "migrations", "Starting migration check");
@@ -827,6 +827,16 @@ pub fn run_migrations(app: &AppHandle) -> Result<(), String> {
         );
         migrate_v78_to_v79(app)?;
         version = 79;
+    }
+
+    if version < 80 {
+        log_info(
+            app,
+            "migrations",
+            "Running migration v79 -> v80: Add custom_system_prompt to characters",
+        );
+        migrate_v79_to_v80(app)?;
+        version = 80;
     }
 
     // Update the stored version
@@ -4125,6 +4135,15 @@ fn migrate_v78_to_v79(app: &AppHandle) -> Result<(), String> {
     let _ = conn.execute("ALTER TABLE group_messages ADD COLUMN usage_json TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE group_message_variants ADD COLUMN usage_json TEXT",
+        [],
+    );
+    Ok(())
+}
+
+fn migrate_v79_to_v80(app: &AppHandle) -> Result<(), String> {
+    let conn = crate::storage_manager::db::open_db(app)?;
+    let _ = conn.execute(
+        "ALTER TABLE characters ADD COLUMN custom_system_prompt TEXT",
         [],
     );
     Ok(())

@@ -49,9 +49,10 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
         Option<String>,
         i64,
         i64,
+        Option<String>,
     ) = conn
         .query_row(
-            "SELECT name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, card_type, design_description, design_reference_image_ids, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, mode, companion, prompt_template_id, active_lorebook_ids, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, avatar_gradient_source, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, default_chat_template_id, created_at, updated_at FROM characters WHERE id = ?",
+            "SELECT name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, card_type, design_description, design_reference_image_ids, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, mode, companion, prompt_template_id, active_lorebook_ids, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, avatar_gradient_source, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, default_chat_template_id, created_at, updated_at, custom_system_prompt FROM characters WHERE id = ?",
             params![id],
             |r| Ok((
                 r.get::<_, String>(0)?,
@@ -96,7 +97,8 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
                 r.get::<_, Option<String>>(39)?,
                 r.get::<_, Option<String>>(40)?,
                 r.get::<_, i64>(41)?,
-                r.get::<_, i64>(42)?
+                r.get::<_, i64>(42)?,
+                r.get::<_, Option<String>>(43)?
             )),
         )
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
@@ -144,6 +146,7 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
         default_chat_template_id,
         created_at,
         updated_at,
+        custom_system_prompt,
     ) = row;
 
     // rules
@@ -412,6 +415,11 @@ fn read_character(conn: &rusqlite::Connection, id: &str) -> Result<JsonValue, St
     }
     if let Some(sp) = system_prompt {
         root.insert("systemPrompt".into(), JsonValue::String(sp));
+    }
+    if let Some(csp) = custom_system_prompt {
+        if !csp.trim().is_empty() {
+            root.insert("customSystemPrompt".into(), JsonValue::String(csp));
+        }
     }
     if let Some(vc) = voice_config {
         if let Ok(value) = serde_json::from_str::<JsonValue>(&vc) {
@@ -726,6 +734,11 @@ fn upsert_character_value(app: &tauri::AppHandle, c: &JsonValue) -> Result<JsonV
         .get("systemPrompt")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let custom_system_prompt = c
+        .get("customSystemPrompt")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty());
     let memory_type = match c.get("memoryType").and_then(|v| v.as_str()) {
         Some("dynamic") => "dynamic".to_string(),
         _ => "manual".to_string(),
@@ -799,8 +812,8 @@ fn upsert_character_value(app: &tauri::AppHandle, c: &JsonValue) -> Result<JsonV
         .unwrap_or_else(|| "[]".to_string());
 
     tx.execute(
-        r#"INSERT INTO characters (id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, card_type, design_description, design_reference_image_ids, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, mode, companion, prompt_template_id, active_lorebook_ids, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, avatar_gradient_source, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        r#"INSERT INTO characters (id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, card_type, design_description, design_reference_image_ids, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, mode, companion, prompt_template_id, active_lorebook_ids, group_chat_prompt_template_id, group_chat_roleplay_prompt_template_id, system_prompt, custom_system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, avatar_gradient_source, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, chat_appearance, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name=excluded.name,
               avatar_path=excluded.avatar_path,
@@ -831,6 +844,7 @@ fn upsert_character_value(app: &tauri::AppHandle, c: &JsonValue) -> Result<JsonV
               group_chat_prompt_template_id=excluded.group_chat_prompt_template_id,
               group_chat_roleplay_prompt_template_id=excluded.group_chat_roleplay_prompt_template_id,
               system_prompt=excluded.system_prompt,
+              custom_system_prompt=excluded.custom_system_prompt,
               voice_config=excluded.voice_config,
               voice_autoplay=excluded.voice_autoplay,
               memory_type=excluded.memory_type,
@@ -873,6 +887,7 @@ fn upsert_character_value(app: &tauri::AppHandle, c: &JsonValue) -> Result<JsonV
             group_chat_prompt_template_id,
             group_chat_roleplay_prompt_template_id,
             system_prompt,
+            custom_system_prompt,
             voice_config,
             voice_autoplay,
             memory_type,
@@ -1588,7 +1603,7 @@ mod read_character_positional_tests {
                 source TEXT, tags TEXT, default_scene_id TEXT, default_model_id TEXT,
                 mode TEXT, companion TEXT, prompt_template_id TEXT, active_lorebook_ids TEXT,
                 group_chat_prompt_template_id TEXT, group_chat_roleplay_prompt_template_id TEXT,
-                system_prompt TEXT, voice_config TEXT, voice_autoplay INTEGER,
+                system_prompt TEXT, custom_system_prompt TEXT, voice_config TEXT, voice_autoplay INTEGER,
                 memory_type TEXT, disable_avatar_gradient INTEGER, avatar_gradient_source TEXT,
                 custom_gradient_enabled INTEGER, custom_gradient_colors TEXT, custom_text_color TEXT,
                 custom_text_secondary TEXT, chat_appearance TEXT, default_chat_template_id TEXT,
