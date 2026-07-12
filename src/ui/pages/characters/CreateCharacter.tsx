@@ -225,7 +225,10 @@ export function CreateCharacterPage() {
         .filter(Boolean),
       characterBook: state.importedCharacterBook,
       defaultModelId: state.selectedModelId,
-      promptTemplateId: state.customSystemPromptEnabled ? null : state.systemPromptTemplateId,
+      promptTemplateId:
+        state.customSystemPromptEnabled && state.customSystemPrompt.trim()
+          ? null
+          : state.systemPromptTemplateId,
       customSystemPrompt: state.customSystemPromptEnabled ? state.customSystemPrompt : null,
       companion:
         state.mode === "companion"
@@ -233,9 +236,11 @@ export function CreateCharacterPage() {
               ...(state.companion ?? {}),
               prompting: {
                 ...(state.companion?.prompting ?? {}),
-                promptTemplateId: state.companionCustomSystemPromptEnabled
-                  ? null
-                  : state.companionPromptTemplateId,
+                promptTemplateId:
+                  state.companionCustomSystemPromptEnabled &&
+                  state.companionCustomSystemPrompt.trim()
+                    ? null
+                    : state.companionPromptTemplateId,
                 customSystemPrompt: state.companionCustomSystemPromptEnabled
                   ? state.companionCustomSystemPrompt
                   : null,
