@@ -571,6 +571,17 @@ export const trMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "İlgili anıların listesi",
       },
     },
+    customSystemPrompt: {
+      label: "Karakter Sistem Promptu",
+      placeholder: "Bu karakterin sistem promptunu yaz…",
+      originalHint:
+        "varsayılan sistem promptuna genişler, böylece üzerine karakter talimatları ekleyebilirsin. {{char.name}} gibi bağlam değişkenleri çalışmaya devam eder.",
+      insertOriginal: "Varsayılan promptu ekle",
+      previewButton: "Önizleme",
+      previewHide: "Önizlemeyi gizle",
+      previewFailed: "<önizleme oluşturulamadı>",
+      unknownTokens: "Bilinmeyen değişkenler: {{tokens}}",
+    },
     characterExport: {
       title: "Dışa aktarma formatı",
       selectFormat: "Bir format seç",
@@ -3198,6 +3209,7 @@ export const trMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Uygulama varsayılanını kullan",
       companionPromptHint: "Tamamlayıcı bilgi istemi olarak ayrı olarak saklanır. ",
       systemPromptHint: "Özel bir sistem istemi seçin veya varsayılanı kullanın.",
+      customPromptOption: "Özel (bu karakter)",
       groupChatConvLabel: "Grup Sohbet İstemi (Konuşma)",
       groupChatConvHint: "Grup sohbetlerinde bu karakterin konuşma istemini geçersiz kıl",
       groupChatRpLabel: "Grup Sohbet İstemi (Rol Oynama)",
@@ -3693,6 +3705,7 @@ export const trMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Şablonlar yükleniyor...",
       useDefaultCompanionPrompt: "Varsayılan yoldaş komutunu kullan",
       useDefaultSystemPrompt: "Varsayılan sistem komutunu kullan",
+      customPromptOption: "Özel (bu karakter)",
       usingAppDefault: "Uygulama varsayılanı kullanılıyor",
       noCompanionTemplatesHint: "Henüz özel yoldaş şablonları yok. Ayarlar → Komutlar kısmından bir tane oluşturun.",
       noDirectTemplatesHint: "Henüz özel doğrudan sohbet şablonları yok. Ayarlar → Komutlar kısmından bir tane oluşturun.",

@@ -571,6 +571,17 @@ export const deMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Liste relevanter Erinnerungen",
       },
     },
+    customSystemPrompt: {
+      label: "System-Prompt des Charakters",
+      placeholder: "Schreibe den System-Prompt dieses Charakters…",
+      originalHint:
+        "wird zum Standard-System-Prompt erweitert, sodass du eigene Charakteranweisungen darauf aufbauen kannst. Kontextvariablen wie {{char.name}} funktionieren weiterhin.",
+      insertOriginal: "Standard-Prompt einfügen",
+      previewButton: "Vorschau",
+      previewHide: "Vorschau ausblenden",
+      previewFailed: "<Vorschau konnte nicht gerendert werden>",
+      unknownTokens: "Unbekannte Variablen: {{tokens}}",
+    },
     characterExport: {
       title: "Exportformat",
       selectFormat: "Format auswählen",
@@ -3198,6 +3209,7 @@ export const deMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "App-Standard verwenden",
       companionPromptHint: "Wird separat als Companion-Prompt gespeichert. Der normale Roleplay-System-Prompt wird nicht geändert.",
       systemPromptHint: "Wähle einen eigenen System-Prompt oder verwende den Standard.",
+      customPromptOption: "Benutzerdefiniert (dieser Charakter)",
       groupChatConvLabel: "Gruppenchat-Prompt (Gespräch)",
       groupChatConvHint: "Überschreibe den Gesprächs-Prompt dieses Charakters in Gruppenchats",
       groupChatRpLabel: "Gruppenchat-Prompt (Roleplay)",
@@ -3693,6 +3705,7 @@ export const deMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Vorlagen werden geladen...",
       useDefaultCompanionPrompt: "Standard-Companion-Prompt verwenden",
       useDefaultSystemPrompt: "Standard-System-Prompt verwenden",
+      customPromptOption: "Benutzerdefiniert (dieser Charakter)",
       usingAppDefault: "App-Standard wird verwendet",
       noCompanionTemplatesHint: "Noch keine benutzerdefinierten Companion-Vorlagen. Erstelle eine unter Einstellungen zu Prompts.",
       noDirectTemplatesHint: "Noch keine benutzerdefinierten Direkt-Chat-Vorlagen. Erstelle eine unter Einstellungen zu Prompts.",

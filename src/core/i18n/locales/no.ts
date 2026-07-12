@@ -571,6 +571,17 @@ export const noMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Liste over relevante minner",
       },
     },
+    customSystemPrompt: {
+      label: "Karakterens systemprompt",
+      placeholder: "Skriv systempromten for denne karakteren…",
+      originalHint:
+        "utvides til standard systemprompt, slik at du kan legge karakterinstruksjoner oppå den. Kontekstvariabler som {{char.name}} fungerer fortsatt.",
+      insertOriginal: "Sett inn standardprompt",
+      previewButton: "Forhåndsvisning",
+      previewHide: "Skjul forhåndsvisning",
+      previewFailed: "<klarte ikke å gjengi forhåndsvisning>",
+      unknownTokens: "Ukjente variabler: {{tokens}}",
+    },
     characterExport: {
       title: "Eksportformat",
       selectFormat: "Velg et format",
@@ -3198,6 +3209,7 @@ export const noMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Bruk app-standard",
       companionPromptHint: "Lagres separat som kompanjong-prompten. Den normale rollespill-systemprompt endres ikke.",
       systemPromptHint: "Velg en tilpasset systemprompt eller bruk standarden.",
+      customPromptOption: "Tilpasset (denne karakteren)",
       groupChatConvLabel: "Gruppechat-prompt (samtale)",
       groupChatConvHint: "Overstyr denne karakterens samtale-prompt i gruppechatter",
       groupChatRpLabel: "Gruppechat-prompt (rollespill)",
@@ -3693,6 +3705,7 @@ export const noMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Laster maler...",
       useDefaultCompanionPrompt: "Bruk standard følgesvennprompt",
       useDefaultSystemPrompt: "Bruk standard systemprompt",
+      customPromptOption: "Tilpasset (denne karakteren)",
       usingAppDefault: "Bruker appstandard",
       noCompanionTemplatesHint: "Ingen egendefinerte følgesvennmaler ennå. Opprett en i Innstillinger til Prompter.",
       noDirectTemplatesHint: "Ingen egendefinerte maler for direktechat ennå. Opprett en i Innstillinger til Prompter.",

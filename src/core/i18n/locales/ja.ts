@@ -571,6 +571,17 @@ export const jaMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "関連する記憶のリスト",
       },
     },
+    customSystemPrompt: {
+      label: "キャラクターのシステムプロンプト",
+      placeholder: "このキャラクターのシステムプロンプトを入力してください…",
+      originalHint:
+        "既定のシステムプロンプトに展開されるため、その上にキャラクター独自の指示を重ねることができます。{{char.name}} のようなコンテキスト変数も引き続き機能します。",
+      insertOriginal: "既定のプロンプトを挿入",
+      previewButton: "プレビュー",
+      previewHide: "プレビューを隠す",
+      previewFailed: "<プレビューのレンダリングに失敗しました>",
+      unknownTokens: "不明な変数: {{tokens}}",
+    },
     characterExport: {
       title: "エクスポート形式",
       selectFormat: "形式を選択",
@@ -3198,6 +3209,7 @@ export const jaMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "アプリのデフォルトを使用",
       companionPromptHint: "コンパニオンプロンプトとして別途保存されます。通常のロールプレイシステムプロンプトは変更されません。",
       systemPromptHint: "カスタムシステムプロンプトを選択するか、デフォルトを使用します。",
+      customPromptOption: "カスタム（このキャラクター）",
       groupChatConvLabel: "グループチャットプロンプト(会話)",
       groupChatConvHint: "グループチャットでこのキャラクターの会話プロンプトを上書きします",
       groupChatRpLabel: "グループチャットプロンプト(ロールプレイ)",
@@ -3693,6 +3705,7 @@ export const jaMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "テンプレートを読み込み中...",
       useDefaultCompanionPrompt: "既定のコンパニオンプロンプトを使用",
       useDefaultSystemPrompt: "既定のシステムプロンプトを使用",
+      customPromptOption: "カスタム（このキャラクター）",
       usingAppDefault: "アプリの既定を使用中",
       noCompanionTemplatesHint: "カスタムのコンパニオンテンプレートはまだありません。「設定」→「プロンプト」で作成してください。",
       noDirectTemplatesHint: "カスタムの直接チャットテンプレートはまだありません。「設定」→「プロンプト」で作成してください。",

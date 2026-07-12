@@ -571,6 +571,17 @@ export const nlMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Lijst van relevante herinneringen",
       },
     },
+    customSystemPrompt: {
+      label: "Systeemprompt van personage",
+      placeholder: "Schrijf de systeemprompt van dit personage…",
+      originalHint:
+        "wordt uitgebreid naar de standaard systeemprompt, zodat je er personage-instructies bovenop kunt leggen. Contextvariabelen zoals {{char.name}} blijven werken.",
+      insertOriginal: "Standaardprompt invoegen",
+      previewButton: "Voorbeeld",
+      previewHide: "Voorbeeld verbergen",
+      previewFailed: "<voorbeeld renderen mislukt>",
+      unknownTokens: "Onbekende variabelen: {{tokens}}",
+    },
     characterExport: {
       title: "Exportformaat",
       selectFormat: "Selecteer een formaat",
@@ -3198,6 +3209,7 @@ export const nlMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "App-standaard gebruiken",
       companionPromptHint: "Afzonderlijk opgeslagen als de metgezelprompt. De normale roleplay-systeemprompt wordt niet gewijzigd.",
       systemPromptHint: "Kies een aangepaste systeemprompt of gebruik de standaard.",
+      customPromptOption: "Aangepast (dit personage)",
       groupChatConvLabel: "Groepsgatprompt (Gesprek)",
       groupChatConvHint: "Overschrijf de gespreksprompt van dit karakter in groepschats",
       groupChatRpLabel: "Groepsgatprompt (Roleplay)",
@@ -3693,6 +3705,7 @@ export const nlMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Templates laden...",
       useDefaultCompanionPrompt: "Gebruik standaard companion-prompt",
       useDefaultSystemPrompt: "Gebruik standaard systeemprompt",
+      customPromptOption: "Aangepast (dit personage)",
       usingAppDefault: "App-standaard in gebruik",
       noCompanionTemplatesHint: "Nog geen aangepaste companion-templates. Maak er een in Instellingen bij Prompts.",
       noDirectTemplatesHint: "Nog geen aangepaste directe-chat-templates. Maak er een in Instellingen bij Prompts.",

@@ -571,6 +571,17 @@ export const plMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Lista istotnych wspomnień",
       },
     },
+    customSystemPrompt: {
+      label: "Prompt systemowy postaci",
+      placeholder: "Napisz prompt systemowy tej postaci…",
+      originalHint:
+        "rozwija się do domyślnego promptu systemowego, dzięki czemu możesz dodać na nim instrukcje postaci. Zmienne kontekstowe, takie jak {{char.name}}, nadal działają.",
+      insertOriginal: "Wstaw domyślny prompt",
+      previewButton: "Podgląd",
+      previewHide: "Ukryj podgląd",
+      previewFailed: "<nie udało się wyrenderować podglądu>",
+      unknownTokens: "Nieznane zmienne: {{tokens}}",
+    },
     characterExport: {
       title: "Format eksportu",
       selectFormat: "Wybierz format",
@@ -3198,6 +3209,7 @@ export const plMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Użyj domyślnego aplikacji",
       companionPromptHint: "Przechowywany oddzielnie jako prompt towarzysza. Normalny prompt systemowy RPG nie jest zmieniany.",
       systemPromptHint: "Wybierz niestandardowy prompt systemowy lub użyj domyślnego.",
+      customPromptOption: "Niestandardowy (ta postać)",
       groupChatConvLabel: "Prompt czatu grupowego (rozmowa)",
       groupChatConvHint: "Zastąp prompt rozmowy tej postaci w czatach grupowych",
       groupChatRpLabel: "Prompt czatu grupowego (RPG)",
@@ -3693,6 +3705,7 @@ export const plMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Ładowanie szablonów...",
       useDefaultCompanionPrompt: "Użyj domyślnego promptu towarzysza",
       useDefaultSystemPrompt: "Użyj domyślnego promptu systemowego",
+      customPromptOption: "Niestandardowy (ta postać)",
       usingAppDefault: "Używa domyślnego aplikacji",
       noCompanionTemplatesHint: "Brak niestandardowych szablonów towarzysza. Utwórz jeden w Ustawieniach w sekcji Prompty.",
       noDirectTemplatesHint: "Brak niestandardowych szablonów czatu bezpośredniego. Utwórz jeden w Ustawieniach w sekcji Prompty.",

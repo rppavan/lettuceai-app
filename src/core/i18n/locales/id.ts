@@ -571,6 +571,17 @@ export const idMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Daftar memori yang relevan",
       },
     },
+    customSystemPrompt: {
+      label: "Prompt Sistem Karakter",
+      placeholder: "Tulis prompt sistem karakter ini…",
+      originalHint:
+        "meluas menjadi prompt sistem default, sehingga Anda dapat menambahkan instruksi karakter di atasnya. Variabel konteks seperti {{char.name}} tetap berfungsi.",
+      insertOriginal: "Sisipkan prompt default",
+      previewButton: "Pratinjau",
+      previewHide: "Sembunyikan pratinjau",
+      previewFailed: "<gagal merender pratinjau>",
+      unknownTokens: "Variabel tidak dikenal: {{tokens}}",
+    },
     characterExport: {
       title: "Format Ekspor",
       selectFormat: "Pilih format",
@@ -3198,6 +3209,7 @@ export const idMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Gunakan bawaan aplikasi",
       companionPromptHint: "Disimpan secara terpisah sebagai prompt companion. Prompt sistem roleplay normal tidak diubah.",
       systemPromptHint: "Pilih prompt sistem kustom atau gunakan bawaan.",
+      customPromptOption: "Kustom (karakter ini)",
       groupChatConvLabel: "Prompt Obrolan Grup (Percakapan)",
       groupChatConvHint: "Timpa prompt percakapan karakter ini dalam obrolan grup",
       groupChatRpLabel: "Prompt Obrolan Grup (Roleplay)",
@@ -3693,6 +3705,7 @@ export const idMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Memuat templat...",
       useDefaultCompanionPrompt: "Gunakan prompt companion default",
       useDefaultSystemPrompt: "Gunakan prompt sistem default",
+      customPromptOption: "Kustom (karakter ini)",
       usingAppDefault: "Memakai bawaan aplikasi",
       noCompanionTemplatesHint: "Belum ada templat companion kustom. Buat satu di Pengaturan ke Prompt.",
       noDirectTemplatesHint: "Belum ada templat obrolan langsung kustom. Buat satu di Pengaturan ke Prompt.",

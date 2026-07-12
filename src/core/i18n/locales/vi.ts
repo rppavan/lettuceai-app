@@ -571,6 +571,17 @@ export const viMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Danh sách ký ức liên quan",
       },
     },
+    customSystemPrompt: {
+      label: "Prompt hệ thống của nhân vật",
+      placeholder: "Viết prompt hệ thống của nhân vật này…",
+      originalHint:
+        "mở rộng thành prompt hệ thống mặc định, để bạn có thể thêm hướng dẫn riêng cho nhân vật lên trên. Các biến ngữ cảnh như {{char.name}} vẫn hoạt động.",
+      insertOriginal: "Chèn prompt mặc định",
+      previewButton: "Xem trước",
+      previewHide: "Ẩn xem trước",
+      previewFailed: "<không thể hiển thị bản xem trước>",
+      unknownTokens: "Biến không xác định: {{tokens}}",
+    },
     characterExport: {
       title: "Định dạng xuất",
       selectFormat: "Chọn định dạng",
@@ -3198,6 +3209,7 @@ export const viMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Use app default",
       companionPromptHint: "Stored separately as the companion prompt. The normal roleplay system prompt is not changed.",
       systemPromptHint: "Choose a custom system prompt or use the default.",
+      customPromptOption: "Tùy chỉnh (nhân vật này)",
       groupChatConvLabel: "Group Chat Prompt (Conversation)",
       groupChatConvHint: "Override this character's conversation prompt in group chats",
       groupChatRpLabel: "Group Chat Prompt (Roleplay)",
@@ -3693,6 +3705,7 @@ export const viMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Đang tải mẫu...",
       useDefaultCompanionPrompt: "Dùng prompt bạn đồng hành mặc định",
       useDefaultSystemPrompt: "Dùng prompt hệ thống mặc định",
+      customPromptOption: "Tùy chỉnh (nhân vật này)",
       usingAppDefault: "Đang dùng mặc định ứng dụng",
       noCompanionTemplatesHint: "Chưa có mẫu bạn đồng hành tùy chỉnh nào. Tạo một mẫu trong Cài đặt đến Prompt.",
       noDirectTemplatesHint: "Chưa có mẫu trò chuyện trực tiếp tùy chỉnh nào. Tạo một mẫu trong Cài đặt đến Prompt.",

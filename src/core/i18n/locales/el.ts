@@ -571,6 +571,17 @@ export const elMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Λίστα σχετικών αναμνήσεων",
       },
     },
+    customSystemPrompt: {
+      label: "System Prompt Χαρακτήρα",
+      placeholder: "Γράψτε το system prompt αυτού του χαρακτήρα…",
+      originalHint:
+        "επεκτείνεται στο προεπιλεγμένο system prompt, ώστε να μπορείτε να προσθέσετε οδηγίες χαρακτήρα από πάνω. Οι μεταβλητές περιβάλλοντος όπως το {{char.name}} συνεχίζουν να λειτουργούν.",
+      insertOriginal: "Εισαγωγή προεπιλεγμένου prompt",
+      previewButton: "Προεπισκόπηση",
+      previewHide: "Απόκρυψη προεπισκόπησης",
+      previewFailed: "<αποτυχία απόδοσης προεπισκόπησης>",
+      unknownTokens: "Άγνωστες μεταβλητές: {{tokens}}",
+    },
     characterExport: {
       title: "Μορφή Εξαγωγής",
       selectFormat: "Επιλέξτε μορφή",
@@ -3198,6 +3209,7 @@ export const elMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Χρήση προεπιλογής εφαρμογής",
       companionPromptHint: "Αποθηκεύεται ξεχωριστά ως προτροπή συντρόφου. Η κανονική προτροπή συστήματος roleplay δεν αλλάζει.",
       systemPromptHint: "Επιλέξτε προσαρμοσμένη προτροπή συστήματος ή χρησιμοποιήστε την προεπιλογή.",
+      customPromptOption: "Προσαρμοσμένο (αυτός ο χαρακτήρας)",
       groupChatConvLabel: "Προτροπή Ομαδικής Συνομιλίας (Συζήτηση)",
       groupChatConvHint: "Παράκαμψη προτροπής συζήτησης αυτού του χαρακτήρα στις ομαδικές συνομιλίες",
       groupChatRpLabel: "Προτροπή Ομαδικής Συνομιλίας (Roleplay)",
@@ -3693,6 +3705,7 @@ export const elMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Φόρτωση προτύπων...",
       useDefaultCompanionPrompt: "Χρήση προεπιλεγμένου prompt συνοδού",
       useDefaultSystemPrompt: "Χρήση προεπιλεγμένου system prompt",
+      customPromptOption: "Προσαρμοσμένο (αυτός ο χαρακτήρας)",
       usingAppDefault: "Χρήση προεπιλογών εφαρμογής",
       noCompanionTemplatesHint: "Δεν υπάρχουν ακόμα προσαρμοσμένα πρότυπα συνοδού. Δημιουργήστε ένα στις Ρυθμίσεις → Prompts.",
       noDirectTemplatesHint: "Δεν υπάρχουν ακόμα προσαρμοσμένα πρότυπα άμεσης συνομιλίας. Δημιουργήστε ένα στις Ρυθμίσεις → Prompts.",

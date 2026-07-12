@@ -571,6 +571,17 @@ export const zhHantMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "相關記憶列表",
       },
     },
+    customSystemPrompt: {
+      label: "角色系統提示詞",
+      placeholder: "撰寫此角色的系統提示詞…",
+      originalHint:
+        "會展開為預設系統提示詞，因此你可以在其基礎上疊加角色指令。{{char.name}} 等上下文變數仍可正常運作。",
+      insertOriginal: "插入預設提示詞",
+      previewButton: "預覽",
+      previewHide: "隱藏預覽",
+      previewFailed: "<預覽渲染失敗>",
+      unknownTokens: "未知變數：{{tokens}}",
+    },
     characterExport: {
       title: "匯出格式",
       selectFormat: "選擇格式",
@@ -3198,6 +3209,7 @@ export const zhHantMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "使用應用程式預設值",
       companionPromptHint: "單獨儲存為夥伴提示。正常的角色扮演系統提示不會被變更。",
       systemPromptHint: "選擇自訂系統提示或使用預設值。",
+      customPromptOption: "自訂（此角色）",
       groupChatConvLabel: "群聊提示（對話）",
       groupChatConvHint: "在群聊中覆寫此角色的對話提示",
       groupChatRpLabel: "群聊提示（角色扮演）",
@@ -3693,6 +3705,7 @@ export const zhHantMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "正在載入模板...",
       useDefaultCompanionPrompt: "使用預設同伴提示詞",
       useDefaultSystemPrompt: "使用預設系統提示詞",
+      customPromptOption: "自訂（此角色）",
       usingAppDefault: "使用應用程式預設值",
       noCompanionTemplatesHint: "尚無自定義同伴模板。請在「設定」>「提示詞」中建立。",
       noDirectTemplatesHint: "尚無自定義直接聊天模板。請在「設定」>「提示詞」中建立。",

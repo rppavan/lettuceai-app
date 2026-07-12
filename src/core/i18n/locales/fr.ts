@@ -571,6 +571,17 @@ export const frMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Liste des souvenirs pertinents",
       },
     },
+    customSystemPrompt: {
+      label: "Prompt système du personnage",
+      placeholder: "Écrivez le prompt système de ce personnage…",
+      originalHint:
+        "se développe vers le prompt système par défaut, ce qui vous permet d'ajouter des instructions de personnage par-dessus. Les variables de contexte comme {{char.name}} continuent de fonctionner.",
+      insertOriginal: "Insérer le prompt par défaut",
+      previewButton: "Aperçu",
+      previewHide: "Masquer l'aperçu",
+      previewFailed: "<échec du rendu de l'aperçu>",
+      unknownTokens: "Variables inconnues : {{tokens}}",
+    },
     characterExport: {
       title: "Format d'exportation",
       selectFormat: "Sélectionner un format",
@@ -3198,6 +3209,7 @@ export const frMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Utiliser la valeur par défaut de l'app",
       companionPromptHint: "Stocké séparément en tant que prompt compagnon. Le prompt système de roleplay normal n'est pas modifié.",
       systemPromptHint: "Choisis un prompt système personnalisé ou utilise celui par défaut.",
+      customPromptOption: "Personnalisé (ce personnage)",
       groupChatConvLabel: "Prompt de chat de groupe (Conversation)",
       groupChatConvHint: "Surcharge le prompt de conversation de ce personnage dans les chats de groupe",
       groupChatRpLabel: "Prompt de chat de groupe (Roleplay)",
@@ -3693,6 +3705,7 @@ export const frMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Chargement des modèles...",
       useDefaultCompanionPrompt: "Utiliser le prompt de compagnon par défaut",
       useDefaultSystemPrompt: "Utiliser le prompt système par défaut",
+      customPromptOption: "Personnalisé (ce personnage)",
       usingAppDefault: "Utilisation du défaut de l'application",
       noCompanionTemplatesHint: "Aucun modèle de compagnon personnalisé pour l'instant. Créez-en un dans Paramètres → Prompts.",
       noDirectTemplatesHint: "Aucun modèle de chat direct personnalisé pour l'instant. Créez-en un dans Paramètres → Prompts.",

@@ -571,6 +571,17 @@ export const itMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Lista dei ricordi rilevanti",
       },
     },
+    customSystemPrompt: {
+      label: "Prompt di sistema del personaggio",
+      placeholder: "Scrivi il prompt di sistema di questo personaggio…",
+      originalHint:
+        "si espande nel prompt di sistema predefinito, così puoi aggiungere istruzioni del personaggio sopra di esso. Le variabili di contesto come {{char.name}} continuano a funzionare.",
+      insertOriginal: "Inserisci prompt predefinito",
+      previewButton: "Anteprima",
+      previewHide: "Nascondi anteprima",
+      previewFailed: "<impossibile generare l'anteprima>",
+      unknownTokens: "Variabili sconosciute: {{tokens}}",
+    },
     characterExport: {
       title: "Formato di esportazione",
       selectFormat: "Seleziona un formato",
@@ -3198,6 +3209,7 @@ export const itMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Usa impostazione predefinita dell'app",
       companionPromptHint: "Salvato separatamente come prompt companion. Il prompt roleplay normale non viene modificato.",
       systemPromptHint: "Scegli un prompt di sistema personalizzato o usa quello predefinito.",
+      customPromptOption: "Personalizzato (questo personaggio)",
       groupChatConvLabel: "Prompt chat di gruppo (Conversazione)",
       groupChatConvHint: "Sostituisci il prompt di conversazione di questo personaggio nelle chat di gruppo",
       groupChatRpLabel: "Prompt chat di gruppo (Roleplay)",
@@ -3693,6 +3705,7 @@ export const itMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Caricamento template...",
       useDefaultCompanionPrompt: "Usa prompt del compagno predefinito",
       useDefaultSystemPrompt: "Usa prompt di sistema predefinito",
+      customPromptOption: "Personalizzato (questo personaggio)",
       usingAppDefault: "In uso il predefinito app",
       noCompanionTemplatesHint: "Nessun template del compagno personalizzato ancora. Creane uno in Impostazioni > Prompt.",
       noDirectTemplatesHint: "Nessun template di chat diretta personalizzato ancora. Creane uno in Impostazioni > Prompt.",

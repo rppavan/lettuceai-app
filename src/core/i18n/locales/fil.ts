@@ -571,6 +571,17 @@ export const filMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Listahan ng mga kaugnay na alaala",
       },
     },
+    customSystemPrompt: {
+      label: "System Prompt ng Character",
+      placeholder: "Isulat ang system prompt ng character na ito…",
+      originalHint:
+        "lumalawak sa default na system prompt, para makapagdagdag ka ng mga instruction ng character sa ibabaw nito. Patuloy na gumagana ang mga context variable tulad ng {{char.name}}.",
+      insertOriginal: "Ipasok ang default na prompt",
+      previewButton: "I-preview",
+      previewHide: "Itago ang preview",
+      previewFailed: "<nabigong i-render ang preview>",
+      unknownTokens: "Hindi kilalang mga variable: {{tokens}}",
+    },
     characterExport: {
       title: "Format ng Export",
       selectFormat: "Pumili ng format",
@@ -3198,6 +3209,7 @@ export const filMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Gamitin ang app default",
       companionPromptHint: "Iniimbak nang hiwalay bilang companion prompt. Hindi binabago ang normal na roleplay system prompt.",
       systemPromptHint: "Pumili ng custom system prompt o gamitin ang default.",
+      customPromptOption: "Custom (ang character na ito)",
       groupChatConvLabel: "Group Chat Prompt (Usapan)",
       groupChatConvHint: "I-override ang conversation prompt ng karakter sa mga group chat",
       groupChatRpLabel: "Group Chat Prompt (Roleplay)",
@@ -3693,6 +3705,7 @@ export const filMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Niloload ang mga template...",
       useDefaultCompanionPrompt: "Gamitin ang default na companion prompt",
       useDefaultSystemPrompt: "Gamitin ang default na system prompt",
+      customPromptOption: "Custom (ang character na ito)",
       usingAppDefault: "Gumagamit ng default ng app",
       noCompanionTemplatesHint: "Wala pang custom na companion template. Gumawa ng isa sa Settings hanggang sa Prompts.",
       noDirectTemplatesHint: "Wala pang custom na direct-chat template. Gumawa ng isa sa Settings hanggang sa Prompts.",

@@ -571,6 +571,17 @@ export const hiMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "प्रासंगिक यादों की सूची",
       },
     },
+    customSystemPrompt: {
+      label: "किरदार का सिस्टम प्रॉम्प्ट",
+      placeholder: "इस किरदार का सिस्टम प्रॉम्प्ट लिखें…",
+      originalHint:
+        "डिफ़ॉल्ट सिस्टम प्रॉम्प्ट में विस्तृत होता है, ताकि आप उसके ऊपर किरदार के निर्देश जोड़ सकें। {{char.name}} जैसे संदर्भ वेरिएबल काम करते रहते हैं।",
+      insertOriginal: "डिफ़ॉल्ट प्रॉम्प्ट डालें",
+      previewButton: "पूर्वावलोकन",
+      previewHide: "पूर्वावलोकन छिपाएँ",
+      previewFailed: "<पूर्वावलोकन रेंडर करने में विफल>",
+      unknownTokens: "अज्ञात वेरिएबल: {{tokens}}",
+    },
     characterExport: {
       title: "निर्यात प्रारूप",
       selectFormat: "एक प्रारूप चुनें",
@@ -3198,6 +3209,7 @@ export const hiMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "ऐप डिफ़ॉल्ट उपयोग करें",
       companionPromptHint: "Companion prompt के रूप में अलग से संग्रहीत। सामान्य roleplay system prompt नहीं बदलती।",
       systemPromptHint: "कोई कस्टम system prompt चुनें या डिफ़ॉल्ट उपयोग करें।",
+      customPromptOption: "कस्टम (यह किरदार)",
       groupChatConvLabel: "Group Chat Prompt (बातचीत)",
       groupChatConvHint: "ग्रुप चैट में इस कैरेक्टर के बातचीत प्रॉम्प्ट को ओवरराइड करें",
       groupChatRpLabel: "Group Chat Prompt (Roleplay)",
@@ -3693,6 +3705,7 @@ export const hiMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "टेम्प्लेट लोड हो रहे हैं...",
       useDefaultCompanionPrompt: "डिफ़ॉल्ट कंपैनियन प्रॉम्प्ट का उपयोग करें",
       useDefaultSystemPrompt: "डिफ़ॉल्ट सिस्टम प्रॉम्प्ट का उपयोग करें",
+      customPromptOption: "कस्टम (यह किरदार)",
       usingAppDefault: "ऐप डिफ़ॉल्ट का उपयोग कर रहे हैं",
       noCompanionTemplatesHint: "अभी तक कोई कस्टम कंपैनियन टेम्प्लेट नहीं हैं। सेटिंग्स → प्रॉम्प्ट्स में एक बनाएं।",
       noDirectTemplatesHint: "अभी तक कोई कस्टम डायरेक्ट-चैट टेम्प्लेट नहीं हैं। सेटिंग्स → प्रॉम्प्ट्स में एक बनाएं।",

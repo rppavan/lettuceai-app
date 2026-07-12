@@ -571,6 +571,17 @@ export const koMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "관련 기억 목록",
       },
     },
+    customSystemPrompt: {
+      label: "캐릭터 시스템 프롬프트",
+      placeholder: "이 캐릭터의 시스템 프롬프트를 작성하세요…",
+      originalHint:
+        "기본 시스템 프롬프트로 확장되므로 그 위에 캐릭터 지침을 추가할 수 있습니다. {{char.name}}과 같은 컨텍스트 변수는 계속 작동합니다.",
+      insertOriginal: "기본 프롬프트 삽입",
+      previewButton: "미리보기",
+      previewHide: "미리보기 숨기기",
+      previewFailed: "<미리보기 렌더링 실패>",
+      unknownTokens: "알 수 없는 변수: {{tokens}}",
+    },
     characterExport: {
       title: "내보내기 형식",
       selectFormat: "형식 선택",
@@ -3198,6 +3209,7 @@ export const koMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "앱 기본값 사용",
       companionPromptHint: "동반자 프롬프트로 별도 저장됩니다. 일반 롤플레이 시스템 프롬프트는 변경되지 않습니다.",
       systemPromptHint: "사용자 정의 시스템 프롬프트를 선택하거나 기본값을 사용하세요.",
+      customPromptOption: "커스텀(이 캐릭터)",
       groupChatConvLabel: "그룹 채팅 프롬프트 (대화)",
       groupChatConvHint: "그룹 채팅에서 이 캐릭터의 대화 프롬프트를 재정의합니다",
       groupChatRpLabel: "그룹 채팅 프롬프트 (롤플레이)",
@@ -3693,6 +3705,7 @@ export const koMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "템플릿 불러오는 중...",
       useDefaultCompanionPrompt: "기본 컴패니언 프롬프트 사용",
       useDefaultSystemPrompt: "기본 시스템 프롬프트 사용",
+      customPromptOption: "커스텀(이 캐릭터)",
       usingAppDefault: "앱 기본값 사용 중",
       noCompanionTemplatesHint: "아직 사용자 지정 컴패니언 템플릿이 없습니다. 설정의 프롬프트에서 만드세요.",
       noDirectTemplatesHint: "아직 사용자 지정 직접 채팅 템플릿이 없습니다. 설정의 프롬프트에서 만드세요.",

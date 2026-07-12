@@ -571,6 +571,17 @@ export const ptMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Lista de memórias relevantes",
       },
     },
+    customSystemPrompt: {
+      label: "Prompt de Sistema do Personagem",
+      placeholder: "Escreva o prompt de sistema deste personagem…",
+      originalHint:
+        "expande para o prompt de sistema padrão, para que você possa adicionar instruções do personagem por cima. Variáveis de contexto como {{char.name}} continuam funcionando.",
+      insertOriginal: "Inserir prompt padrão",
+      previewButton: "Pré-visualizar",
+      previewHide: "Ocultar pré-visualização",
+      previewFailed: "<falha ao renderizar a pré-visualização>",
+      unknownTokens: "Variáveis desconhecidas: {{tokens}}",
+    },
     characterExport: {
       title: "Formato de Exportação",
       selectFormat: "Selecione um formato",
@@ -3198,6 +3209,7 @@ export const ptMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Use app default",
       companionPromptHint: "Stored separately as the companion prompt. The normal roleplay system prompt is not changed.",
       systemPromptHint: "Choose a custom system prompt or use the default.",
+      customPromptOption: "Personalizado (este personagem)",
       groupChatConvLabel: "Group Chat Prompt (Conversation)",
       groupChatConvHint: "Override this character's conversation prompt in group chats",
       groupChatRpLabel: "Group Chat Prompt (Roleplay)",
@@ -3693,6 +3705,7 @@ export const ptMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Carregando modelos...",
       useDefaultCompanionPrompt: "Usar prompt padrão do companion",
       useDefaultSystemPrompt: "Usar prompt de sistema padrão",
+      customPromptOption: "Personalizado (este personagem)",
       usingAppDefault: "Usando padrão do app",
       noCompanionTemplatesHint: "Nenhum modelo personalizado de companion ainda. Crie um em Configurações > Prompts.",
       noDirectTemplatesHint: "Nenhum modelo personalizado de conversa direta ainda. Crie um em Configurações > Prompts.",

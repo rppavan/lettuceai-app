@@ -571,6 +571,17 @@ export const ruMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Список релевантных воспоминаний",
       },
     },
+    customSystemPrompt: {
+      label: "Системный промпт персонажа",
+      placeholder: "Напишите системный промпт этого персонажа…",
+      originalHint:
+        "разворачивается в системный промпт по умолчанию, так что вы можете добавить поверх него инструкции персонажа. Контекстные переменные, такие как {{char.name}}, продолжают работать.",
+      insertOriginal: "Вставить промпт по умолчанию",
+      previewButton: "Предпросмотр",
+      previewHide: "Скрыть предпросмотр",
+      previewFailed: "<не удалось отрендерить предпросмотр>",
+      unknownTokens: "Неизвестные переменные: {{tokens}}",
+    },
     characterExport: {
       title: "Формат экспорта",
       selectFormat: "Выберите формат",
@@ -3198,6 +3209,7 @@ export const ruMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Использовать приложение по умолчанию",
       companionPromptHint: "Хранится отдельно в качестве сопутствующего приглашения. ",
       systemPromptHint: "Выберите пользовательское системное приглашение или используйте значение по умолчанию.",
+      customPromptOption: "Свой (этот персонаж)",
       groupChatConvLabel: "Подсказка группового чата (разговор)",
       groupChatConvHint: "Переопределить подсказку разговора этого персонажа в групповых чатах",
       groupChatRpLabel: "Подсказка группового чата (ролевая игра)",
@@ -3693,6 +3705,7 @@ export const ruMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Загрузка шаблонов...",
       useDefaultCompanionPrompt: "Использовать промпт компаньона по умолчанию",
       useDefaultSystemPrompt: "Использовать системный промпт по умолчанию",
+      customPromptOption: "Свой (этот персонаж)",
       usingAppDefault: "Используется значение приложения по умолчанию",
       noCompanionTemplatesHint: "Своих шаблонов компаньона пока нет. Создайте один в Настройках → Промпты.",
       noDirectTemplatesHint: "Своих шаблонов прямого чата пока нет. Создайте один в Настройках → Промпты.",

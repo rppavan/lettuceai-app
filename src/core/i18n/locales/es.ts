@@ -571,6 +571,17 @@ export const esMessages: DeepPartialMessageTree<LocaleMessages> = {
         keyMemoriesDesc: "Lista de memorias relevantes",
       },
     },
+    customSystemPrompt: {
+      label: "Prompt de sistema del personaje",
+      placeholder: "Escribe el prompt de sistema de este personaje…",
+      originalHint:
+        "se expande al prompt de sistema predeterminado, para que puedas añadir instrucciones del personaje encima. Las variables de contexto como {{char.name}} siguen funcionando.",
+      insertOriginal: "Insertar prompt predeterminado",
+      previewButton: "Vista previa",
+      previewHide: "Ocultar vista previa",
+      previewFailed: "<no se pudo renderizar la vista previa>",
+      unknownTokens: "Variables desconocidas: {{tokens}}",
+    },
     characterExport: {
       title: "Formato de exportación",
       selectFormat: "Selecciona un formato",
@@ -3198,6 +3209,7 @@ export const esMessages: DeepPartialMessageTree<LocaleMessages> = {
       useAppDefault: "Usar predeterminado de la app",
       companionPromptHint: "Se guarda por separado como prompt de compañero. El prompt de sistema de roleplay normal no se modifica.",
       systemPromptHint: "Elige un prompt de sistema personalizado o usa el predeterminado.",
+      customPromptOption: "Personalizado (este personaje)",
       groupChatConvLabel: "Prompt de chat grupal (Conversación)",
       groupChatConvHint: "Sobrescribe el prompt de conversación de este personaje en chats grupales",
       groupChatRpLabel: "Prompt de chat grupal (Roleplay)",
@@ -3693,6 +3705,7 @@ export const esMessages: DeepPartialMessageTree<LocaleMessages> = {
       loadingTemplates: "Cargando plantillas...",
       useDefaultCompanionPrompt: "Usar el prompt de compañero predeterminado",
       useDefaultSystemPrompt: "Usar el prompt del sistema predeterminado",
+      customPromptOption: "Personalizado (este personaje)",
       usingAppDefault: "Usando el predeterminado de la app",
       noCompanionTemplatesHint: "Aún no hay plantillas de compañero personalizadas. Crea una en Ajustes, en Prompts.",
       noDirectTemplatesHint: "Aún no hay plantillas de chat directo personalizadas. Crea una en Ajustes, en Prompts.",
