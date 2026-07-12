@@ -67,6 +67,7 @@ export function createDefaultCompanionConfig(
 export function withCompanionPromptTemplate(
   companion: CompanionConfig | null | undefined,
   promptTemplateId: string | null,
+  customSystemPrompt: string | null = null,
 ): CompanionConfig {
   const base = normalizeCompanionConfig(companion);
 
@@ -75,6 +76,7 @@ export function withCompanionPromptTemplate(
     prompting: {
       ...base.prompting,
       promptTemplateId,
+      customSystemPrompt,
     },
   };
 }

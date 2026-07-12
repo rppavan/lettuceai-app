@@ -225,14 +225,20 @@ export function CreateCharacterPage() {
         .filter(Boolean),
       characterBook: state.importedCharacterBook,
       defaultModelId: state.selectedModelId,
-      promptTemplateId: state.systemPromptTemplateId,
+      promptTemplateId: state.customSystemPromptEnabled ? null : state.systemPromptTemplateId,
+      customSystemPrompt: state.customSystemPromptEnabled ? state.customSystemPrompt : null,
       companion:
         state.mode === "companion"
           ? {
               ...(state.companion ?? {}),
               prompting: {
                 ...(state.companion?.prompting ?? {}),
-                promptTemplateId: state.companionPromptTemplateId,
+                promptTemplateId: state.companionCustomSystemPromptEnabled
+                  ? null
+                  : state.companionPromptTemplateId,
+                customSystemPrompt: state.companionCustomSystemPromptEnabled
+                  ? state.companionCustomSystemPrompt
+                  : null,
               },
             }
           : undefined,
@@ -272,6 +278,10 @@ export function CreateCharacterPage() {
     state.selectedModelId,
     state.systemPromptTemplateId,
     state.companionPromptTemplateId,
+    state.customSystemPromptEnabled,
+    state.customSystemPrompt,
+    state.companionCustomSystemPromptEnabled,
+    state.companionCustomSystemPrompt,
     state.companion,
     state.mode,
     state.activeLorebookIds,
@@ -466,8 +476,18 @@ export function CreateCharacterPage() {
               loadingTemplates={state.loadingTemplates}
               systemPromptTemplateId={state.systemPromptTemplateId}
               onSelectSystemPrompt={actions.setSystemPromptTemplateId}
+              customSystemPromptEnabled={state.customSystemPromptEnabled}
+              onCustomSystemPromptEnabledChange={actions.setCustomSystemPromptEnabled}
+              customSystemPrompt={state.customSystemPrompt}
+              onCustomSystemPromptChange={actions.setCustomSystemPrompt}
               companionPromptTemplateId={state.companionPromptTemplateId}
               onSelectCompanionPrompt={actions.setCompanionPromptTemplateId}
+              companionCustomSystemPromptEnabled={state.companionCustomSystemPromptEnabled}
+              onCompanionCustomSystemPromptEnabledChange={
+                actions.setCompanionCustomSystemPromptEnabled
+              }
+              companionCustomSystemPrompt={state.companionCustomSystemPrompt}
+              onCompanionCustomSystemPromptChange={actions.setCompanionCustomSystemPrompt}
               groupChatPromptTemplateId={state.groupChatPromptTemplateId}
               onSelectGroupChatPrompt={actions.setGroupChatPromptTemplateId}
               groupChatRoleplayPromptTemplateId={state.groupChatRoleplayPromptTemplateId}

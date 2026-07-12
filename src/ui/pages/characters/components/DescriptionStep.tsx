@@ -31,6 +31,8 @@ import {
   APP_GROUP_CHAT_TEMPLATE_ID,
 } from "../../../../core/prompts/constants";
 import { InteractionModeSelector } from "./InteractionModeSelector";
+import { CustomSystemPromptEditor } from "./CustomSystemPromptEditor";
+import { CUSTOM_PROMPT_OPTION } from "../utils/customSystemPrompt";
 
 interface DescriptionStepProps {
   name: string;
@@ -57,8 +59,16 @@ interface DescriptionStepProps {
   loadingTemplates: boolean;
   systemPromptTemplateId: string | null;
   onSelectSystemPrompt: (value: string | null) => void;
+  customSystemPromptEnabled: boolean;
+  onCustomSystemPromptEnabledChange: (enabled: boolean) => void;
+  customSystemPrompt: string;
+  onCustomSystemPromptChange: (value: string) => void;
   companionPromptTemplateId: string | null;
   onSelectCompanionPrompt: (value: string | null) => void;
+  companionCustomSystemPromptEnabled: boolean;
+  onCompanionCustomSystemPromptEnabledChange: (enabled: boolean) => void;
+  companionCustomSystemPrompt: string;
+  onCompanionCustomSystemPromptChange: (value: string) => void;
   groupChatPromptTemplateId: string | null;
   onSelectGroupChatPrompt: (value: string | null) => void;
   groupChatRoleplayPromptTemplateId: string | null;
@@ -104,8 +114,16 @@ export function DescriptionStep({
   loadingTemplates,
   systemPromptTemplateId,
   onSelectSystemPrompt,
+  customSystemPromptEnabled,
+  onCustomSystemPromptEnabledChange,
+  customSystemPrompt,
+  onCustomSystemPromptChange,
   companionPromptTemplateId,
   onSelectCompanionPrompt,
+  companionCustomSystemPromptEnabled,
+  onCompanionCustomSystemPromptEnabledChange,
+  companionCustomSystemPrompt,
+  onCompanionCustomSystemPromptChange,
   groupChatPromptTemplateId,
   onSelectGroupChatPrompt,
   groupChatRoleplayPromptTemplateId,
@@ -578,8 +596,20 @@ export function DescriptionStep({
         ) : (
           <div className="relative">
             <select
-              value={systemPromptTemplateId ?? ""}
-              onChange={(e) => onSelectSystemPrompt(e.target.value || null)}
+              value={
+                customSystemPromptEnabled
+                  ? CUSTOM_PROMPT_OPTION
+                  : (systemPromptTemplateId ?? "")
+              }
+              onChange={(e) => {
+                if (e.target.value === CUSTOM_PROMPT_OPTION) {
+                  onCustomSystemPromptEnabledChange(true);
+                  onSelectSystemPrompt(null);
+                } else {
+                  onCustomSystemPromptEnabledChange(false);
+                  onSelectSystemPrompt(e.target.value || null);
+                }
+              }}
               className={cn(
                 "w-full appearance-none border bg-surface-el/20 px-4 py-3.5 pr-10 text-sm text-fg backdrop-blur-xl",
                 radius.md,
@@ -590,6 +620,9 @@ export function DescriptionStep({
             >
               <option value="" className="bg-surface-el text-fg">
                 {t("characters.description.useAppDefault")}
+              </option>
+              <option value={CUSTOM_PROMPT_OPTION} className="bg-surface-el text-fg">
+                {t("characters.description.customPromptOption")}
               </option>
               {directPromptTemplates.map((template) => (
                 <option key={template.id} value={template.id} className="bg-surface-el text-fg">
@@ -602,6 +635,12 @@ export function DescriptionStep({
               <FileText className="h-4 w-4 text-fg/40" />
             </div>
           </div>
+        )}
+        {customSystemPromptEnabled && (
+          <CustomSystemPromptEditor
+            value={customSystemPrompt}
+            onChange={onCustomSystemPromptChange}
+          />
         )}
         <p className={cn(typography.bodySmall.size, "text-fg/40")}>
           {t("characters.description.systemPromptHint")}
@@ -744,9 +783,21 @@ export function DescriptionStep({
         ) : (
           <div className="relative">
             <select
-              value={companionPromptTemplateId ?? ""}
+              value={
+                companionCustomSystemPromptEnabled
+                  ? CUSTOM_PROMPT_OPTION
+                  : (companionPromptTemplateId ?? "")
+              }
               disabled={mode !== "companion"}
-              onChange={(e) => onSelectCompanionPrompt(e.target.value || null)}
+              onChange={(e) => {
+                if (e.target.value === CUSTOM_PROMPT_OPTION) {
+                  onCompanionCustomSystemPromptEnabledChange(true);
+                  onSelectCompanionPrompt(null);
+                } else {
+                  onCompanionCustomSystemPromptEnabledChange(false);
+                  onSelectCompanionPrompt(e.target.value || null);
+                }
+              }}
               className={cn(
                 "w-full appearance-none border bg-surface-el/20 px-4 py-3.5 pr-10 text-sm text-fg backdrop-blur-xl",
                 radius.md,
@@ -758,6 +809,9 @@ export function DescriptionStep({
               <option value="" className="bg-surface-el text-fg">
                 {t("characters.description.useAppCompanionDefault")}
               </option>
+              <option value={CUSTOM_PROMPT_OPTION} className="bg-surface-el text-fg">
+                {t("characters.description.customPromptOption")}
+              </option>
               {companionPromptTemplates.map((template) => (
                 <option key={template.id} value={template.id} className="bg-surface-el text-fg">
                   {template.name}
@@ -768,6 +822,13 @@ export function DescriptionStep({
               <FileText className="h-4 w-4 text-fg/40" />
             </div>
           </div>
+        )}
+        {companionCustomSystemPromptEnabled && (
+          <CustomSystemPromptEditor
+            value={companionCustomSystemPrompt}
+            onChange={onCompanionCustomSystemPromptChange}
+            disabled={mode !== "companion"}
+          />
         )}
         <p className={cn(typography.bodySmall.size, "text-fg/40")}>
           {t("characters.description.companionPromptHint")}

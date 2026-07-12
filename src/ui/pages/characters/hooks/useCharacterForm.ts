@@ -81,6 +81,10 @@ interface CharacterFormState {
   selectedModelId: string | null;
   systemPromptTemplateId: string | null;
   companionPromptTemplateId: string | null;
+  customSystemPromptEnabled: boolean;
+  customSystemPrompt: string;
+  companionCustomSystemPromptEnabled: boolean;
+  companionCustomSystemPrompt: string;
   groupChatPromptTemplateId: string | null;
   groupChatRoleplayPromptTemplateId: string | null;
   activeLorebookIds: string[];
@@ -133,6 +137,10 @@ type CharacterFormAction =
   | { type: "SET_SELECTED_MODEL_ID"; payload: string | null }
   | { type: "SET_SYSTEM_PROMPT_TEMPLATE_ID"; payload: string | null }
   | { type: "SET_COMPANION_PROMPT_TEMPLATE_ID"; payload: string | null }
+  | { type: "SET_CUSTOM_SYSTEM_PROMPT_ENABLED"; payload: boolean }
+  | { type: "SET_CUSTOM_SYSTEM_PROMPT"; payload: string }
+  | { type: "SET_COMPANION_CUSTOM_SYSTEM_PROMPT_ENABLED"; payload: boolean }
+  | { type: "SET_COMPANION_CUSTOM_SYSTEM_PROMPT"; payload: string }
   | { type: "SET_GROUP_CHAT_PROMPT_TEMPLATE_ID"; payload: string | null }
   | { type: "SET_GROUP_CHAT_ROLEPLAY_PROMPT_TEMPLATE_ID"; payload: string | null }
   | { type: "SET_ACTIVE_LOREBOOK_IDS"; payload: string[] }
@@ -179,6 +187,10 @@ const initialState: CharacterFormState = {
   selectedModelId: null,
   systemPromptTemplateId: null,
   companionPromptTemplateId: null,
+  customSystemPromptEnabled: false,
+  customSystemPrompt: "",
+  companionCustomSystemPromptEnabled: false,
+  companionCustomSystemPrompt: "",
   groupChatPromptTemplateId: null,
   groupChatRoleplayPromptTemplateId: null,
   activeLorebookIds: [],
@@ -253,6 +265,14 @@ function characterFormReducer(
       return { ...state, systemPromptTemplateId: action.payload };
     case "SET_COMPANION_PROMPT_TEMPLATE_ID":
       return { ...state, companionPromptTemplateId: action.payload };
+    case "SET_CUSTOM_SYSTEM_PROMPT_ENABLED":
+      return { ...state, customSystemPromptEnabled: action.payload };
+    case "SET_CUSTOM_SYSTEM_PROMPT":
+      return { ...state, customSystemPrompt: action.payload };
+    case "SET_COMPANION_CUSTOM_SYSTEM_PROMPT_ENABLED":
+      return { ...state, companionCustomSystemPromptEnabled: action.payload };
+    case "SET_COMPANION_CUSTOM_SYSTEM_PROMPT":
+      return { ...state, companionCustomSystemPrompt: action.payload };
     case "SET_GROUP_CHAT_PROMPT_TEMPLATE_ID":
       return { ...state, groupChatPromptTemplateId: action.payload };
     case "SET_GROUP_CHAT_ROLEPLAY_PROMPT_TEMPLATE_ID":
@@ -411,6 +431,22 @@ export function useCharacterForm(draftCharacter?: any) {
           dispatch({
             type: "SET_COMPANION_PROMPT_TEMPLATE_ID",
             payload: draftCharacter.companion?.prompting?.promptTemplateId || null,
+          });
+          dispatch({
+            type: "SET_CUSTOM_SYSTEM_PROMPT_ENABLED",
+            payload: Boolean(draftCharacter.customSystemPrompt),
+          });
+          dispatch({
+            type: "SET_CUSTOM_SYSTEM_PROMPT",
+            payload: draftCharacter.customSystemPrompt || "",
+          });
+          dispatch({
+            type: "SET_COMPANION_CUSTOM_SYSTEM_PROMPT_ENABLED",
+            payload: Boolean(draftCharacter.companion?.prompting?.customSystemPrompt),
+          });
+          dispatch({
+            type: "SET_COMPANION_CUSTOM_SYSTEM_PROMPT",
+            payload: draftCharacter.companion?.prompting?.customSystemPrompt || "",
           });
           dispatch({
             type: "SET_GROUP_CHAT_PROMPT_TEMPLATE_ID",
@@ -581,6 +617,22 @@ export function useCharacterForm(draftCharacter?: any) {
 
   const setCompanionPromptTemplateId = useCallback((id: string | null) => {
     dispatch({ type: "SET_COMPANION_PROMPT_TEMPLATE_ID", payload: id });
+  }, []);
+
+  const setCustomSystemPromptEnabled = useCallback((enabled: boolean) => {
+    dispatch({ type: "SET_CUSTOM_SYSTEM_PROMPT_ENABLED", payload: enabled });
+  }, []);
+
+  const setCustomSystemPrompt = useCallback((value: string) => {
+    dispatch({ type: "SET_CUSTOM_SYSTEM_PROMPT", payload: value });
+  }, []);
+
+  const setCompanionCustomSystemPromptEnabled = useCallback((enabled: boolean) => {
+    dispatch({ type: "SET_COMPANION_CUSTOM_SYSTEM_PROMPT_ENABLED", payload: enabled });
+  }, []);
+
+  const setCompanionCustomSystemPrompt = useCallback((value: string) => {
+    dispatch({ type: "SET_COMPANION_CUSTOM_SYSTEM_PROMPT", payload: value });
   }, []);
 
   const setGroupChatPromptTemplateId = useCallback((id: string | null) => {
@@ -1061,7 +1113,11 @@ export function useCharacterForm(draftCharacter?: any) {
         state.mode === "companion"
           ? withCompanionPromptTemplate(
               state.companion ?? createDefaultCompanionConfig(),
-              state.companionPromptTemplateId,
+              state.companionCustomSystemPromptEnabled ? null : state.companionPromptTemplateId,
+              state.companionCustomSystemPromptEnabled &&
+                state.companionCustomSystemPrompt.trim()
+                ? state.companionCustomSystemPrompt.trim()
+                : null,
             )
           : null;
 
@@ -1090,7 +1146,11 @@ export function useCharacterForm(draftCharacter?: any) {
         defaultSceneId: state.defaultSceneId || state.scenes[0]?.id || null,
         defaultChatTemplateId: null,
         defaultModelId: state.selectedModelId,
-        promptTemplateId: state.systemPromptTemplateId,
+        promptTemplateId: state.customSystemPromptEnabled ? null : state.systemPromptTemplateId,
+        customSystemPrompt:
+          state.customSystemPromptEnabled && state.customSystemPrompt.trim()
+            ? state.customSystemPrompt.trim()
+            : null,
         groupChatPromptTemplateId: state.groupChatPromptTemplateId,
         groupChatRoleplayPromptTemplateId: state.groupChatRoleplayPromptTemplateId,
         activeLorebookIds: state.activeLorebookIds,
@@ -1178,6 +1238,10 @@ export function useCharacterForm(draftCharacter?: any) {
     state.selectedModelId,
     state.systemPromptTemplateId,
     state.companionPromptTemplateId,
+    state.customSystemPromptEnabled,
+    state.customSystemPrompt,
+    state.companionCustomSystemPromptEnabled,
+    state.companionCustomSystemPrompt,
     state.groupChatPromptTemplateId,
     state.groupChatRoleplayPromptTemplateId,
     state.activeLorebookIds,
@@ -1235,6 +1299,10 @@ export function useCharacterForm(draftCharacter?: any) {
       setSelectedModelId,
       setSystemPromptTemplateId,
       setCompanionPromptTemplateId,
+      setCustomSystemPromptEnabled,
+      setCustomSystemPrompt,
+      setCompanionCustomSystemPromptEnabled,
+      setCompanionCustomSystemPrompt,
       setGroupChatPromptTemplateId,
       setGroupChatRoleplayPromptTemplateId,
       setActiveLorebookIds,
