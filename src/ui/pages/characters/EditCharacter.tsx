@@ -46,6 +46,8 @@ import { CharacterExportMenu } from "../../components/CharacterExportMenu";
 import { Switch } from "../../components/Switch";
 import { ActiveLorebooksSelector } from "./components/ActiveLorebooksSelector";
 import { InteractionModeSelector } from "./components/InteractionModeSelector";
+import { CustomSystemPromptEditor } from "./components/CustomSystemPromptEditor";
+import { CUSTOM_PROMPT_OPTION } from "./utils/customSystemPrompt";
 import { cn, radius, colors, interactive, spacing, typography } from "../../design-tokens";
 import { getProviderIcon } from "../../../core/utils/providerIcons";
 import { useI18n } from "../../../core/i18n/context";
@@ -284,6 +286,10 @@ export function EditCharacterPage() {
     loadingTemplates,
     systemPromptTemplateId,
     companionPromptTemplateId,
+    customSystemPromptEnabled,
+    customSystemPrompt,
+    companionCustomSystemPromptEnabled,
+    companionCustomSystemPrompt,
     mode,
     voiceConfig,
     voiceAutoplay,
@@ -2220,13 +2226,30 @@ export function EditCharacterPage() {
                     </div>
                   ) : promptTemplates.length > 0 ? (
                     <select
-                      value={systemPromptTemplateId || ""}
-                      onChange={(e) =>
-                        setFields({ systemPromptTemplateId: e.target.value || null })
+                      value={
+                        customSystemPromptEnabled
+                          ? CUSTOM_PROMPT_OPTION
+                          : (systemPromptTemplateId || "")
                       }
+                      onChange={(e) => {
+                        if (e.target.value === CUSTOM_PROMPT_OPTION) {
+                          setFields({
+                            customSystemPromptEnabled: true,
+                            systemPromptTemplateId: null,
+                          });
+                        } else {
+                          setFields({
+                            customSystemPromptEnabled: false,
+                            systemPromptTemplateId: e.target.value || null,
+                          });
+                        }
+                      }}
                       className="w-full appearance-none rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-sm text-fg transition focus:border-fg/25 focus:outline-none"
                     >
                       <option value="">{t("characters.edit.useDefaultSystemPrompt")}</option>
+                      <option value={CUSTOM_PROMPT_OPTION}>
+                        {t("characters.edit.customPromptOption")}
+                      </option>
                       {directPromptTemplates.map((template) => (
                         <option key={template.id} value={template.id}>
                           {template.name}
@@ -2238,6 +2261,14 @@ export function EditCharacterPage() {
                       <p className="text-sm text-fg/50">{t("characters.edit.usingAppDefault")}</p>
                       <p className="mt-1 text-xs text-fg/40">{t("characters.edit.noDirectTemplatesHint")}</p>
                     </div>
+                  )}
+                  {customSystemPromptEnabled && (
+                    <CustomSystemPromptEditor
+                      value={customSystemPrompt}
+                      onChange={(v) => setFields({ customSystemPrompt: v })}
+                      previewCharacterId={characterId}
+                      disabled={saving}
+                    />
                   )}
                   <p className="text-xs text-fg/50">{t("characters.edit.systemPromptOverrideHint")}</p>
                 </div>
@@ -2269,14 +2300,31 @@ export function EditCharacterPage() {
                     </div>
                   ) : promptTemplates.length > 0 ? (
                     <select
-                      value={companionPromptTemplateId || ""}
-                      disabled={mode !== "companion"}
-                      onChange={(e) =>
-                        setFields({ companionPromptTemplateId: e.target.value || null })
+                      value={
+                        companionCustomSystemPromptEnabled
+                          ? CUSTOM_PROMPT_OPTION
+                          : (companionPromptTemplateId || "")
                       }
+                      disabled={mode !== "companion"}
+                      onChange={(e) => {
+                        if (e.target.value === CUSTOM_PROMPT_OPTION) {
+                          setFields({
+                            companionCustomSystemPromptEnabled: true,
+                            companionPromptTemplateId: null,
+                          });
+                        } else {
+                          setFields({
+                            companionCustomSystemPromptEnabled: false,
+                            companionPromptTemplateId: e.target.value || null,
+                          });
+                        }
+                      }}
                       className="w-full appearance-none rounded-xl border border-fg/10 bg-surface-el/20 px-3.5 py-3 text-sm text-fg transition focus:border-fg/25 focus:outline-none"
                     >
                       <option value="">{t("characters.edit.useDefaultCompanionPrompt")}</option>
+                      <option value={CUSTOM_PROMPT_OPTION}>
+                        {t("characters.edit.customPromptOption")}
+                      </option>
                       {companionPromptTemplates.map((template) => (
                         <option key={template.id} value={template.id}>
                           {template.name}
@@ -2288,6 +2336,14 @@ export function EditCharacterPage() {
                       <p className="text-sm text-fg/50">{t("characters.edit.usingAppDefault")}</p>
                       <p className="mt-1 text-xs text-fg/40">{t("characters.edit.noCompanionTemplatesHint")}</p>
                     </div>
+                  )}
+                  {companionCustomSystemPromptEnabled && (
+                    <CustomSystemPromptEditor
+                      value={companionCustomSystemPrompt}
+                      onChange={(v) => setFields({ companionCustomSystemPrompt: v })}
+                      previewCharacterId={characterId}
+                      disabled={saving || mode !== "companion"}
+                    />
                   )}
                   <p className="text-xs text-fg/50">{t("characters.edit.companionPromptStoredHint")}</p>
                 </div>

@@ -71,6 +71,10 @@ type EditCharacterState = {
   selectedModelId: string | null;
   systemPromptTemplateId: string | null;
   companionPromptTemplateId: string | null;
+  customSystemPromptEnabled: boolean;
+  customSystemPrompt: string;
+  companionCustomSystemPromptEnabled: boolean;
+  companionCustomSystemPrompt: string;
   groupChatPromptTemplateId: string | null;
   groupChatRoleplayPromptTemplateId: string | null;
   activeLorebookIds: string[];
@@ -140,6 +144,10 @@ const initialState: EditCharacterState = {
   selectedModelId: null,
   systemPromptTemplateId: null,
   companionPromptTemplateId: null,
+  customSystemPromptEnabled: false,
+  customSystemPrompt: "",
+  companionCustomSystemPromptEnabled: false,
+  companionCustomSystemPrompt: "",
   groupChatPromptTemplateId: null,
   groupChatRoleplayPromptTemplateId: null,
   activeLorebookIds: [],
@@ -218,6 +226,10 @@ export function useEditCharacterForm(characterId: string | undefined) {
     selectedModelId: string | null;
     systemPromptTemplateId: string | null;
     companionPromptTemplateId: string | null;
+    customSystemPromptEnabled: boolean;
+    customSystemPrompt: string;
+    companionCustomSystemPromptEnabled: boolean;
+    companionCustomSystemPrompt: string;
     groupChatPromptTemplateId: string | null;
     groupChatRoleplayPromptTemplateId: string | null;
     activeLorebookIds: string;
@@ -372,6 +384,12 @@ export function useEditCharacterForm(characterId: string | undefined) {
         selectedModelId: character.defaultModelId || null,
         systemPromptTemplateId: character.promptTemplateId || null,
         companionPromptTemplateId: companion?.prompting?.promptTemplateId ?? null,
+        customSystemPromptEnabled: Boolean(character.customSystemPrompt),
+        customSystemPrompt: character.customSystemPrompt || "",
+        companionCustomSystemPromptEnabled: Boolean(
+          companion?.prompting?.customSystemPrompt,
+        ),
+        companionCustomSystemPrompt: companion?.prompting?.customSystemPrompt || "",
         groupChatPromptTemplateId: character.groupChatPromptTemplateId || null,
         groupChatRoleplayPromptTemplateId:
           character.groupChatRoleplayPromptTemplateId || null,
@@ -422,6 +440,12 @@ export function useEditCharacterForm(characterId: string | undefined) {
         selectedModelId: character.defaultModelId || null,
         systemPromptTemplateId: character.promptTemplateId || null,
         companionPromptTemplateId: companion?.prompting?.promptTemplateId ?? null,
+        customSystemPromptEnabled: Boolean(character.customSystemPrompt),
+        customSystemPrompt: character.customSystemPrompt || "",
+        companionCustomSystemPromptEnabled: Boolean(
+          companion?.prompting?.customSystemPrompt,
+        ),
+        companionCustomSystemPrompt: companion?.prompting?.customSystemPrompt || "",
         groupChatPromptTemplateId: character.groupChatPromptTemplateId || null,
         groupChatRoleplayPromptTemplateId:
           character.groupChatRoleplayPromptTemplateId || null,
@@ -594,7 +618,13 @@ export function useEditCharacterForm(characterId: string | undefined) {
         state.mode === "companion"
           ? withCompanionPromptTemplate(
               state.companion ?? createDefaultCompanionConfig(),
-              state.companionPromptTemplateId,
+              state.companionCustomSystemPromptEnabled && state.companionCustomSystemPrompt.trim()
+                ? null
+                : state.companionPromptTemplateId,
+              state.companionCustomSystemPromptEnabled &&
+                state.companionCustomSystemPrompt.trim()
+                ? state.companionCustomSystemPrompt.trim()
+                : null,
             )
           : null;
 
@@ -626,7 +656,14 @@ export function useEditCharacterForm(characterId: string | undefined) {
         defaultSceneId: state.defaultSceneId,
         defaultChatTemplateId: state.defaultChatTemplateId,
         defaultModelId: state.selectedModelId,
-        promptTemplateId: state.systemPromptTemplateId,
+        promptTemplateId:
+          state.customSystemPromptEnabled && state.customSystemPrompt.trim()
+            ? null
+            : state.systemPromptTemplateId,
+        customSystemPrompt:
+          state.customSystemPromptEnabled && state.customSystemPrompt.trim()
+            ? state.customSystemPrompt.trim()
+            : null,
         groupChatPromptTemplateId: state.groupChatPromptTemplateId,
         groupChatRoleplayPromptTemplateId: state.groupChatRoleplayPromptTemplateId,
         activeLorebookIds: state.activeLorebookIds,
@@ -691,6 +728,10 @@ export function useEditCharacterForm(characterId: string | undefined) {
         selectedModelId: state.selectedModelId,
         systemPromptTemplateId: state.systemPromptTemplateId,
         companionPromptTemplateId: state.companionPromptTemplateId,
+        customSystemPromptEnabled: state.customSystemPromptEnabled,
+        customSystemPrompt: state.customSystemPrompt,
+        companionCustomSystemPromptEnabled: state.companionCustomSystemPromptEnabled,
+        companionCustomSystemPrompt: state.companionCustomSystemPrompt,
         groupChatPromptTemplateId: state.groupChatPromptTemplateId,
         groupChatRoleplayPromptTemplateId: state.groupChatRoleplayPromptTemplateId,
         activeLorebookIds: JSON.stringify(state.activeLorebookIds),
@@ -908,6 +949,10 @@ export function useEditCharacterForm(characterId: string | undefined) {
       selectedModelId: initial.selectedModelId,
       systemPromptTemplateId: initial.systemPromptTemplateId,
       companionPromptTemplateId: initial.companionPromptTemplateId,
+      customSystemPromptEnabled: initial.customSystemPromptEnabled,
+      customSystemPrompt: initial.customSystemPrompt,
+      companionCustomSystemPromptEnabled: initial.companionCustomSystemPromptEnabled,
+      companionCustomSystemPrompt: initial.companionCustomSystemPrompt,
       groupChatPromptTemplateId: initial.groupChatPromptTemplateId,
       groupChatRoleplayPromptTemplateId: initial.groupChatRoleplayPromptTemplateId,
       activeLorebookIds: JSON.parse(initial.activeLorebookIds) as string[],
@@ -984,6 +1029,11 @@ export function useEditCharacterForm(characterId: string | undefined) {
           state.selectedModelId !== initial.selectedModelId ||
           state.systemPromptTemplateId !== initial.systemPromptTemplateId ||
           state.companionPromptTemplateId !== initial.companionPromptTemplateId ||
+          state.customSystemPromptEnabled !== initial.customSystemPromptEnabled ||
+          state.customSystemPrompt !== initial.customSystemPrompt ||
+          state.companionCustomSystemPromptEnabled !==
+            initial.companionCustomSystemPromptEnabled ||
+          state.companionCustomSystemPrompt !== initial.companionCustomSystemPrompt ||
           state.groupChatPromptTemplateId !== initial.groupChatPromptTemplateId ||
           state.groupChatRoleplayPromptTemplateId !==
             initial.groupChatRoleplayPromptTemplateId ||
