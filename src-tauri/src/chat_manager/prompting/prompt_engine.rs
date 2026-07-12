@@ -4452,6 +4452,28 @@ pub fn apply_custom_system_prompt(
     result
 }
 
+/// Expand {{original}} against the mode-aware app-default template.
+/// Used by the preview command so previews match runtime output.
+pub fn expand_original_token(
+    app: &AppHandle,
+    settings: &Settings,
+    companion_mode: bool,
+    text: &str,
+) -> String {
+    if !text.contains(ORIGINAL_PROMPT_TOKEN) {
+        return text.to_string();
+    }
+    let mut debug_parts: Vec<Value> = Vec::new();
+    let (base_content, base_entries, _, _, _) =
+        get_app_default_template_content(app, settings, companion_mode, &mut debug_parts);
+    let core = if base_entries.is_empty() {
+        base_content.replace(ORIGINAL_PROMPT_TOKEN, "")
+    } else {
+        original_core_content(&base_entries)
+    };
+    text.replace(ORIGINAL_PROMPT_TOKEN, core.trim())
+}
+
 #[cfg(test)]
 mod custom_system_prompt_tests {
     use super::*;

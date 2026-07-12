@@ -136,16 +136,26 @@ fn resolve_debug_prompt_template(
                 Some(template.name),
             );
         }
-        if let Some(character_template_id) = &character.prompt_template_id {
-            if let Ok(Some(template)) = prompts::get_template(app, character_template_id) {
-                return (
-                    "character_template".to_string(),
-                    Some(template.id),
-                    Some(template.name),
-                );
-            }
-        }
-    } else if let Some(character_template_id) = &character.prompt_template_id {
+    }
+
+    let companion_mode = super::companion::is_companion_mode(session, character);
+    let custom = if companion_mode {
+        super::companion::companion_custom_system_prompt(character)
+    } else {
+        character
+            .custom_system_prompt
+            .clone()
+            .filter(|text| !text.trim().is_empty())
+    };
+    if custom.is_some() {
+        return (
+            "character_custom_prompt".to_string(),
+            None,
+            Some("Custom (this character)".to_string()),
+        );
+    }
+
+    if let Some(character_template_id) = &character.prompt_template_id {
         if let Ok(Some(template)) = prompts::get_template(app, character_template_id) {
             return (
                 "character_template".to_string(),
@@ -1047,6 +1057,9 @@ pub fn render_prompt_preview(
     let effective_persona_id = resolve_persona_id(&session, persona_id.as_deref());
     let persona = context.choose_persona(effective_persona_id);
 
+    let companion_mode = super::companion::is_companion_mode(&session, &character);
+    let content =
+        prompt_engine::expand_original_token(&app, settings, companion_mode, &content);
     let rendered = prompt_engine::render_with_context(
         &app, &content, &character, persona, &session, settings, None,
     );
