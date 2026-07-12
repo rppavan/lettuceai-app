@@ -88,6 +88,8 @@ pub struct CharacterExportData {
     pub lorebooks: Vec<LorebookExportData>,
     pub prompt_template_id: Option<String>,
     pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub custom_system_prompt: Option<String>,
     pub voice_config: Option<JsonValue>,
     pub voice_autoplay: Option<bool>,
     pub disable_avatar_gradient: bool,
@@ -713,6 +715,10 @@ pub fn parse_uec_character(value: &JsonValue) -> Result<CharacterExportPackage, 
         .map(|value| value.to_string());
 
     let (prompt_template_id, system_prompt) = parse_system_prompt_fields(payload);
+    let custom_system_prompt = payload
+        .get("customSystemPrompt")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string());
 
     let voice_config = payload.get("voiceConfig").cloned();
     let voice_autoplay = payload.get("voiceAutoplay").and_then(|v| v.as_bool());
@@ -837,6 +843,7 @@ pub fn parse_uec_character(value: &JsonValue) -> Result<CharacterExportPackage, 
             lorebooks,
             prompt_template_id,
             system_prompt,
+            custom_system_prompt,
             voice_config,
             voice_autoplay,
             disable_avatar_gradient,
@@ -1363,6 +1370,7 @@ fn load_character_export_snapshot(
         default_chat_template_id,
         created_at,
         updated_at,
+        custom_system_prompt,
     ): (
         String,         // name
         Option<String>, // avatar_path
@@ -1400,9 +1408,10 @@ fn load_character_export_snapshot(
         Option<String>, // default_chat_template_id
         i64,            // created_at
         i64,            // updated_at
+        Option<String>, // custom_system_prompt
     ) = conn
         .query_row(
-            "SELECT name, avatar_path, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, COALESCE(mode, 'roleplay'), companion, prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, active_lorebook_ids, disable_avatar_gradient, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, default_chat_template_id, created_at, updated_at FROM characters WHERE id = ?",
+            "SELECT name, avatar_path, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, COALESCE(mode, 'roleplay'), companion, prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, active_lorebook_ids, disable_avatar_gradient, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, default_chat_template_id, created_at, updated_at, custom_system_prompt FROM characters WHERE id = ?",
             params![character_id],
             |r| {
                 Ok((
@@ -1442,6 +1451,7 @@ fn load_character_export_snapshot(
                     r.get(33)?,
                     r.get(34)?,
                     r.get(35)?,
+                    r.get(36)?,
                 ))
             },
         )
@@ -1655,6 +1665,7 @@ fn load_character_export_snapshot(
             lorebooks,
             prompt_template_id,
             system_prompt,
+            custom_system_prompt,
             voice_config,
             voice_autoplay,
             disable_avatar_gradient: disable_avatar_gradient != 0,
@@ -1765,6 +1776,10 @@ fn build_uec_from_package(
         system_prompt_is_id = true;
     } else if let Some(sp) = package.character.system_prompt.clone() {
         payload.insert("systemPrompt".into(), JsonValue::String(sp));
+    }
+
+    if let Some(csp) = package.character.custom_system_prompt.clone() {
+        payload.insert("customSystemPrompt".into(), JsonValue::String(csp));
     }
 
     if let Some(vc) = package.character.voice_config.clone() {
@@ -2407,8 +2422,8 @@ pub fn character_import(app: tauri::AppHandle, import_json: String) -> Result<St
 
     // Insert character
     tx.execute(
-        r#"INSERT INTO characters (id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, mode, companion, prompt_template_id, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO characters (id, name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, mode, companion, prompt_template_id, system_prompt, custom_system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         params![
             &new_character_id,
             &package.character.name,
@@ -2438,6 +2453,7 @@ pub fn character_import(app: tauri::AppHandle, import_json: String) -> Result<St
             companion,
             package.character.prompt_template_id,
             package.character.system_prompt,
+            package.character.custom_system_prompt,
             voice_config,
             voice_autoplay,
             memory_type,
@@ -3377,6 +3393,7 @@ fn read_imported_character(
         custom_text_secondary,
         created_at,
         updated_at,
+        custom_system_prompt,
     ): (
         String,         // name
         Option<String>, // avatar_path
@@ -3413,9 +3430,10 @@ fn read_imported_character(
         Option<String>, // custom_text_secondary
         i64,            // created_at
         i64,            // updated_at
+        Option<String>, // custom_system_prompt
     ) = conn
         .query_row(
-            "SELECT name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, COALESCE(mode, 'roleplay'), companion, prompt_template_id, active_lorebook_ids, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, created_at, updated_at FROM characters WHERE id = ?",
+            "SELECT name, avatar_path, avatar_crop_x, avatar_crop_y, avatar_crop_scale, banner_crop_x, banner_crop_y, banner_crop_scale, background_image_path, description, definition, nickname, scenario, creator_notes, creator, creator_notes_multilingual, source, tags, default_scene_id, default_model_id, COALESCE(mode, 'roleplay'), companion, prompt_template_id, active_lorebook_ids, system_prompt, voice_config, voice_autoplay, memory_type, disable_avatar_gradient, custom_gradient_enabled, custom_gradient_colors, custom_text_color, custom_text_secondary, created_at, updated_at, custom_system_prompt FROM characters WHERE id = ?",
             params![character_id],
             |r| {
                 Ok((
@@ -3454,6 +3472,7 @@ fn read_imported_character(
                     r.get(32)?,
                     r.get(33)?,
                     r.get(34)?,
+                    r.get(35)?,
                 ))
             },
         )
@@ -3635,6 +3654,9 @@ fn read_imported_character(
     }
     if let Some(sp) = system_prompt {
         root.insert("systemPrompt".into(), JsonValue::String(sp));
+    }
+    if let Some(csp) = custom_system_prompt {
+        root.insert("customSystemPrompt".into(), JsonValue::String(csp));
     }
     if let Some(vc) = voice_config {
         if let Ok(value) = serde_json::from_str::<JsonValue>(&vc) {

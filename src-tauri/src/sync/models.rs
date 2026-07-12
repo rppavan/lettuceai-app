@@ -360,6 +360,8 @@ pub struct Character {
     #[serde(default)]
     pub group_chat_roleplay_prompt_template_id: Option<String>,
     pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub custom_system_prompt: Option<String>,
     pub voice_config: Option<String>,
     #[serde(default)]
     pub voice_autoplay: i64,
