@@ -3363,6 +3363,7 @@ export type CompanionMemoryConfig = z.infer<typeof CompanionMemoryConfigSchema>;
 
 export const CompanionPromptingConfigSchema = z.object({
   promptTemplateId: z.string().nullish().optional(),
+  customSystemPrompt: z.string().nullish().optional(),
   styleNotes: z.string().default(""),
 });
 export type CompanionPromptingConfig = z.infer<typeof CompanionPromptingConfigSchema>;
@@ -3645,6 +3646,7 @@ export const CharacterSchema = z.object({
   promptTemplateId: z.string().nullish().optional(),
   groupChatPromptTemplateId: z.string().nullish().optional(),
   groupChatRoleplayPromptTemplateId: z.string().nullish().optional(),
+  customSystemPrompt: z.string().nullish().optional(),
   disableAvatarGradient: z.boolean().default(false).optional(),
   avatarGradientSource: AvatarGradientSourceSchema.default("base").optional(),
   customGradientEnabled: z.boolean().default(false).optional(),

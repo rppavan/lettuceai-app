@@ -569,6 +569,17 @@ export const enMessages = {
         keyMemoriesDesc: "List of relevant memories",
       },
     },
+    customSystemPrompt: {
+      label: "Character System Prompt",
+      placeholder: "Write this character's system prompt…",
+      originalHint:
+        "expands to the default system prompt, so you can layer character instructions on top. Context variables like {{char.name}} keep working.",
+      insertOriginal: "Insert default prompt",
+      previewButton: "Preview",
+      previewHide: "Hide preview",
+      previewFailed: "<failed to render preview>",
+      unknownTokens: "Unrecognized variables: {{tokens}}",
+    },
     characterExport: {
       title: "Export Format",
       selectFormat: "Select a format",
@@ -3251,6 +3262,7 @@ export const enMessages = {
       companionPromptHint:
         "Stored separately as the companion prompt. The normal roleplay system prompt is not changed.",
       systemPromptHint: "Choose a custom system prompt or use the default.",
+      customPromptOption: "Custom (this character)",
       groupChatConvLabel: "Group Chat Prompt (Conversation)",
       groupChatConvHint: "Override this character's conversation prompt in group chats",
       groupChatRpLabel: "Group Chat Prompt (Roleplay)",
@@ -3809,6 +3821,7 @@ export const enMessages = {
       loadingTemplates: "Loading templates...",
       useDefaultCompanionPrompt: "Use default companion prompt",
       useDefaultSystemPrompt: "Use default system prompt",
+      customPromptOption: "Custom (this character)",
       usingAppDefault: "Using app default",
       noCompanionTemplatesHint:
         "No custom companion templates yet. Create one in Settings to Prompts.",
