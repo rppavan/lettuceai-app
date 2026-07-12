@@ -1134,6 +1134,7 @@ export async function saveCharacter(c: Partial<Character>): Promise<Character> {
     memoryType: c.memoryType ?? "manual",
     activeLorebookIds: c.activeLorebookIds ?? [],
     promptTemplateId: c.promptTemplateId ?? null,
+    customSystemPrompt: c.customSystemPrompt ?? null,
     groupChatPromptTemplateId: c.groupChatPromptTemplateId ?? null,
     groupChatRoleplayPromptTemplateId: c.groupChatRoleplayPromptTemplateId ?? null,
     disableAvatarGradient: c.disableAvatarGradient ?? false,
