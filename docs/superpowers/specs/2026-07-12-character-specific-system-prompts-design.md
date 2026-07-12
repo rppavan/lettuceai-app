@@ -112,19 +112,28 @@ In `build_system_prompt_entries` (`prompt_engine.rs:3224`) the priority becomes:
 
 ### `{{original}}` expansion
 
-When the custom prompt is active:
+Templates render from their `entries`; a template's `content` blob is only used when it has
+no entries (it is wrapped into a single core entry at `prompt_engine.rs:3332`). Core
+directive entries are marked `system_prompt: true`; structural entries (scenario, character
+definition, lorebook, memory, author note, image slots) are not. So the custom prompt
+operates at the entry level. When active:
 
 1. Resolve the **base template** exactly as if the character had no selection — the
    app-default chain, mode-aware (direct-chat default vs companion default). This is the
-   same code path that runs today when `prompt_template_id` is null.
-2. Content = custom text with every `{{original}}` occurrence replaced by the base
-   template's `content`. Single pass: any `{{original}}` inside the base content itself is
-   removed, not re-expanded (no recursion possible).
-3. Entries = the base template's `entries`, **unchanged**. This keeps lorebook, memory,
+   same code path that runs today when `prompt_template_id` is null (guaranteed by the UI,
+   which saves `promptTemplateId: null` while custom is active). Legacy content-only
+   templates are already wrapped into a single core entry before this step.
+2. `original` = the concatenated content of the base template's core entries
+   (`system_prompt: true`), joined with blank lines. Single pass: any `{{original}}` inside
+   that content itself is removed, not re-expanded (no recursion possible).
+3. Replace the first core entry's content with the custom text (with `{{original}}`
+   expanded); drop any further core entries (their content lives inside `{{original}}`).
+   If the base has no core entry, prepend the custom text as a new core entry.
+4. All **non-core entries pass through unchanged**. This keeps lorebook, memory,
    image-slot, and conditional injections working for custom-prompt characters.
-4. Everything downstream (`render_with_context` per entry, identity/context variable
+5. Everything downstream (`render_with_context` per entry, identity/context variable
    substitution, `sanitize_placeholders_in_api_messages`) runs untouched. The fork is
-   confined to the content-selection step — no mode-specific branching added elsewhere.
+   confined to one entry-transformation step — no mode-specific branching added elsewhere.
 
 Because the custom text goes through the normal renderer, all existing variables
 (`{{char}}`, `{{user}}`, `{{scene}}`, `{{lorebook}}`, …) work inside it.
@@ -180,15 +189,17 @@ must include the new custom-prompt step).
 
 ## Testing
 
-Rust unit tests (prompt_engine):
-- Custom prompt beats character template ID; session template still beats custom.
-- Empty/whitespace custom text falls through to the existing chain.
-- `{{original}}` expands to mode-correct base content (direct vs companion).
-- Single-pass guard: `{{original}}` inside base content is removed, not recursed.
-- Base template entries are preserved when custom is active.
-- Custom text without `{{original}}` renders standalone with base entries.
+Rust unit tests (prompt_engine — the entry transformation is pure and unit-testable; the
+full resolution chain needs an AppHandle, so chain behavior is covered by the manual pass
+via the debug page):
+- Custom text replaces the core entry; `{{original}}` expands to its original content.
+- Custom text without `{{original}}` renders standalone.
+- Multiple core entries collapse into one; non-core entries are preserved unchanged.
+- Single-pass guard: `{{original}}` inside core content is removed, not recursed.
+- A base with no core entry gets the custom text prepended as a new core entry.
 
-Frontend tests:
+Frontend verification (this repo has no JS test framework; `npm run check` = tsc + cargo
+check, plus manual):
 - Form round-trip: select Custom → type → save → reload shows Custom + text.
 - Dropdown switching: Custom → template → Custom preserves text within the session;
   saving while on a template persists `customSystemPrompt: null`.
