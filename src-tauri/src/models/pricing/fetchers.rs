@@ -105,6 +105,7 @@ pub async fn refresh_openrouter_endpoint_caches(
         stream: None,
         request_id: None,
         provider_id: Some("openrouter".to_string()),
+        cache_key: None,
     };
 
     let response = api_request(app.clone(), request).await?;
@@ -212,6 +213,7 @@ pub async fn fetch_openrouter_generation_details(
         stream: None,
         request_id: None,
         provider_id: Some("openrouter".to_string()),
+        cache_key: None,
     };
 
     let response = api_request(app.clone(), request).await?;

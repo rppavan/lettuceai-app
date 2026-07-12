@@ -117,10 +117,11 @@ function StatTile({
   high?: string;
   bipolar?: boolean;
 }) {
+  const { t } = useI18n();
   const barTone =
     tone === "warm" ? "bg-amber-400" : tone === "warning" ? "bg-rose-400" : "bg-accent";
   const v = bipolar ? Math.max(-1, Math.min(1, value)) : Math.max(0, Math.min(1, value));
-  const pct = Math.round(v * 100);
+  const pct = Math.round(v * 1000) / 10;
   const mag = Math.abs(v) * (bipolar ? 50 : 100);
   const delta = baseline == null ? null : Math.round((value - baseline) * 100);
   const Trend = delta == null ? null : delta >= 0 ? TrendingUp : TrendingDown;
@@ -131,8 +132,15 @@ function StatTile({
         <span className="text-[10px] font-semibold uppercase tracking-wider text-fg/45">
           {label}
         </span>
-        {Trend && delta !== 0 ? (
+        {Trend && delta !== null && delta !== 0 ? (
           <span
+            title={
+              delta > 0
+                ? t("chats.companionRelationship.pointsAboveDefault", { count: delta })
+                : t("chats.companionRelationship.pointsBelowDefault", {
+                    count: Math.abs(delta),
+                  })
+            }
             className={cn(
               "inline-flex items-center gap-0.5 text-[10px] font-medium tabular-nums",
               delta && delta > 0 ? "text-accent" : "text-rose-400",
@@ -145,7 +153,7 @@ function StatTile({
         ) : null}
       </div>
       <div className="mt-0.5 text-[17px] font-semibold tabular-nums text-fg/90">
-        {bipolar && pct > 0 ? `+${pct}` : pct}%
+        {bipolar && pct > 0 ? `+${pct.toFixed(1)}` : pct.toFixed(1)}%
       </div>
       {bipolar ? (
         <div className="relative mt-1.5 h-[3px] rounded-full bg-fg/6">

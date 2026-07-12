@@ -139,6 +139,7 @@ pub(crate) async fn execute_generation(
             stream: Some(built.stream),
             request_id: built.request_id,
             provider_id: Some(input.credential.provider_id.clone()),
+            cache_key: Some(input.session_id.to_string()),
         },
     )
     .await

@@ -1726,6 +1726,7 @@ pub async fn chat_generate_scene_prompt(
         stream: Some(false),
         request_id: None,
         provider_id: Some(credential.provider_id.clone()),
+        cache_key: None,
     };
 
     let api_response = api_request(app.clone(), api_request_payload).await?;
@@ -1943,6 +1944,7 @@ pub async fn chat_generate_design_reference_description(
         stream: Some(built.stream),
         request_id: built.request_id.clone(),
         provider_id: Some(credential.provider_id.clone()),
+        cache_key: None,
     };
 
     let api_response = api_request(app.clone(), api_request_payload).await?;

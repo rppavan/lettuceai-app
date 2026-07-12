@@ -454,6 +454,42 @@ fn backfill_missing_entry_conditions(
     Ok(())
 }
 
+fn relocate_volatile_chat_entries(entries: &mut [SystemPromptEntry]) -> bool {
+    let mut changed = false;
+    for entry in entries {
+        if matches!(entry.injection_position, PromptEntryPosition::Relative)
+            && prompt_engine::entry_contains_volatile_turn_context(entry)
+        {
+            entry.injection_position = PromptEntryPosition::InChat;
+            entry.injection_depth = 0;
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn migrate_volatile_chat_entry_positions(app: &AppHandle, id: &str) -> Result<(), String> {
+    let Some(template) = get_template(app, id)? else {
+        return Ok(());
+    };
+    let mut entries = template.entries;
+    if !relocate_volatile_chat_entries(&mut entries) {
+        return Ok(());
+    }
+
+    let content = template_entries_to_content(&entries);
+    let _ = update_template(
+        app,
+        id.to_string(),
+        None,
+        None,
+        Some(content),
+        Some(entries),
+        Some(template.condense_prompt_entries),
+    )?;
+    Ok(())
+}
+
 fn backfill_missing_entry_payloads(
     app: &AppHandle,
     id: &str,
@@ -1069,6 +1105,7 @@ pub fn ensure_app_default_template(app: &AppHandle) -> Result<String, String> {
                 .find(|entry| entry.id == "entry_scene_image_protocol")
                 .expect("scene image protocol entry should exist"),
         );
+        migrate_volatile_chat_entry_positions(app, APP_DEFAULT_TEMPLATE_ID)?;
         return Ok(existing.id);
     }
     // Insert default
@@ -1109,6 +1146,7 @@ pub fn ensure_local_roleplay_template(app: &AppHandle) -> Result<String, String>
             PromptType::LocalRoleplayPrompt,
             defaults,
         );
+        migrate_volatile_chat_entry_positions(app, APP_LOCAL_ROLEPLAY_TEMPLATE_ID)?;
         return Ok(existing.id);
     }
 
@@ -1150,6 +1188,7 @@ pub fn ensure_companion_template(app: &AppHandle) -> Result<String, String> {
             defaults.clone(),
         );
         let _ = backfill_missing_entry_conditions(app, APP_COMPANION_TEMPLATE_ID, &defaults);
+        migrate_volatile_chat_entry_positions(app, APP_COMPANION_TEMPLATE_ID)?;
         return Ok(existing.id);
     }
 
@@ -1398,6 +1437,7 @@ pub fn ensure_group_chat_templates(app: &AppHandle) -> Result<(), String> {
             APP_GROUP_CHAT_TEMPLATE_ID,
             APP_GROUP_CHAT_TEMPLATE_NAME,
         );
+        migrate_volatile_chat_entry_positions(app, APP_GROUP_CHAT_TEMPLATE_ID)?;
     }
 
     if get_template(app, APP_GROUP_CHAT_ROLEPLAY_TEMPLATE_ID)?.is_none() {
@@ -1436,6 +1476,7 @@ pub fn ensure_group_chat_templates(app: &AppHandle) -> Result<(), String> {
             APP_GROUP_CHAT_ROLEPLAY_TEMPLATE_ID,
             APP_GROUP_CHAT_ROLEPLAY_TEMPLATE_NAME,
         );
+        migrate_volatile_chat_entry_positions(app, APP_GROUP_CHAT_ROLEPLAY_TEMPLATE_ID)?;
     }
 
     Ok(())
@@ -2405,12 +2446,11 @@ pub fn reset_all_protected_templates(app: &AppHandle) -> Result<Vec<SystemPrompt
     load_templates(app)
 }
 
-/// Get the Help Me Reply template from DB, falling back to default if not found
-pub fn get_help_me_reply_prompt(
+pub fn get_help_me_reply_entries(
     app: &AppHandle,
     style: &str,
     override_template_id: Option<&str>,
-) -> String {
+) -> Vec<SystemPromptEntry> {
     let template_id = override_template_id.unwrap_or_else(|| {
         if style == "conversational" {
             APP_HELP_ME_REPLY_CONVERSATIONAL_TEMPLATE_ID
@@ -2427,15 +2467,34 @@ pub fn get_help_me_reply_prompt(
 
     match get_template(app, template_id) {
         Ok(Some(template)) => {
-            let merged = template_entries_to_content(&template.entries);
-            if merged.is_empty() {
-                template.content
+            if template.entries.is_empty() {
+                single_entry_from_content(&template.content)
             } else {
-                merged
+                template
+                    .entries
+                    .into_iter()
+                    .filter(|entry| entry.enabled)
+                    .collect()
             }
         }
-        _ => get_base_prompt(prompt_type),
+        _ => {
+            let entries = get_base_prompt_entries(prompt_type);
+            if entries.is_empty() {
+                single_entry_from_content(&get_base_prompt(prompt_type))
+            } else {
+                entries
+            }
+        }
     }
+}
+
+/// Get the Help Me Reply template as legacy merged text.
+pub fn get_help_me_reply_prompt(
+    app: &AppHandle,
+    style: &str,
+    override_template_id: Option<&str>,
+) -> String {
+    template_entries_to_content(&get_help_me_reply_entries(app, style, override_template_id))
 }
 
 /// Get the Group Chat template from DB, falling back to default if not found
@@ -2469,5 +2528,50 @@ pub fn get_group_chat_roleplay_prompt(app: &AppHandle) -> String {
             }
         }
         _ => get_base_prompt(PromptType::GroupChatRoleplayPrompt),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relocate_volatile_chat_entries;
+    use crate::chat_manager::prompt_engine::default_modular_prompt_entries;
+    use crate::chat_manager::types::PromptEntryPosition;
+
+    #[test]
+    fn stored_default_migration_repairs_only_volatile_relative_entries() {
+        let mut entries = default_modular_prompt_entries();
+        let world = entries
+            .iter_mut()
+            .find(|entry| entry.id == "entry_world_info")
+            .expect("world entry");
+        world.injection_position = PromptEntryPosition::Relative;
+        let base = entries
+            .iter()
+            .find(|entry| entry.id == "entry_base")
+            .expect("base entry");
+        assert!(matches!(
+            base.injection_position,
+            PromptEntryPosition::Relative
+        ));
+
+        assert!(relocate_volatile_chat_entries(&mut entries));
+
+        let world = entries
+            .iter()
+            .find(|entry| entry.id == "entry_world_info")
+            .expect("world entry");
+        let base = entries
+            .iter()
+            .find(|entry| entry.id == "entry_base")
+            .expect("base entry");
+        assert!(matches!(
+            world.injection_position,
+            PromptEntryPosition::InChat
+        ));
+        assert_eq!(world.injection_depth, 0);
+        assert!(matches!(
+            base.injection_position,
+            PromptEntryPosition::Relative
+        ));
     }
 }

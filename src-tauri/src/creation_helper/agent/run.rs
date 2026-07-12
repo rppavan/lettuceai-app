@@ -7,13 +7,15 @@ use crate::chat_manager::sse::accumulate_tool_calls_from_sse;
 use crate::chat_manager::tooling::{
     parse_tool_calls, tool_call_message_payload, ToolCall, ToolChoice, ToolConfig,
 };
+use crate::chat_manager::{
+    entries::relative_system_entry, request_builder::system_role_for,
+    turn_builder::assemble_prompt_messages,
+};
 use crate::creation_helper::service::{
     creation_tool_result_message, emit_creation_helper_step, emit_creation_helper_turn_start,
     emit_creation_helper_update, emit_creation_segment_boundary, send_creation_api_request,
 };
-use crate::creation_helper::types::{
-    CreationMessageRole, CreationSession, CreationToolResult,
-};
+use crate::creation_helper::types::{CreationMessageRole, CreationSession, CreationToolResult};
 use crate::utils::{log_info, log_warn};
 
 use super::exec::dispatch_tool;
@@ -52,7 +54,8 @@ pub async fn run_agent_turn(
 
     emit_creation_helper_turn_start(app, &session_id, stream_request_id);
 
-    let mut api_messages = build_initial_messages(session, target, fallback_format);
+    let system_role = system_role_for(&ctx.cred);
+    let mut api_messages = build_initial_messages(session, target, fallback_format, &system_role);
 
     let tool_config = if fallback_format.is_native() {
         Some(ToolConfig {
@@ -404,23 +407,28 @@ fn build_initial_messages(
     session: &CreationSession,
     target: TargetKind,
     fallback: CreationHelperFallbackFormat,
+    system_role: &str,
 ) -> Vec<Value> {
-    let mut messages = Vec::new();
+    let mut conversation_messages = Vec::new();
     let view = build_draft_view(session);
 
-    let mut system =
-        crate::chat_manager::prompting::prompt_engine::default_creation_helper_system_prompt();
-    system = system
-        .replace("{{target_label}}", target.label())
-        .replace("{{draft_state}}", &view.rendered);
+    let mut prompt_entries =
+        crate::chat_manager::prompting::prompt_engine::default_creation_helper_system_entries();
+    for entry in &mut prompt_entries {
+        entry.content = entry
+            .content
+            .replace("{{target_label}}", target.label())
+            .replace("{{draft_state}}", &view.rendered);
+    }
 
     let fallback_addendum = fallback_system_prompt(fallback, target);
     if !fallback_addendum.is_empty() {
-        system.push_str("\n\n---\n\n");
-        system.push_str(&fallback_addendum);
+        prompt_entries.push(relative_system_entry(
+            "creation_agent_fallback_protocol",
+            "Creation Agent Fallback Protocol",
+            fallback_addendum,
+        ));
     }
-
-    messages.push(json!({ "role": "system", "content": system }));
 
     for msg in &session.messages {
         let role = match msg.role {
@@ -431,10 +439,10 @@ fn build_initial_messages(
         if msg.content.is_empty() {
             continue;
         }
-        messages.push(json!({ "role": role, "content": msg.content }));
+        conversation_messages.push(json!({ "role": role, "content": msg.content }));
     }
 
-    messages
+    assemble_prompt_messages(prompt_entries, conversation_messages, system_role)
 }
 
 #[allow(dead_code)]

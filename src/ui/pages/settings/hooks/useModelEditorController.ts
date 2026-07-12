@@ -58,6 +58,7 @@ type ControllerReturn = {
   handleLlamaRopeFreqScaleChange: (value: number | null) => void;
   handleLlamaOffloadKqvChange: (value: boolean | null) => void;
   handleLlamaBatchSizeChange: (value: number | null) => void;
+  handleLlamaUbatchSizeChange: (value: number | null) => void;
   handleLlamaKvTypeChange: (value: AdvancedModelSettings["llamaKvType"]) => void;
   handleLlamaFlashAttentionChange: (value: AdvancedModelSettings["llamaFlashAttention"]) => void;
   handleLlamaSwaFullChange: (value: boolean | null) => void;
@@ -716,6 +717,19 @@ export function useModelEditorController(): ControllerReturn {
         payload: {
           ...state.modelAdvancedDraft,
           llamaBatchSize: value,
+        },
+      });
+    },
+    [dispatch, state.modelAdvancedDraft],
+  );
+
+  const handleLlamaUbatchSizeChange = useCallback(
+    (value: number | null) => {
+      dispatch({
+        type: "set_model_advanced_draft",
+        payload: {
+          ...state.modelAdvancedDraft,
+          llamaUbatchSize: value,
         },
       });
     },
@@ -1579,6 +1593,8 @@ export function useModelEditorController(): ControllerReturn {
       ...modelAdvancedDraft,
       contextLength: suggestedSettings.contextLength ?? modelAdvancedDraft.contextLength ?? null,
       llamaBatchSize: suggestedSettings.llamaBatchSize ?? modelAdvancedDraft.llamaBatchSize ?? null,
+      llamaUbatchSize:
+        suggestedSettings.llamaUbatchSize ?? modelAdvancedDraft.llamaUbatchSize ?? null,
       llamaLastRuntimeReport: report,
     });
 
@@ -1657,6 +1673,7 @@ export function useModelEditorController(): ControllerReturn {
     handleLlamaRopeFreqScaleChange,
     handleLlamaOffloadKqvChange,
     handleLlamaBatchSizeChange,
+    handleLlamaUbatchSizeChange,
     handleLlamaKvTypeChange,
     handleLlamaFlashAttentionChange,
     handleLlamaSwaFullChange,

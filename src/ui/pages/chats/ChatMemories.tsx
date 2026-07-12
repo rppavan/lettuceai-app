@@ -1526,7 +1526,14 @@ export function ChatMemoriesPage() {
     if (!sessionId || !isDynamic) return;
     try {
       await storageBridge.triggerDynamicMemory(sessionId);
+      await reload();
+      await storageBridge
+        .dynamicMemoryCycleStatus(sessionId)
+        .then(setCycleStatus)
+        .catch(() => setCycleStatus(null));
       dispatch({ type: "SET_ACTION_ERROR", value: null });
+      dispatch({ type: "SET_MEMORY_STATUS", value: "idle" });
+      dispatch({ type: "SET_MEMORY_PROGRESS_STEP", value: null });
     } catch (err: any) {
       if (isAbortError(err)) {
         dispatch({ type: "SET_ACTION_ERROR", value: null });
@@ -1721,6 +1728,7 @@ export function ChatMemoriesPage() {
               onDismissError={handleDismissError}
               onDismissSuccess={() => dispatch({ type: "SET_RETRY_STATUS", value: "idle" })}
               onShowLiveOutput={() => setShowLiveOutput(true)}
+              conversationScope={session.parentSessionId ? "branch" : "conversation"}
             />
           )}
         {ui.actionError && !isMemoryCycleActive && ui.actionError !== cycleErrorMessage && (

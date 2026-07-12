@@ -508,7 +508,7 @@ pub fn chat_message_debug_snapshot(
             .ok_or_else(|| "Provider credential not found".to_string())?;
         (model.clone(), credential.clone())
     } else {
-        let (model, credential) = context.select_model_with_credential(&character)?;
+        let (model, credential) = context.select_model_with_credential(&character, None)?;
         (model.clone(), credential.clone())
     };
 

@@ -23,6 +23,7 @@ import {
   ADVANCED_LLAMA_ROPE_FREQ_BASE_RANGE,
   ADVANCED_LLAMA_ROPE_FREQ_SCALE_RANGE,
   ADVANCED_LLAMA_BATCH_SIZE_RANGE,
+  ADVANCED_LLAMA_UBATCH_SIZE_RANGE,
   ADVANCED_LLAMA_DRY_MULTIPLIER_RANGE,
   ADVANCED_LLAMA_DRY_BASE_RANGE,
   ADVANCED_LLAMA_DRY_ALLOWED_LENGTH_RANGE,
@@ -200,6 +201,7 @@ type LlamaCppContextInfo = {
   availableVramBytes?: number | null;
   modelSizeBytes?: number | null;
   layerCount?: number | null;
+  maxGpuLayers?: number | null;
   supportsGpuOffload?: boolean | null;
   selectedGpuDeviceIds?: number[] | null;
   perDeviceVram?: { index: number; memoryFree: number; memoryTotal: number }[] | null;
@@ -555,6 +557,7 @@ export function EditModelPage() {
     handleLlamaRopeFreqScaleChange,
     handleLlamaOffloadKqvChange,
     handleLlamaBatchSizeChange,
+    handleLlamaUbatchSizeChange,
     handleLlamaKvTypeChange,
     handleLlamaFlashAttentionChange,
     handleLlamaSwaFullChange,
@@ -689,8 +692,61 @@ export function EditModelPage() {
       [t("editModel.runtimeFacts.requestedGpuLayers"), formatRuntimeNumber(llamaRuntimeReport.requestedGpuLayers)],
       [t("editModel.runtimeFacts.actualGpuLayers"), formatRuntimeNumber(llamaRuntimeReport.actualGpuLayersUsed)],
       [t("editModel.runtimeFacts.requestedBatch"), formatRuntimeNumber(llamaRuntimeReport.requestedBatchLimit)],
+      [t("editModel.runtimeFacts.requestedUbatch"), formatRuntimeNumber(llamaRuntimeReport.requestedUbatchLimit)],
       [t("editModel.runtimeFacts.initialBatch"), formatRuntimeNumber(llamaRuntimeReport.initialBatchCandidate)],
       [t("editModel.runtimeFacts.actualBatch"), formatRuntimeNumber(llamaRuntimeReport.actualBatchUsed)],
+      [t("editModel.runtimeFacts.actualUbatch"), formatRuntimeNumber(llamaRuntimeReport.actualUbatchUsed)],
+      [
+        t("editModel.runtimeFacts.nativeFit"),
+        llamaRuntimeReport.nativeFitApplied == null
+          ? null
+          : llamaRuntimeReport.nativeFitApplied
+            ? t("editModel.runtimeFacts.active")
+            : t("editModel.runtimeFacts.notNeeded"),
+      ],
+      [
+        t("editModel.runtimeFacts.nativeFitContext"),
+        formatRuntimeNumber(llamaRuntimeReport.nativeFitContext),
+      ],
+      [
+        t("editModel.runtimeFacts.nativeFitGpuLayers"),
+        formatRuntimeNumber(llamaRuntimeReport.nativeFitGpuLayers),
+      ],
+      [
+        t("editModel.runtimeFacts.nativeFitMargin"),
+        llamaRuntimeReport.nativeFitMarginBytes == null
+          ? null
+          : formatBytes(llamaRuntimeReport.nativeFitMarginBytes),
+      ],
+      [
+        t("editModel.runtimeFacts.nativeFitTensorSplit"),
+        llamaRuntimeReport.nativeFitTensorSplit?.length
+          ? llamaRuntimeReport.nativeFitTensorSplit.map((value) => value.toFixed(3)).join(", ")
+          : null,
+      ],
+      [t("editModel.runtimeFacts.nativeFitError"), llamaRuntimeReport.nativeFitError ?? null],
+      [
+        t("editModel.runtimeFacts.promptCacheHit"),
+        llamaRuntimeReport.promptCacheHit == null
+          ? null
+          : llamaRuntimeReport.promptCacheHit
+            ? t("editModel.runtimeFacts.active")
+            : t("editModel.runtimeFacts.notNeeded"),
+      ],
+      [
+        t("editModel.runtimeFacts.promptCacheEntries"),
+        formatRuntimeNumber(llamaRuntimeReport.promptCacheEntries),
+      ],
+      [
+        t("editModel.runtimeFacts.promptCacheMemory"),
+        llamaRuntimeReport.promptCacheBytes == null
+          ? null
+          : `${formatBytes(llamaRuntimeReport.promptCacheBytes)} / ${formatBytes(llamaRuntimeReport.promptCacheCapacityBytes ?? 0)}`,
+      ],
+      [
+        t("editModel.runtimeFacts.promptCacheEvictions"),
+        formatRuntimeNumber(llamaRuntimeReport.promptCacheEvictions),
+      ],
       [
         t("editModel.runtimeFacts.smartOffloadFallback"),
         llamaRuntimeReport.smartGpuLayerFallbackActivated == null
@@ -754,7 +810,45 @@ export function EditModelPage() {
           : null,
       ],
       [t("editModel.runtimeFacts.throughput"), formatRuntimeRate(llamaRuntimeReport.tokensPerSecond)],
+      [
+        t("editModel.runtimeFacts.nativePromptSpeed"),
+        formatRuntimeRate(llamaRuntimeReport.nativePromptEvalTokensPerSecond),
+      ],
+      [
+        t("editModel.runtimeFacts.nativeGenerationSpeed"),
+        formatRuntimeRate(llamaRuntimeReport.nativeGenerationTokensPerSecond),
+      ],
+      [
+        t("editModel.runtimeFacts.nativePromptTime"),
+        llamaRuntimeReport.nativePromptEvalMs == null
+          ? null
+          : `${formatRuntimeNumber(Math.round(llamaRuntimeReport.nativePromptEvalMs))} ms`,
+      ],
+      [
+        t("editModel.runtimeFacts.nativeGenerationTime"),
+        llamaRuntimeReport.nativeGenerationComputeMs == null
+          ? null
+          : `${formatRuntimeNumber(Math.round(llamaRuntimeReport.nativeGenerationComputeMs))} ms`,
+      ],
+      [
+        t("editModel.runtimeFacts.appGenerationOverhead"),
+        llamaRuntimeReport.appGenerationOverheadMs == null
+          ? null
+          : `${formatRuntimeNumber(Math.round(llamaRuntimeReport.appGenerationOverheadMs))} ms`,
+      ],
       [t("editModel.runtimeFacts.promptTemplate"), llamaRuntimeReport.promptTemplateSource ?? null],
+      [
+        t("editModel.runtimeFacts.thinkingMode"),
+        llamaRuntimeReport.thinkingEnabled == null
+          ? null
+          : llamaRuntimeReport.thinkingEnabled
+            ? t("editModel.runtimeFacts.active")
+            : t("editModel.runtimeFacts.notNeeded"),
+      ],
+      [
+        t("editModel.runtimeFacts.thinkingDirective"),
+        llamaRuntimeReport.thinkingDirective ?? null,
+      ],
     ] as const;
     return fields.filter(([, value]) => value).map(([label, value]) => ({ label, value: value! }));
   }, [llamaRuntimeReport]);
@@ -1563,7 +1657,7 @@ export function EditModelPage() {
   const contextLimit = llamaContextInfo?.maxContextLength ?? ADVANCED_CONTEXT_LENGTH_RANGE.max;
   const recommendedContextLength = llamaContextInfo?.recommendedContextLength ?? null;
   const llamaLayerPlacementSummary = useMemo(() => {
-    const totalLayers = llamaContextInfo?.layerCount;
+    const totalLayers = llamaContextInfo?.maxGpuLayers ?? llamaContextInfo?.layerCount;
     if (!totalLayers || totalLayers <= 0) {
       return null;
     }
@@ -1582,7 +1676,11 @@ export function EditModelPage() {
       totalLayers,
       detail: `${gpuLayers.toLocaleString()} to GPU • ${cpuLayers.toLocaleString()} on CPU • ${totalLayers.toLocaleString()} total`,
     };
-  }, [llamaContextInfo?.layerCount, modelAdvancedDraft.llamaGpuLayers]);
+  }, [
+    llamaContextInfo?.layerCount,
+    llamaContextInfo?.maxGpuLayers,
+    modelAdvancedDraft.llamaGpuLayers,
+  ]);
   const selectedContextLength = modelAdvancedDraft.contextLength ?? null;
   const showContextWarning =
     isLocalModel &&
@@ -1780,7 +1878,8 @@ export function EditModelPage() {
     0,
   );
   const manualCpuLayers = modelAdvancedDraft.llamaCpuLayers ?? 0;
-  const totalModelLayers = llamaContextInfo?.layerCount ?? null;
+  const totalModelLayers =
+    llamaContextInfo?.maxGpuLayers ?? llamaContextInfo?.layerCount ?? null;
   const manualLayerSumValid =
     totalModelLayers === null || manualGpuLayerTotal + manualCpuLayers === totalModelLayers;
   const generationSummary = isFixedImageProvider
@@ -1809,6 +1908,9 @@ export function EditModelPage() {
     ? [
       modelAdvancedDraft.llamaBatchSize != null
         ? `Batch ${modelAdvancedDraft.llamaBatchSize}`
+        : null,
+      modelAdvancedDraft.llamaUbatchSize != null
+        ? `Microbatch ${modelAdvancedDraft.llamaUbatchSize}`
         : null,
       modelAdvancedDraft.llamaKvType ? `KV ${modelAdvancedDraft.llamaKvType}` : null,
       modelAdvancedDraft.llamaOffloadKqv === true
@@ -1867,6 +1969,7 @@ export function EditModelPage() {
     setSelectedLlamaQuickPreset(preset);
     if (preset === "balanced") {
       handleLlamaBatchSizeChange(512);
+      handleLlamaUbatchSizeChange(512);
       handleLlamaKvTypeChange("q8_0");
       handleLlamaOffloadKqvChange(isCpuOnlyLlamaBackend ? false : true);
       handleLlamaFlashAttentionChange("auto");
@@ -1874,6 +1977,7 @@ export function EditModelPage() {
     }
     if (preset === "throughput") {
       handleLlamaBatchSizeChange(1024);
+      handleLlamaUbatchSizeChange(1024);
       handleLlamaKvTypeChange("f16");
       handleLlamaOffloadKqvChange(isCpuOnlyLlamaBackend ? false : true);
       handleLlamaFlashAttentionChange("enabled");
@@ -1881,12 +1985,14 @@ export function EditModelPage() {
     }
     if (preset === "vram") {
       handleLlamaBatchSizeChange(512);
+      handleLlamaUbatchSizeChange(256);
       handleLlamaKvTypeChange("q4_k");
       handleLlamaOffloadKqvChange(isCpuOnlyLlamaBackend ? false : true);
       handleLlamaFlashAttentionChange("enabled");
       return;
     }
     handleLlamaBatchSizeChange(256);
+    handleLlamaUbatchSizeChange(128);
     handleLlamaKvTypeChange("q8_0");
     handleLlamaOffloadKqvChange(false);
     handleLlamaFlashAttentionChange("auto");
@@ -4928,6 +5034,30 @@ export function EditModelPage() {
                                     <div className="space-y-4">
                                       <div className="space-y-0.5">
                                         <span className="block text-[13px] font-medium text-fg/70">
+                                          {t("editModel.layerPlacement.ubatchSize")}
+                                        </span>
+                                        <span className="block text-[13px] text-fg/40">
+                                          {t("editModel.layerPlacement.ubatchSizeDescription")}
+                                        </span>
+                                      </div>
+                                      <NumberInput
+                                        min={ADVANCED_LLAMA_UBATCH_SIZE_RANGE.min}
+                                        max={ADVANCED_LLAMA_UBATCH_SIZE_RANGE.max}
+                                        step={1}
+                                        value={modelAdvancedDraft.llamaUbatchSize ?? null}
+                                        onChange={(next) =>
+                                          handleLlamaUbatchSizeChange(
+                                            next === null || next <= 0 ? null : Math.trunc(next),
+                                          )
+                                        }
+                                        placeholder={t("common.labels.auto")}
+                                        className={numberInputClassName}
+                                      />
+                                    </div>
+
+                                    <div className="col-span-2 space-y-4">
+                                      <div className="space-y-0.5">
+                                        <span className="block text-[13px] font-medium text-fg/70">
                                           {t("editModel.layerPlacement.flashAttention")}
                                         </span>
                                         <span className="block text-[13px] text-fg/40">
@@ -6495,6 +6625,15 @@ export function EditModelPage() {
                             {formatRuntimeNumber(
                               llamaRuntimeReport.suggestedSettings.llamaBatchSize,
                             ) ?? t("editModel.runtime.na")}
+                            {llamaRuntimeReport.suggestedSettings.llamaUbatchSize != null && (
+                              <>
+                                {" • "}
+                                {t("editModel.runtime.microbatch")} {" "}
+                                {formatRuntimeNumber(
+                                  llamaRuntimeReport.suggestedSettings.llamaUbatchSize,
+                                )}
+                              </>
+                            )}
                           </p>
                         </div>
                         <button

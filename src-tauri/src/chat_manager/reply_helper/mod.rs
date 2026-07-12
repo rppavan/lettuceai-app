@@ -1,14 +1,14 @@
-use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use crate::api::{api_request, ApiRequest};
+use crate::chat_manager::entries::in_chat_user_entry;
 use crate::chat_manager::execution::prepare_sampling_request;
 use crate::chat_manager::prompts;
 use crate::chat_manager::request::extract_text;
 use crate::chat_manager::service::{require_api_key, ChatContext};
 use crate::chat_manager::storage::{recent_messages, resolve_credential_for_model};
 use crate::chat_manager::turn_builder::{
-    role_swap_enabled, swap_role_for_api, swapped_prompt_entities,
+    assemble_prompt_messages, role_swap_enabled, swap_role_for_api, swapped_prompt_entities,
 };
 use crate::chat_manager::types::{Character, Persona, Session};
 use crate::usage::tracking::UsageOperationType;
@@ -144,8 +144,8 @@ pub async fn chat_generate_user_reply(
         })
         .filter(|id| !id.trim().is_empty());
 
-    let base_prompt =
-        prompts::get_help_me_reply_prompt(&app, reply_style, help_me_reply_prompt_template_id);
+    let mut prompt_entries =
+        prompts::get_help_me_reply_entries(&app, reply_style, help_me_reply_prompt_template_id);
 
     // Get max tokens from settings (default to 150)
     let max_tokens = settings
@@ -176,35 +176,37 @@ pub async fn chat_generate_user_reply(
         .map(|p| p.description.as_str())
         .unwrap_or("");
 
-    let mut system_prompt = base_prompt;
-    system_prompt = system_prompt.replace("{{char.name}}", char_name);
-    system_prompt = system_prompt.replace("{{char.desc}}", char_desc);
-    system_prompt = system_prompt.replace("{{persona.name}}", persona_name);
-    system_prompt = system_prompt.replace("{{persona.desc}}", persona_desc);
-    system_prompt = system_prompt.replace("{{user.name}}", persona_name);
-    system_prompt = system_prompt.replace("{{user.desc}}", persona_desc);
     let draft_str = current_draft.as_deref().unwrap_or("");
-    system_prompt = system_prompt.replace("{{current_draft}}", draft_str);
-    // Legacy placeholders
-    system_prompt = system_prompt.replace("{{char}}", char_name);
-    system_prompt = system_prompt.replace("{{persona}}", persona_name);
-    system_prompt = system_prompt.replace("{{user}}", persona_name);
+    for entry in &mut prompt_entries {
+        let content = &mut entry.content;
+        *content = content
+            .replace("{{char.name}}", char_name)
+            .replace("{{char.desc}}", char_desc)
+            .replace("{{persona.name}}", persona_name)
+            .replace("{{persona.desc}}", persona_desc)
+            .replace("{{user.name}}", persona_name)
+            .replace("{{user.desc}}", persona_desc)
+            .replace("{{current_draft}}", draft_str)
+            .replace("{{char}}", char_name)
+            .replace("{{persona}}", persona_name)
+            .replace("{{user}}", persona_name);
 
-    if let Some(ref draft) = current_draft {
-        if !draft.trim().is_empty() {
-            system_prompt = system_prompt.replace("{{#if current_draft}}", "");
-            system_prompt = system_prompt.replace("{{current_draft}}", draft);
-            if let Some(else_start) = system_prompt.find("{{else}}") {
-                if let Some(endif_start) = system_prompt[else_start..].find("{{/if}}") {
-                    system_prompt.replace_range(else_start..(else_start + endif_start + 7), "");
+        if let Some(ref draft) = current_draft {
+            if !draft.trim().is_empty() {
+                *content = content.replace("{{#if current_draft}}", "");
+                *content = content.replace("{{current_draft}}", draft);
+                if let Some(else_start) = content.find("{{else}}") {
+                    if let Some(endif_start) = content[else_start..].find("{{/if}}") {
+                        content.replace_range(else_start..(else_start + endif_start + 7), "");
+                    }
                 }
+                *content = content.replace("{{/if}}", "");
+            } else {
+                remove_if_block(content);
             }
-            system_prompt = system_prompt.replace("{{/if}}", "");
         } else {
-            remove_if_block(&mut system_prompt);
+            remove_if_block(content);
         }
-    } else {
-        remove_if_block(&mut system_prompt);
     }
 
     let (effective_user_name, effective_assistant_name) =
@@ -233,10 +235,14 @@ pub async fn chat_generate_user_reply(
         conversation_context, effective_user_name
     );
 
-    let messages_for_api: Vec<Value> = vec![
-        json!({ "role": "system", "content": system_prompt }),
-        json!({ "role": "user", "content": user_prompt }),
-    ];
+    let system_role = super::request_builder::system_role_for(credential);
+    prompt_entries.push(in_chat_user_entry(
+        "runtime_reply_helper_input",
+        "Reply Helper Input",
+        user_prompt,
+        0,
+    ));
+    let messages_for_api = assemble_prompt_messages(prompt_entries, Vec::new(), &system_role);
 
     let (request_settings, extra_body_fields) = prepare_sampling_request(
         &credential.provider_id,
@@ -289,6 +295,7 @@ pub async fn chat_generate_user_reply(
         stream: Some(built.stream),
         request_id: built.request_id.clone(),
         provider_id: Some(credential.provider_id.clone()),
+        cache_key: None,
     };
 
     let api_response = api_request(app.clone(), api_request_payload).await?;

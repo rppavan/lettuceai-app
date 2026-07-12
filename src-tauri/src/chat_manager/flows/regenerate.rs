@@ -7,6 +7,7 @@ use crate::chat_manager::attachments::{
 };
 use crate::chat_manager::commands::take_aborted_request;
 use crate::chat_manager::companion;
+use crate::chat_manager::entries::{regenerate_guidance_entry, swap_places_entry};
 use crate::chat_manager::memory::dynamic::{
     context_enrichment_enabled, dynamic_min_similarity, dynamic_retrieval_limit,
     dynamic_retrieval_strategy, dynamic_window_size, ensure_pinned_hot, mark_memories_accessed,
@@ -14,8 +15,7 @@ use crate::chat_manager::memory::dynamic::{
 };
 use crate::chat_manager::memory::flow::select_relevant_memories;
 use crate::chat_manager::messages::{
-    push_prompt_entry_message, push_system_message, push_user_or_assistant_message_with_context,
-    sanitize_placeholders_in_api_messages,
+    push_user_or_assistant_message_with_context, sanitize_placeholders_in_api_messages,
 };
 use crate::chat_manager::request::{
     ensure_assistant_variant, new_assistant_variant, push_assistant_variant,
@@ -24,10 +24,10 @@ use crate::chat_manager::service::{
     record_failed_usage, record_usage_if_available, ChatService, PreparedChatTurn,
 };
 use crate::chat_manager::turn_builder::{
-    append_image_directive_instructions, build_enriched_query, conversation_window_with_pinned,
-    insert_in_chat_prompt_entries, is_dynamic_memory_active, manual_window_size,
-    maybe_swap_message_for_api, message_visible_to_model, partition_prompt_entries,
-    role_swap_enabled, swapped_prompt_entities,
+    append_image_directive_instructions, assemble_prompt_messages, build_enriched_query,
+    conversation_window_with_pinned, is_dynamic_memory_active, manual_window_size,
+    maybe_swap_message_for_api, message_visible_to_model, role_swap_enabled,
+    swapped_prompt_entities,
 };
 use crate::chat_manager::types::{
     ChatRegenerateArgs, ImageAttachment, RegenerateResult, StoredMessage,
@@ -52,11 +52,17 @@ impl RegenerateFlow {
             message_id,
             swap_places,
             guidance,
+            model_id,
             stream,
             request_id,
         } = args;
         let swap_places = role_swap_enabled(swap_places);
         let guidance = guidance
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let model_override = model_id
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -71,7 +77,8 @@ impl RegenerateFlow {
             ),
         );
 
-        let prepared = ChatService::initialize(app.clone())?.prepare_regeneration(&session_id)?;
+        let prepared = ChatService::initialize(app.clone())?
+            .prepare_regeneration(&session_id, model_override.as_deref())?;
         let PreparedChatTurn {
             context,
             character,
@@ -262,7 +269,7 @@ impl RegenerateFlow {
             }
         }
 
-        let prompt_entries = if swap_places {
+        let mut prompt_entries = if swap_places {
             let (prompt_character, prompt_persona) =
                 swapped_prompt_entities(&character, persona.as_ref());
             append_image_directive_instructions(
@@ -288,27 +295,14 @@ impl RegenerateFlow {
                 &session,
                 &prompt_entries,
             );
-        let (relative_entries, in_chat_entries) = partition_prompt_entries(prompt_entries);
-
         let system_role = crate::chat_manager::request_builder::system_role_for(&credential);
         let messages_for_api = {
-            let mut out = Vec::new();
-            for entry in &relative_entries {
-                push_prompt_entry_message(&mut out, &system_role, entry);
-            }
             if swap_places {
                 let persona_title = persona
                     .as_ref()
                     .map(|p| p.title.clone())
                     .unwrap_or_else(|| "the user persona".to_string());
-                push_system_message(
-                    &mut out,
-                    &system_role,
-                    Some(format!(
-                        "Swap places mode is active for this turn. The human is speaking as character '{}' and you must respond as persona '{}'. Keep the response in first person as '{}'.",
-                        character.name, persona_title, persona_title
-                    )),
-                );
+                prompt_entries.push(swap_places_entry(&character.name, &persona_title));
             }
 
             let char_name = if swap_places {
@@ -412,17 +406,10 @@ impl RegenerateFlow {
                 }
             }
 
-            insert_in_chat_prompt_entries(&mut chat_messages, &system_role, &in_chat_entries);
-            out.extend(chat_messages);
             if let Some(guidance) = &guidance {
-                out.push(json!({
-                    "role": "user",
-                    "content": format!(
-                        "[REGENERATE INSTRUCTION]\nRegenerate your previous response to the last message. Follow this additional user instruction for the new response:\n{}",
-                        guidance
-                    )
-                }));
+                prompt_entries.push(regenerate_guidance_entry(guidance));
             }
+            let mut out = assemble_prompt_messages(prompt_entries, chat_messages, &system_role);
             sanitize_placeholders_in_api_messages(&mut out, char_name, persona_name);
             out
         };
@@ -598,6 +585,7 @@ impl RegenerateFlow {
                     stream: Some(built.stream),
                     request_id: built.request_id.clone(),
                     provider_id: Some(attempt_credential.provider_id.clone()),
+                    cache_key: Some(session.id.clone()),
                 };
 
                 let api_response = match api_request(app.clone(), api_request_payload).await {

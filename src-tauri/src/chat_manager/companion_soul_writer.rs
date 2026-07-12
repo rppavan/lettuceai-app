@@ -635,6 +635,7 @@ async fn send_request(
             stream: Some(false),
             request_id: built.request_id,
             provider_id: Some(credential.provider_id.clone()),
+            cache_key: None,
         },
     )
     .await?;
@@ -683,6 +684,7 @@ async fn send_request(
                         stream: Some(false),
                         request_id: built.request_id,
                         provider_id: Some(credential.provider_id.clone()),
+                        cache_key: None,
                     },
                 )
                 .await;
@@ -727,6 +729,7 @@ async fn send_request(
                         stream: Some(false),
                         request_id: built.request_id,
                         provider_id: Some(credential.provider_id.clone()),
+                        cache_key: None,
                     },
                 )
                 .await;

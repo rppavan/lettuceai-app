@@ -10,12 +10,18 @@ pub(super) const MTP_DRAFT_DEFAULT: u32 = 4;
 pub(super) const MTP_DRAFT_MAX: u32 = 8;
 const MTP_DRAFT_TOP_K: usize = 10;
 const MTP_DRAFT_P_MIN: f32 = 0.75;
+const MTP_ADAPT_WINDOW_ROUNDS: u32 = 8;
 
 pub(super) struct MtpRuntime<'m> {
     pub(super) draft: LlamaContext<'m>,
     pub(super) shared: bool,
     pub(super) primed: bool,
     pub(super) draft_n: usize,
+    pub(super) draft_n_max: usize,
+    pub(super) adaptation_count: u32,
+    adaptive_rounds: u32,
+    adaptive_drafted: u64,
+    adaptive_matched: u64,
     pub(super) max_batch: usize,
     pub(super) n_embd: usize,
     pub(super) carry_hidden: Vec<f32>,
@@ -116,11 +122,17 @@ pub(super) fn create_runtime<'m>(
     let n_embd = usize::try_from(target_model.n_embd())
         .map_err(|_| "model n_embd does not fit into usize".to_string())?;
 
+    let draft_n = draft_n.max(1);
     Ok(MtpRuntime {
         draft,
         shared,
         primed: false,
-        draft_n: draft_n.max(1),
+        draft_n,
+        draft_n_max: draft_n,
+        adaptation_count: 0,
+        adaptive_rounds: 0,
+        adaptive_drafted: 0,
+        adaptive_matched: 0,
         max_batch: max_batch as usize,
         n_embd,
         carry_hidden: vec![0.0; n_embd],
@@ -144,6 +156,112 @@ pub(super) fn enable_nextn_embeddings(
     rt.draft
         .set_embeddings_nextn(true, rt.shared)
         .map_err(|e| format!("failed to enable nextn embeddings on MTP draft context: {e}"))?;
+    Ok(())
+}
+
+pub(super) fn reset_for_prompt_reuse(
+    rt: &mut MtpRuntime<'_>,
+    draft_clear_from: u32,
+) -> Result<(), String> {
+    let cleared = if rt.shared {
+        rt.draft.clear_kv_cache();
+        true
+    } else {
+        rt.draft
+            .clear_kv_cache_seq(Some(0), Some(draft_clear_from), None)
+            .map_err(|e| format!("failed to rewind MTP prompt cache: {e}"))?
+    };
+    if !cleared {
+        return Err(format!(
+            "MTP prompt cache rewind failed at position {draft_clear_from}"
+        ));
+    }
+    rt.primed = false;
+    rt.carry_hidden.fill(0.0);
+    rt.h_last.fill(0.0);
+    rt.last_token = LlamaToken::new(0);
+    rt.draft_last_row = 0;
+    rt.pending.clear();
+    rt.rounds = 0;
+    rt.drafted = 0;
+    rt.accepted = 0;
+    rt.adaptation_count = 0;
+    rt.adaptive_rounds = 0;
+    rt.adaptive_drafted = 0;
+    rt.adaptive_matched = 0;
+    Ok(())
+}
+
+fn adjusted_draft_length(current: usize, maximum: usize, drafted: u64, matched: u64) -> usize {
+    if drafted == 0 || matched.saturating_mul(2) < drafted {
+        return (current / 2).max(1);
+    }
+    if matched.saturating_mul(5) >= drafted.saturating_mul(4) {
+        return current.saturating_add(1).min(maximum);
+    }
+    current
+}
+
+fn record_adaptive_round(rt: &mut MtpRuntime<'_>, drafted: usize, matched: usize) {
+    rt.adaptive_rounds = rt.adaptive_rounds.saturating_add(1);
+    rt.adaptive_drafted = rt.adaptive_drafted.saturating_add(drafted as u64);
+    rt.adaptive_matched = rt.adaptive_matched.saturating_add(matched as u64);
+    if rt.adaptive_rounds < MTP_ADAPT_WINDOW_ROUNDS {
+        return;
+    }
+
+    let next = adjusted_draft_length(
+        rt.draft_n,
+        rt.draft_n_max,
+        rt.adaptive_drafted,
+        rt.adaptive_matched,
+    );
+    if next != rt.draft_n {
+        rt.draft_n = next;
+        rt.adaptation_count = rt.adaptation_count.saturating_add(1);
+    }
+    rt.adaptive_rounds = 0;
+    rt.adaptive_drafted = 0;
+    rt.adaptive_matched = 0;
+}
+
+pub(super) fn set_prefill_carry_from_target(
+    rt: &mut MtpRuntime<'_>,
+    target: &LlamaContext<'_>,
+    row: i32,
+) -> Result<(), String> {
+    rt.carry_hidden = target
+        .embeddings_nextn_ith(row)
+        .map_err(|e| format!("failed to restore MTP prompt-cache carry: {e}"))?
+        .to_vec();
+    Ok(())
+}
+
+pub(super) fn truncate_for_prompt_cache(
+    target: &mut LlamaContext<'_>,
+    rt: &mut MtpRuntime<'_>,
+    token_count: u32,
+) -> Result<(), String> {
+    let target_cleared = target
+        .clear_kv_cache_seq(Some(0), Some(token_count), None)
+        .map_err(|e| format!("failed to trim target prompt cache: {e}"))?;
+    if !target_cleared {
+        return Err(format!(
+            "target prompt cache trim failed at position {token_count}"
+        ));
+    }
+    if !rt.shared {
+        let draft_cleared = rt
+            .draft
+            .clear_kv_cache_seq(Some(0), Some(token_count), None)
+            .map_err(|e| format!("failed to trim MTP prompt cache: {e}"))?;
+        if !draft_cleared {
+            return Err(format!(
+                "MTP prompt cache trim failed at position {token_count}"
+            ));
+        }
+    }
+    rt.pending.clear();
     Ok(())
 }
 
@@ -281,6 +399,7 @@ pub(super) fn mtp_round(
     if drafted.first() != Some(&first) {
         rollback_and_advance(target, rt, pos, 0, first, &prefix_hidden)?;
         rt.accepted += 1;
+        record_adaptive_round(rt, drafted.len(), 0);
         return Ok(vec![first]);
     }
 
@@ -318,6 +437,7 @@ pub(super) fn mtp_round(
     };
     rollback_and_advance(target, rt, pos, matched, extra, &extra_hidden)?;
     rt.accepted += accepted.len() as u64;
+    record_adaptive_round(rt, drafted.len(), matched);
 
     Ok(accepted)
 }
@@ -415,6 +535,7 @@ fn mtp_round_shared(
     let mut accepted = drafted[..matched].to_vec();
     accepted.push(extra);
     rt.accepted += accepted.len() as u64;
+    record_adaptive_round(rt, drafted.len(), matched);
 
     Ok(accepted)
 }
@@ -488,4 +609,26 @@ fn greedy_token_with_prob(logits: &[f32]) -> (LlamaToken, f32) {
     let (idx, max) = *top.first().expect("logits must not be empty");
     let sum: f32 = top.iter().map(|&(_, logit)| (logit - max).exp()).sum();
     (LlamaToken::new(idx as i32), 1.0 / sum)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adjusted_draft_length;
+
+    #[test]
+    fn adaptive_draft_length_halves_low_acceptance() {
+        assert_eq!(adjusted_draft_length(8, 8, 16, 7), 4);
+        assert_eq!(adjusted_draft_length(1, 8, 16, 0), 1);
+    }
+
+    #[test]
+    fn adaptive_draft_length_grows_high_acceptance_to_configured_limit() {
+        assert_eq!(adjusted_draft_length(3, 6, 10, 8), 4);
+        assert_eq!(adjusted_draft_length(6, 6, 10, 10), 6);
+    }
+
+    #[test]
+    fn adaptive_draft_length_holds_middle_acceptance() {
+        assert_eq!(adjusted_draft_length(4, 8, 10, 6), 4);
+    }
 }

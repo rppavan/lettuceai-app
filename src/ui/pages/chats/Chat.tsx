@@ -2356,8 +2356,12 @@ export function ChatConversationPage() {
   }, []);
 
   const handleRegenerateMessage = useCallback(
-    async (message: StoredMessage, options?: { guidance?: string }) => {
-      await handleRegenerate(message, { swapPlaces, guidance: options?.guidance });
+    async (message: StoredMessage, options?: { guidance?: string; modelId?: string }) => {
+      await handleRegenerate(message, {
+        swapPlaces,
+        guidance: options?.guidance,
+        modelId: options?.modelId,
+      });
     },
     [handleRegenerate, swapPlaces],
   );
@@ -2919,6 +2923,7 @@ export function ChatConversationPage() {
                     reasoning={streamingReasoning[message.id] || combinedReasoning || undefined}
                     swapPlaces={swapPlaces}
                     modelName={resolveModelName(message.modelId)}
+                    models={widgetModels}
                     scenePromptStreaming={
                       scenePromptStreaming &&
                       message.role === "assistant" &&

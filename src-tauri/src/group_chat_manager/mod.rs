@@ -29,6 +29,9 @@ use crate::dynamic_memory_run_manager::{DynamicMemoryCancellationToken, DynamicM
 use crate::usage::add_usage_record;
 use crate::usage::tracking::{RequestUsage, UsageFinishReason, UsageOperationType};
 
+use crate::chat_manager::entries::{
+    in_chat_system_entry, in_chat_user_entry, relative_system_entry,
+};
 use crate::chat_manager::lorebook_matcher::{
     activate_lorebook_entries, format_lorebook_for_prompt, get_active_lorebook_entries,
 };
@@ -60,6 +63,7 @@ use crate::chat_manager::thinking::normalize_thinking_content;
 use crate::chat_manager::tooling::{
     parse_tool_calls, ToolCall, ToolChoice, ToolConfig, ToolDefinition,
 };
+use crate::chat_manager::turn_builder::assemble_prompt_messages;
 use crate::chat_manager::types::{
     Character, DynamicMemorySettings, MemoryRetrievalStrategy, Model, Persona, PromptEntryChatMode,
     PromptEntryInfoSource, PromptEntryPosition, PromptEntryRole, ProviderCredential, Settings,
@@ -746,6 +750,15 @@ pub(crate) fn build_llama_extra_fields(
         .filter(|v| *v > 0)
     {
         extra.insert("llamaBatchSize".to_string(), json!(v));
+    }
+    if let Some(v) = model
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|a| a.llama_ubatch_size)
+        .or(settings.advanced_model_settings.llama_ubatch_size)
+        .filter(|v| *v > 0)
+    {
+        extra.insert("llamaUbatchSize".to_string(), json!(v));
     }
     if let Some(v) = model
         .advanced_model_settings
@@ -1915,6 +1928,7 @@ async fn send_dynamic_memory_request(
         stream: Some(false),
         request_id: built.request_id.clone(),
         provider_id: Some(provider_cred.provider_id.clone()),
+        cache_key: None,
     };
 
     let first_response = match api_request(app.clone(), api_request_payload).await {
@@ -1978,6 +1992,7 @@ async fn send_dynamic_memory_request(
                     stream: Some(false),
                     request_id: built.request_id.clone(),
                     provider_id: Some(provider_cred.provider_id.clone()),
+                    cache_key: None,
                 };
 
                 api_request(app.clone(), api_request_payload).await?
@@ -2053,6 +2068,7 @@ async fn send_dynamic_memory_request(
                     stream: Some(false),
                     request_id: built.request_id.clone(),
                     provider_id: Some(provider_cred.provider_id.clone()),
+                    cache_key: None,
                 };
 
                 return api_request(app.clone(), api_request_payload).await;
@@ -2105,6 +2121,7 @@ async fn send_dynamic_memory_request(
                     stream: Some(false),
                     request_id: built.request_id.clone(),
                     provider_id: Some(provider_cred.provider_id.clone()),
+                    cache_key: None,
                 };
 
                 return api_request(app.clone(), api_request_payload).await;
@@ -3199,32 +3216,41 @@ async fn summarize_group_messages(
     cancel_token: Option<&DynamicMemoryCancellationToken>,
 ) -> Result<String, String> {
     let overwrite_llama_sampler_config = dynamic_memory_llama_sampler_overwrite_enabled(settings);
-    let mut messages_for_api = Vec::new();
     let system_role = crate::chat_manager::request_builder::system_role_for(provider_cred);
 
-    let summary_template = prompts::get_template(
-        app,
-        &dynamic_memory_summary_template_id(settings),
-    )
-        .ok()
-        .flatten()
-        .map(|t| t.content)
+    let summary_template =
+        prompts::get_template(app, &dynamic_memory_summary_template_id(settings))
+            .ok()
+            .flatten();
+    let mut prompt_entries = summary_template
+        .map(|template| {
+            if template.entries.is_empty() {
+                vec![relative_system_entry(
+                    "legacy_group_summary_prompt",
+                    "Group Summary Instructions",
+                    template.content,
+                )]
+            } else {
+                template.entries
+            }
+        })
         .unwrap_or_else(|| {
-            "Summarize the recent conversation transcript into a concise paragraph capturing durable facts, decisions, and character interactions. Note who said or did what when it matters.".to_string()
+            vec![relative_system_entry(
+                "fallback_group_summary_prompt",
+                "Group Summary Instructions",
+                "Summarize the recent conversation transcript into a concise paragraph capturing durable facts, decisions, and character interactions. Note who said or did what when it matters.",
+            )]
         });
 
     let prev_text = prior_summary
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("No previous summary provided.");
-    let rendered = summary_template.replace("{{prev_summary}}", prev_text);
-
-    crate::chat_manager::messages::push_system_message(
-        &mut messages_for_api,
-        &system_role,
-        Some(rendered),
-    );
+    for entry in &mut prompt_entries {
+        entry.content = entry.content.replace("{{prev_summary}}", prev_text);
+    }
 
     // Add conversation messages with speaker labels
+    let mut conversation_messages = Vec::new();
     for msg in convo_window {
         let speaker = msg
             .speaker_character_id
@@ -3235,16 +3261,20 @@ async fn summarize_group_messages(
             } else {
                 "Character"
             });
-        messages_for_api.push(json!({
+        conversation_messages.push(json!({
             "role": msg.role,
             "content": format!("[{} transcript line]: {}", speaker, msg.content)
         }));
     }
 
-    messages_for_api.push(json!({
-        "role": "user",
-        "content": "Return only the concise summary for the above conversation transcript. Use the write_summary tool."
-    }));
+    prompt_entries.push(in_chat_user_entry(
+        "runtime_group_summary_request",
+        "Summary Output Request",
+        "Return only the concise summary for the above conversation transcript. Use the write_summary tool.",
+        0,
+    ));
+    let messages_for_api =
+        assemble_prompt_messages(prompt_entries, conversation_messages, &system_role);
 
     let max_tokens = settings
         .advanced_model_settings
@@ -3485,17 +3515,30 @@ async fn run_group_memory_tool_update(
     let tool_config = build_memory_tool_config();
     let max_entries = dynamic_settings.max_entries.max(1) as usize;
 
-    let mut messages_for_api = Vec::new();
     let system_role = crate::chat_manager::request_builder::system_role_for(provider_cred);
 
     let template_id = dynamic_memory_manager_template_id(settings, provider_cred, model);
 
-    let base_template = prompts::get_template(app, &template_id)
+    let mut prompt_entries = prompts::get_template(app, &template_id)
         .ok()
         .flatten()
-        .map(|t| t.content)
+        .map(|template| {
+            if template.entries.is_empty() {
+                vec![relative_system_entry(
+                    "legacy_group_memory_prompt",
+                    "Group Memory Instructions",
+                    template.content,
+                )]
+            } else {
+                template.entries
+            }
+        })
         .unwrap_or_else(|| {
-            "You maintain a long-term memory index for a multi-speaker conversation transcript. Use tools to add or delete concise factual memories about the participants and events. Every create_memory call must include a category tag. Keep the list tidy and capped at {{max_entries}} entries. When finished, call the done tool.".to_string()
+            vec![relative_system_entry(
+                "fallback_group_memory_prompt",
+                "Group Memory Instructions",
+                "You maintain a long-term memory index for a multi-speaker conversation transcript. Use tools to add or delete concise factual memories about the participants and events. Every create_memory call must include a category tag. Keep the list tidy and capped at {{max_entries}} entries. When finished, call the done tool.",
+            )]
         });
 
     let pinned_fixed = ensure_pinned_hot(&mut session.memory_embeddings);
@@ -3510,16 +3553,13 @@ async fn run_group_memory_tool_update(
     let current_tokens = calculate_hot_memory_tokens(&session.memory_embeddings);
     let token_budget = dynamic_settings.hot_memory_token_budget;
 
-    let rendered = base_template
-        .replace("{{max_entries}}", &max_entries.to_string())
-        .replace("{{current_memory_tokens}}", &current_tokens.to_string())
-        .replace("{{hot_token_budget}}", &token_budget.to_string());
-
-    crate::chat_manager::messages::push_system_message(
-        &mut messages_for_api,
-        &system_role,
-        Some(rendered),
-    );
+    for entry in &mut prompt_entries {
+        entry.content = entry
+            .content
+            .replace("{{max_entries}}", &max_entries.to_string())
+            .replace("{{current_memory_tokens}}", &current_tokens.to_string())
+            .replace("{{hot_token_budget}}", &token_budget.to_string());
+    }
 
     let memory_lines = format_memories_with_ids(session);
     let convo_text: Vec<String> = convo_window
@@ -3527,15 +3567,18 @@ async fn run_group_memory_tool_update(
         .map(|m| format!("{}: {}", m.role, m.content))
         .collect();
 
-    messages_for_api.push(json!({
-        "role": "user",
-        "content": format!(
+    prompt_entries.push(in_chat_user_entry(
+        "runtime_group_memory_input",
+        "Group Memory Update Input",
+        format!(
             "Conversation transcript summary:\n{}\n\nRecent transcript lines:\n{}\n\nCurrent memories (with IDs):\n{}",
             summary,
             convo_text.join("\n"),
             if memory_lines.is_empty() { "none".to_string() } else { memory_lines.join("\n") }
-        )
-    }));
+        ),
+        0,
+    ));
+    let mut messages_for_api = assemble_prompt_messages(prompt_entries, Vec::new(), &system_role);
 
     let max_tokens = settings
         .advanced_model_settings
@@ -4664,19 +4707,17 @@ async fn run_group_memory_tag_repair(
         return Ok(HashMap::new());
     }
 
-    let mut messages_for_api = Vec::new();
     let system_role = crate::chat_manager::request_builder::system_role_for(provider_cred);
-    crate::chat_manager::messages::push_system_message(
-        &mut messages_for_api,
-        &system_role,
-        Some(
-            "Classify each memory text with exactly one valid category. Use only retag_memory tool calls."
-                .to_string(),
+    let prompt_entries = vec![
+        relative_system_entry(
+            "group_memory_tag_repair_rules",
+            "Group Memory Tag Repair Rules",
+            "Classify each memory text with exactly one valid category. Use only retag_memory tool calls.",
         ),
-    );
-    messages_for_api.push(json!({
-        "role": "user",
-        "content": format!(
+        in_chat_user_entry(
+            "runtime_group_memory_tag_repair_input",
+            "Group Memory Tag Repair Input",
+            format!(
             "Valid categories: {}.\nReturn one retag_memory tool call per text.\nTexts:\n{}",
             ALLOWED_MEMORY_CATEGORIES.join(", "),
             texts
@@ -4685,8 +4726,11 @@ async fn run_group_memory_tag_repair(
                 .map(|(i, t)| format!("{}. {}", i + 1, t))
                 .collect::<Vec<_>>()
                 .join("\n")
-        )
-    }));
+            ),
+            0,
+        ),
+    ];
+    let messages_for_api = assemble_prompt_messages(prompt_entries, Vec::new(), &system_role);
 
     let mut repaired = HashMap::new();
     let fallback_label = structured_fallback_format_label(fallback_format);
@@ -5458,60 +5502,6 @@ fn build_messages_for_api(
     messages
 }
 
-fn prompt_entry_message(system_role: &str, entry: &SystemPromptEntry) -> Value {
-    let role = match entry.role {
-        PromptEntryRole::System => system_role,
-        PromptEntryRole::User => "user",
-        PromptEntryRole::Assistant => "assistant",
-    };
-    json!({ "role": role, "content": entry.content })
-}
-
-fn partition_prompt_entries(
-    entries: Vec<SystemPromptEntry>,
-) -> (Vec<SystemPromptEntry>, Vec<SystemPromptEntry>) {
-    let mut relative = Vec::new();
-    let mut in_chat = Vec::new();
-    for entry in entries {
-        if entry.injection_position == PromptEntryPosition::InChat {
-            in_chat.push(entry);
-        } else {
-            relative.push(entry);
-        }
-    }
-    (relative, in_chat)
-}
-
-fn insert_in_chat_prompt_entries(
-    messages: &mut Vec<Value>,
-    system_role: &str,
-    entries: &[SystemPromptEntry],
-) {
-    if entries.is_empty() {
-        return;
-    }
-    let base_len = messages.len();
-    let mut inserts: Vec<(usize, usize, &SystemPromptEntry)> = entries
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let depth = entry.injection_depth as usize;
-            let pos = base_len.saturating_sub(depth);
-            (pos, idx, entry)
-        })
-        .collect();
-    inserts.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    let mut offset = 0usize;
-    for (pos, _, entry) in inserts {
-        if entry.content.trim().is_empty() {
-            continue;
-        }
-        let insert_at = pos.saturating_add(offset).min(messages.len());
-        messages.insert(insert_at, prompt_entry_message(system_role, entry));
-        offset += 1;
-    }
-}
-
 fn normalize_prompt_text(text: &str) -> String {
     let mut result = text.to_string();
     while result.contains("\n\n\n") {
@@ -5742,7 +5732,7 @@ fn build_group_system_prompt(
     retrieved_memories: &[MemoryEmbedding],
     lorebook_text: &str,
 ) -> Vec<SystemPromptEntry> {
-    use crate::chat_manager::storage::{get_base_prompt, PromptType};
+    use crate::chat_manager::storage::{get_base_prompt, get_base_prompt_entries, PromptType};
     use crate::chat_manager::types::PromptTemplateType;
 
     fn resolve_group_template(
@@ -5839,27 +5829,14 @@ fn build_group_system_prompt(
         fallback_template_id,
     )
     .unwrap_or_else(|| {
-        let content = if is_roleplay {
-            get_base_prompt(PromptType::GroupChatRoleplayPrompt)
+        let prompt_type = if is_roleplay {
+            PromptType::GroupChatRoleplayPrompt
         } else {
-            get_base_prompt(PromptType::GroupChatPrompt)
+            PromptType::GroupChatPrompt
         };
         (
-            content.clone(),
-            vec![SystemPromptEntry {
-                id: "entry_system".to_string(),
-                name: "System Prompt".to_string(),
-                role: PromptEntryRole::System,
-                content,
-                enabled: true,
-                injection_position: PromptEntryPosition::Relative,
-                injection_depth: 0,
-                conditional_min_messages: None,
-                interval_turns: None,
-                system_prompt: true,
-                conditions: None,
-                prompt_entry_payload: None,
-            }],
+            get_base_prompt(prompt_type),
+            get_base_prompt_entries(prompt_type),
             false,
         )
     });
@@ -6115,42 +6092,26 @@ fn build_group_system_prompt(
     }
 
     if !has_lorebook_placeholder && !lorebook_text.trim().is_empty() {
-        rendered_entries.push(SystemPromptEntry {
-            id: "entry_lorebook".to_string(),
-            name: "World Information".to_string(),
-            role: PromptEntryRole::System,
-            content: format!("# World Information\n{}", lorebook_text.trim()),
-            enabled: true,
-            injection_position: PromptEntryPosition::Relative,
-            injection_depth: 0,
-            conditional_min_messages: None,
-            interval_turns: None,
-            system_prompt: true,
-            conditions: None,
-            prompt_entry_payload: None,
-        });
+        rendered_entries.push(in_chat_system_entry(
+            "entry_lorebook",
+            "World Information",
+            format!("# World Information\n{}", lorebook_text.trim()),
+            0,
+        ));
     }
 
     if !has_author_note_placeholder {
         if let Some(author_note) = author_note_text.as_deref() {
-            rendered_entries.push(SystemPromptEntry {
-                id: "entry_author_note".to_string(),
-                name: "Author Note".to_string(),
-                role: PromptEntryRole::System,
-                content: format!(
+            rendered_entries.push(in_chat_system_entry(
+                "entry_author_note",
+                "Author Note",
+                format!(
                     "# Author Note\nThe following is private session-level guidance from {}. Treat it as hidden continuity and writing context for this group chat. Use its facts naturally when relevant, including answering with those facts when the conversation calls for them, but do not say they came from an author note or hidden instruction.\n\n{}",
                     persona.map(|p| p.title.as_str()).unwrap_or("user"),
                     author_note
                 ),
-                enabled: true,
-                injection_position: PromptEntryPosition::InChat,
-                injection_depth: 1,
-                conditional_min_messages: None,
-                interval_turns: None,
-                system_prompt: true,
-                conditions: None,
-                prompt_entry_payload: None,
-            });
+                1,
+            ));
         }
     }
 
@@ -6357,6 +6318,7 @@ async fn select_speaker_via_llm_with_tracking(
         stream: Some(false),
         request_id: Some(request_id.to_string()),
         provider_id: Some(credential.provider_id.clone()),
+        cache_key: None,
     };
 
     let api_response = api_request(app.clone(), api_request_payload).await?;
@@ -6452,6 +6414,7 @@ async fn generate_character_response(
     request_id: &str,
     stream: bool,
     guidance: Option<&str>,
+    model_override: Option<&str>,
     operation_type: UsageOperationType,
 ) -> Result<GroupGenerationOutput, String> {
     let conn = pool.get_connection()?;
@@ -6467,7 +6430,7 @@ async fn generate_character_response(
     };
 
     // Get model and credentials
-    let (model, credential) = select_model_with_credential(settings, &character)?;
+    let (model, credential) = select_model_with_credential(settings, &character, model_override)?;
 
     let dynamic_settings = effective_group_dynamic_memory_settings(settings);
 
@@ -6551,7 +6514,7 @@ async fn generate_character_response(
     let lorebook_text = format_group_lorebook_content(app, &character.id, &active_lorebook_entries);
 
     // Build system prompt with group context and retrieved memories
-    let system_prompt_entries = build_group_system_prompt(
+    let mut system_prompt_entries = build_group_system_prompt(
         app,
         &character,
         persona.as_ref(),
@@ -6568,8 +6531,6 @@ async fn generate_character_response(
         &active_lorebook_entries,
         &system_prompt_entries,
     );
-    let (relative_entries, in_chat_entries) = partition_prompt_entries(system_prompt_entries);
-
     // Convert group messages to API format
     let selected_char_info = context
         .characters
@@ -6603,7 +6564,7 @@ async fn generate_character_response(
     };
 
     let no_chat_history = messages_for_generation.is_empty();
-    let mut api_messages = build_messages_for_api(
+    let api_messages = build_messages_for_api(
         app,
         &messages_for_generation,
         &context.characters,
@@ -6614,29 +6575,47 @@ async fn generate_character_response(
         model.input_scopes.iter().any(|scope| scope == "audio"),
     );
     let system_role = crate::chat_manager::request_builder::system_role_for(credential);
-    insert_in_chat_prompt_entries(&mut api_messages, &system_role, &in_chat_entries);
-
-    let mut messages_for_api = Vec::new();
-    for entry in &relative_entries {
-        messages_for_api.push(prompt_entry_message(&system_role, entry));
-    }
-    messages_for_api.extend(api_messages);
 
     if no_chat_history {
-        messages_for_api.push(json!({
-            "role": "user",
-            "content": format!("[Begin the conversation. Respond as {}.]", selected_char_info.name)
-        }));
+        system_prompt_entries.push(in_chat_user_entry(
+            "runtime_group_begin",
+            "Begin Group Conversation",
+            format!(
+                "[Begin the conversation. Respond as {}.]",
+                selected_char_info.name
+            ),
+            0,
+        ));
+    }
+    let continues_selected_character = operation_type == UsageOperationType::GroupChatContinue
+        && messages_for_generation.last().is_some_and(|message| {
+            message.role == "assistant"
+                && message.speaker_character_id.as_deref() == Some(selected_character_id)
+        });
+    if continues_selected_character {
+        system_prompt_entries.push(in_chat_user_entry(
+            "runtime_group_continue_same_speaker",
+            "Continue Same Speaker",
+            format!(
+                "[Continue speaking as {}. Extend their previous response naturally without repeating it.]",
+                selected_char_info.name
+            ),
+            0,
+        ));
     }
     if let Some(guidance) = guidance {
-        messages_for_api.push(json!({
-            "role": "user",
-            "content": format!(
+        system_prompt_entries.push(in_chat_user_entry(
+            "runtime_group_regenerate",
+            "Regenerate Instruction",
+            format!(
                 "[REGENERATE INSTRUCTION]\nRegenerate your previous response to the last message. Follow this additional user instruction for the new response:\n{}",
                 guidance
-            )
-        }));
+            ),
+            0,
+        ));
     }
+    let messages_for_api =
+        assemble_prompt_messages(system_prompt_entries, api_messages, &system_role);
 
     let execution = generation::execute_group_generation(generation::GroupGenerationRequest {
         app,
@@ -6809,6 +6788,7 @@ async fn generate_character_response(
             stream: Some(true),
             request_id: Some(request_id.to_string()),
             provider_id: Some(credential.provider_id.clone()),
+            cache_key: Some(context.session.id.clone()),
         };
 
         log_info(
@@ -7189,6 +7169,7 @@ pub async fn group_chat_send(
         &req_id,
         stream.unwrap_or(true),
         None,
+        None,
         UsageOperationType::GroupChatMessage,
     )
     .await;
@@ -7292,8 +7273,10 @@ pub async fn group_chat_send(
         ),
     );
 
-    let conn = pool.get_connection()?;
-    let mut updated_session = group_sessions::group_session_get_internal_typed(&conn, &session_id)?;
+    let mut updated_session = {
+        let conn = pool.get_connection()?;
+        group_sessions::group_session_get_internal_typed(&conn, &session_id)?
+    };
     if updated_session.memory_type == "dynamic" {
         if let Err(e) =
             process_group_dynamic_memory_cycle(&app, &mut updated_session, &settings, &pool, false)
@@ -7417,6 +7400,7 @@ pub async fn group_chat_regenerate(
     message_id: String,
     force_character_id: Option<String>,
     guidance: Option<String>,
+    model_id: Option<String>,
     stream: Option<bool>,
     request_id: Option<String>,
     pool: State<'_, SwappablePool>,
@@ -7438,6 +7422,11 @@ pub async fn group_chat_regenerate(
     let abort_registry = app.state::<AbortRegistry>();
     let mut abort_rx = abort_registry.register(req_id.clone());
     let _abort_guard = AbortGuard::new(&abort_registry, req_id.clone());
+    let model_override = model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
 
     let (turn_number, original_speaker): (i32, Option<String>) = conn
         .query_row(
@@ -7579,6 +7568,7 @@ pub async fn group_chat_regenerate(
         &req_id,
         stream.unwrap_or(true),
         guidance.as_deref(),
+        model_override.as_deref(),
         UsageOperationType::GroupChatRegenerate,
     )
     .await;
@@ -7866,6 +7856,7 @@ pub async fn group_chat_continue(
         &req_id,
         stream.unwrap_or(true),
         None,
+        None,
         UsageOperationType::GroupChatContinue,
     )
     .await;
@@ -7947,6 +7938,24 @@ pub async fn group_chat_continue(
         Value::String(selected_character_id.clone()),
     );
     emit_group_chat_status(&app, &session_id, "complete", complete_extra);
+
+    drop(conn);
+    let mut updated_session = {
+        let conn = pool.get_connection()?;
+        group_sessions::group_session_get_internal_typed(&conn, &session_id)?
+    };
+    if updated_session.memory_type == "dynamic" {
+        if let Err(e) =
+            process_group_dynamic_memory_cycle(&app, &mut updated_session, &settings, &pool, false)
+                .await
+        {
+            log_warn(
+                &app,
+                "group_chat_continue",
+                format!("Dynamic memory cycle failed: {}", e),
+            );
+        }
+    }
 
     serde_json::to_string(&response)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))
@@ -8102,8 +8111,8 @@ pub async fn group_chat_generate_user_reply(
         })
         .filter(|id| !id.trim().is_empty());
 
-    let base_prompt =
-        prompts::get_help_me_reply_prompt(&app, reply_style, help_me_reply_prompt_template_id);
+    let mut prompt_entries =
+        prompts::get_help_me_reply_entries(&app, reply_style, help_me_reply_prompt_template_id);
 
     let persona_name = persona.map(|p| p.title.as_str()).unwrap_or("user");
     let persona_desc = persona.map(|p| p.description.as_str()).unwrap_or("");
@@ -8126,35 +8135,37 @@ pub async fn group_chat_generate_user_reply(
         .collect::<Vec<_>>()
         .join(", ");
 
-    let mut system_prompt = base_prompt;
-    system_prompt = system_prompt.replace("{{char.name}}", &char_list);
-    system_prompt = system_prompt.replace("{{char.desc}}", "participants in a group conversation");
-    system_prompt = system_prompt.replace("{{persona.name}}", persona_name);
-    system_prompt = system_prompt.replace("{{persona.desc}}", persona_desc);
-    system_prompt = system_prompt.replace("{{user.name}}", persona_name);
-    system_prompt = system_prompt.replace("{{user.desc}}", persona_desc);
     let draft_str = current_draft.as_deref().unwrap_or("");
-    system_prompt = system_prompt.replace("{{current_draft}}", draft_str);
-    // Legacy placeholders
-    system_prompt = system_prompt.replace("{{char}}", &char_list);
-    system_prompt = system_prompt.replace("{{persona}}", persona_name);
-    system_prompt = system_prompt.replace("{{user}}", persona_name);
+    for entry in &mut prompt_entries {
+        let content = &mut entry.content;
+        *content = content
+            .replace("{{char.name}}", &char_list)
+            .replace("{{char.desc}}", "participants in a group conversation")
+            .replace("{{persona.name}}", persona_name)
+            .replace("{{persona.desc}}", persona_desc)
+            .replace("{{user.name}}", persona_name)
+            .replace("{{user.desc}}", persona_desc)
+            .replace("{{current_draft}}", draft_str)
+            .replace("{{char}}", &char_list)
+            .replace("{{persona}}", persona_name)
+            .replace("{{user}}", persona_name);
 
-    if let Some(ref draft) = current_draft {
-        if !draft.trim().is_empty() {
-            system_prompt = system_prompt.replace("{{#if current_draft}}", "");
-            system_prompt = system_prompt.replace("{{current_draft}}", draft);
-            if let Some(else_start) = system_prompt.find("{{else}}") {
-                if let Some(endif_start) = system_prompt[else_start..].find("{{/if}}") {
-                    system_prompt.replace_range(else_start..(else_start + endif_start + 7), "");
+        if let Some(ref draft) = current_draft {
+            if !draft.trim().is_empty() {
+                *content = content.replace("{{#if current_draft}}", "");
+                *content = content.replace("{{current_draft}}", draft);
+                if let Some(else_start) = content.find("{{else}}") {
+                    if let Some(endif_start) = content[else_start..].find("{{/if}}") {
+                        content.replace_range(else_start..(else_start + endif_start + 7), "");
+                    }
                 }
+                *content = content.replace("{{/if}}", "");
+            } else {
+                remove_if_block(content);
             }
-            system_prompt = system_prompt.replace("{{/if}}", "");
         } else {
-            remove_if_block(&mut system_prompt);
+            remove_if_block(content);
         }
-    } else {
-        remove_if_block(&mut system_prompt);
     }
 
     let conversation_context = recent_msgs
@@ -8179,15 +8190,14 @@ pub async fn group_chat_generate_user_reply(
         conversation_context, persona_name
     );
 
-    // Use provider-specific system message handling
     let system_role = crate::chat_manager::request_builder::system_role_for(provider_cred);
-    let mut messages_for_api = Vec::new();
-    crate::chat_manager::messages::push_system_message(
-        &mut messages_for_api,
-        &system_role,
-        Some(system_prompt),
-    );
-    messages_for_api.push(json!({ "role": "user", "content": user_prompt }));
+    prompt_entries.push(in_chat_user_entry(
+        "runtime_group_reply_helper_input",
+        "Group Reply Helper Input",
+        user_prompt,
+        0,
+    ));
+    let messages_for_api = assemble_prompt_messages(prompt_entries, Vec::new(), &system_role);
 
     let context_length = resolve_context_length(model, &settings);
     let extra_body_fields = if provider_cred.provider_id == "llamacpp" {
@@ -8212,7 +8222,7 @@ pub async fn group_chat_generate_user_reply(
         &api_key,
         &model.name,
         &messages_for_api,
-        None,       // system prompt already handled via push_system_message
+        None,
         Some(0.8),  // temperature
         Some(1.0),  // top_p
         max_tokens, // max_tokens from settings
@@ -8246,6 +8256,7 @@ pub async fn group_chat_generate_user_reply(
         stream: Some(built.stream),
         request_id: built.request_id.clone(),
         provider_id: Some(provider_cred.provider_id.clone()),
+        cache_key: None,
     };
 
     let api_response = api_request(app.clone(), api_request_payload).await?;

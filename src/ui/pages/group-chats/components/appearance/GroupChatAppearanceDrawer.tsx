@@ -290,6 +290,7 @@ export function GroupChatAppearanceDrawer({
               settings={effectiveSettings}
               mode="character"
               activeTab={activeTab}
+              showParticipantsBar
               onUpdate={updateField}
               onResetField={resetField}
               isOverridden={isOverridden}

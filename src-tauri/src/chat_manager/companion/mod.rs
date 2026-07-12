@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use crate::chat_manager::types::{Character, Persona, Session};
 use crate::embedding::emotion::{EmotionClassification, EmotionLabelScore};
+use crate::storage_manager::companion_turn_effects::CompanionTurnEffectSeed;
 use crate::utils::log_warn;
 
 const DECAY_MINUTES: f64 = 45.0;
@@ -515,13 +516,14 @@ pub async fn update_state_for_user_message(
     character: &Character,
     user_message: &str,
     now: u64,
-) -> bool {
+) -> Option<CompanionTurnEffectSeed> {
     if !is_companion_mode(session, character) {
-        return false;
+        return None;
     }
 
     let config = companion_config(character);
     let mut state = current_state(session, &config);
+    let previous_state = state.clone();
     let baseline = config.soul.baseline_affect.clone();
     let regulation = config.soul.regulation_style.clone();
     let elapsed_minutes = elapsed_minutes(state.updated_at, now);
@@ -592,8 +594,65 @@ pub async fn update_state_for_user_message(
     state.active_signals = bundle.signals;
     state.updated_at = now;
 
-    session.companion_state = serde_json::to_value(state).ok();
-    true
+    session.companion_state = serde_json::to_value(&state).ok();
+    Some(companion_turn_effect_seed(&previous_state, &state))
+}
+
+fn companion_turn_effect_seed(
+    previous: &CompanionSessionState,
+    current: &CompanionSessionState,
+) -> CompanionTurnEffectSeed {
+    let relationship_delta = json!({
+        "closeness": current.relationship_state.closeness - previous.relationship_state.closeness,
+        "trust": current.relationship_state.trust - previous.relationship_state.trust,
+        "affection": current.relationship_state.affection - previous.relationship_state.affection,
+        "tension": current.relationship_state.tension - previous.relationship_state.tension,
+        "stability": current.relationship_state.stability - previous.relationship_state.stability,
+    });
+    let emotion_delta = json!({
+        "felt": emotion_vector_delta(&previous.emotional_state.felt, &current.emotional_state.felt),
+        "expressed": emotion_vector_delta(
+            &previous.emotional_state.expressed,
+            &current.emotional_state.expressed,
+        ),
+        "blocked": emotion_vector_delta(
+            &previous.emotional_state.blocked,
+            &current.emotional_state.blocked,
+        ),
+    });
+    let added = current
+        .active_signals
+        .iter()
+        .filter(|signal| !previous.active_signals.contains(signal))
+        .cloned()
+        .collect::<Vec<_>>();
+    let removed = previous
+        .active_signals
+        .iter()
+        .filter(|signal| !current.active_signals.contains(signal))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    CompanionTurnEffectSeed {
+        relationship_delta,
+        emotion_delta,
+        signal_changes: json!({ "added": added, "removed": removed }),
+    }
+}
+
+fn emotion_vector_delta(previous: &EmotionVector, current: &EmotionVector) -> Value {
+    json!({
+        "warmth": current.warmth - previous.warmth,
+        "trust": current.trust - previous.trust,
+        "calm": current.calm - previous.calm,
+        "vulnerability": current.vulnerability - previous.vulnerability,
+        "longing": current.longing - previous.longing,
+        "hurt": current.hurt - previous.hurt,
+        "tension": current.tension - previous.tension,
+        "irritation": current.irritation - previous.irritation,
+        "affectionIntensity": current.affection_intensity - previous.affection_intensity,
+        "reassuranceNeed": current.reassurance_need - previous.reassurance_need,
+    })
 }
 
 pub fn render_prompt_state(
@@ -1555,5 +1614,26 @@ mod tests {
         let down = baseline - after_anger;
         let up = after_care - baseline;
         assert!(down > up);
+    }
+
+    #[test]
+    fn turn_effect_seed_records_actual_state_changes() {
+        let mut previous = CompanionSessionState::default();
+        previous.relationship_state.affection = 0.2;
+        previous.emotional_state.felt.warmth = 0.4;
+        previous.active_signals = vec!["emotion:neutral".into()];
+
+        let mut current = previous.clone();
+        current.relationship_state.affection = 0.24;
+        current.emotional_state.felt.warmth = 0.47;
+        current.active_signals = vec!["emotion:love".into()];
+
+        let seed = companion_turn_effect_seed(&previous, &current);
+        let affection = seed.relationship_delta["affection"].as_f64().unwrap();
+        let warmth = seed.emotion_delta["felt"]["warmth"].as_f64().unwrap();
+        assert!((affection - 0.04).abs() < f64::EPSILON * 4.0);
+        assert!((warmth - 0.07).abs() < f64::EPSILON * 4.0);
+        assert_eq!(seed.signal_changes["added"], json!(["emotion:love"]));
+        assert_eq!(seed.signal_changes["removed"], json!(["emotion:neutral"]));
     }
 }

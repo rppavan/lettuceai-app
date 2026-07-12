@@ -9,13 +9,19 @@ use super::types::*;
 use crate::abort_manager::AbortRegistry;
 use crate::api::{api_request, ApiRequest, ApiResponse};
 use crate::chat_manager::request as chat_request;
-use crate::chat_manager::request_builder::{build_chat_request, effective_streaming_enabled};
+use crate::chat_manager::request_builder::{
+    build_chat_request, effective_streaming_enabled, system_role_for,
+};
 use crate::chat_manager::service::{
     apply_openrouter_cost_to_usage, insert_extended_usage_metadata,
 };
 use crate::chat_manager::sse::accumulate_tool_calls_from_sse;
 use crate::chat_manager::tooling::{
     parse_tool_calls, tool_call_message_payload, ToolCall, ToolChoice, ToolConfig,
+};
+use crate::chat_manager::{
+    entries::{in_chat_system_entry, in_chat_user_entry, relative_system_entry},
+    turn_builder::assemble_prompt_messages,
 };
 use crate::image_generator::commands::generate_image;
 use crate::image_generator::types::ImageGenerationRequest;
@@ -1464,6 +1470,7 @@ pub(crate) async fn send_creation_api_request(
             stream: Some(built.stream),
             request_id: built.request_id.clone(),
             provider_id: Some(provider_id.to_string()),
+            cache_key: None,
         };
 
         let mut abort_rx = {
@@ -2819,16 +2826,18 @@ async fn process_assistant_turn_legacy(
                 .collect()
         });
 
-    let mut api_messages = vec![json!({
-        "role": "system",
-        "content": get_creation_helper_system_prompt(
+    let base_prompt_entry = relative_system_entry(
+        "creation_helper_instructions",
+        "Creation Helper Instructions",
+        get_creation_helper_system_prompt(
             &session.creation_goal,
             &session.creation_mode,
             session.target_type.as_ref(),
             session.target_id.as_deref(),
-            smart_tool_selection
-        )
-    })];
+            smart_tool_selection,
+        ),
+    );
+    let mut conversation_messages = Vec::new();
 
     for msg in &session.messages {
         let role = match msg.role {
@@ -2845,7 +2854,7 @@ async fn process_assistant_turn_legacy(
                 .map(|(index, tc)| tool_call_message_payload(provider_id, tc, index))
                 .collect();
 
-            api_messages.push(json!({
+            conversation_messages.push(json!({
                 "role": role,
                 "content": if msg.content.is_empty() { Value::Null } else { json!(msg.content) },
                 "tool_calls": tool_calls_json
@@ -2857,7 +2866,7 @@ async fn process_assistant_turn_legacy(
                     .iter()
                     .find(|call| call.id == result.tool_call_id)
                     .map(|call| call.name.as_str());
-                api_messages.push(creation_tool_result_message(
+                conversation_messages.push(creation_tool_result_message(
                     provider_id,
                     &result.tool_call_id,
                     tool_name,
@@ -2865,7 +2874,7 @@ async fn process_assistant_turn_legacy(
                 ));
             }
         } else {
-            api_messages.push(json!({
+            conversation_messages.push(json!({
                 "role": role,
                 "content": msg.content
             }));
@@ -2900,6 +2909,9 @@ async fn process_assistant_turn_legacy(
     };
 
     let streaming_enabled = effective_streaming_enabled(&cred, streaming_enabled);
+    let system_role = system_role_for(&cred);
+    let mut api_messages =
+        assemble_prompt_messages(vec![base_prompt_entry], conversation_messages, &system_role);
 
     log_info(
         &app,
@@ -2918,11 +2930,16 @@ async fn process_assistant_turn_legacy(
         ),
     );
 
-    let mut request_messages = api_messages.clone();
-    request_messages.push(json!({
-        "role": "system",
-        "content": initial_turn_plan.guidance.clone()
-    }));
+    let request_messages = assemble_prompt_messages(
+        vec![in_chat_system_entry(
+            "runtime_creation_turn_guidance",
+            "Creation Turn Guidance",
+            initial_turn_plan.guidance.clone(),
+            0,
+        )],
+        api_messages.clone(),
+        &system_role,
+    );
 
     let api_response = send_creation_api_request(
         &app,
@@ -3135,11 +3152,16 @@ async fn process_assistant_turn_legacy(
             ),
         );
 
-        let mut followup_messages = api_messages.clone();
-        followup_messages.push(json!({
-            "role": "system",
-            "content": followup_turn_plan.guidance.clone()
-        }));
+        let followup_messages = assemble_prompt_messages(
+            vec![in_chat_system_entry(
+                "runtime_creation_followup_guidance",
+                "Creation Follow-up Guidance",
+                followup_turn_plan.guidance.clone(),
+                0,
+            )],
+            api_messages.clone(),
+            &system_role,
+        );
 
         let followup_response = send_creation_api_request(
             &app,
@@ -3262,11 +3284,16 @@ async fn process_assistant_turn_legacy(
             emit_creation_segment_boundary(&app, &stream_request_id);
         }
 
-        let mut finalize_messages = api_messages.clone();
-        finalize_messages.push(json!({
-            "role": "user",
-            "content": "Using only the tool outputs above, answer the user's latest request directly with concrete details. Do not call tools."
-        }));
+        let finalize_messages = assemble_prompt_messages(
+            vec![in_chat_user_entry(
+                "runtime_creation_finalize_request",
+                "Creation Finalize Request",
+                "Using only the tool outputs above, answer the user's latest request directly with concrete details. Do not call tools.",
+                0,
+            )],
+            api_messages.clone(),
+            &system_role,
+        );
 
         let finalize_built = build_chat_request(
             &cred,
@@ -3301,6 +3328,7 @@ async fn process_assistant_turn_legacy(
             stream: Some(finalize_built.stream),
             request_id: finalize_built.request_id.clone(),
             provider_id: Some(provider_id.to_string()),
+            cache_key: None,
         };
 
         let mut abort_rx = {

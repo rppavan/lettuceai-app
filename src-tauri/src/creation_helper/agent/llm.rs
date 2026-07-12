@@ -1,10 +1,13 @@
-use serde_json::json;
 use tauri::AppHandle;
 
 use crate::chat_manager::persistence::storage::resolve_credential_for_model;
 use crate::chat_manager::request as chat_request;
-use crate::chat_manager::request_builder::effective_streaming_enabled;
 use crate::chat_manager::types::{ProviderCredential, Settings};
+use crate::chat_manager::{
+    entries::{in_chat_user_entry, relative_system_entry},
+    request_builder::{effective_streaming_enabled, system_role_for},
+    turn_builder::assemble_prompt_messages,
+};
 use crate::creation_helper::service::send_creation_api_request;
 use crate::storage_manager::settings::internal_read_settings;
 
@@ -72,10 +75,24 @@ pub async fn call_text(
     user: &str,
     visible: bool,
 ) -> Result<String, String> {
-    let messages = vec![
-        json!({ "role": "system", "content": system }),
-        json!({ "role": "user", "content": user }),
-    ];
+    let system_role = system_role_for(&ctx.cred);
+    let messages = assemble_prompt_messages(
+        vec![
+            relative_system_entry(
+                "creation_internal_instructions",
+                "Creation Internal Instructions",
+                system,
+            ),
+            in_chat_user_entry(
+                "runtime_creation_internal_input",
+                "Creation Internal Input",
+                user,
+                0,
+            ),
+        ],
+        Vec::new(),
+        &system_role,
+    );
 
     let streaming = visible && ctx.streaming_enabled;
     let request_id = if visible {

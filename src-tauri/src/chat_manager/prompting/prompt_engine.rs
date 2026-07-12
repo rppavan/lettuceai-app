@@ -1390,7 +1390,7 @@ pub fn default_group_chat_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "# Context Summary\n{{context_summary}}".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -1404,7 +1404,7 @@ pub fn default_group_chat_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "# Key Memories\n{{key_memories}}".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -1537,7 +1537,7 @@ pub fn default_group_chat_roleplay_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "# Context Summary\n{{context_summary}}".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -1551,7 +1551,7 @@ pub fn default_group_chat_roleplay_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "# Key Memories\n{{key_memories}}".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -2678,7 +2678,7 @@ pub fn default_local_roleplay_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "Context summary:\n{{context_summary}}".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -2692,7 +2692,7 @@ pub fn default_local_roleplay_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "Relevant memories:\n{{key_memories}}".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -2706,7 +2706,7 @@ pub fn default_local_roleplay_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "Relevant lore:\n{{lorebook}}".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -2781,7 +2781,7 @@ pub fn default_companion_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "# Current Local Time\nThese values are live system-time context for this turn. Use them only to ground chronology, recency, scheduling, and temporal references.\n\n- Date: {{date_full}} ({{date}})\n- Weekday: {{weekday}}\n- Time: {{time_12hour_format}} / {{time_full}}\n- Timezone: {{time_timezone_name}} (UTC{{time_timezone}})\n- ISO Timestamp: {{datetime_iso}}\n\nThese values are live context, provided automatically each turn. Draw on them freely to reason about time and weave it into the scene — greet by time of day, judge how long it has been since you last spoke, track schedules, recency, and the passage of time. Express any of this naturally in your character's own voice rather than reciting the raw values. Every message is already stamped with its time by the app, so do not begin with or insert a machine timestamp such as `[Tue 6:50 PM, 2026-03-12]`; the system adds that for you.".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -2795,7 +2795,7 @@ pub fn default_companion_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "# Relationship Continuity\nUse this as continuity and emotional grounding, not as a rigid script.\n\nAll live relationship and emotional state below belongs to the relationship between {{char.name}} and {{persona.name}}.\nDo not project these states onto third-party people mentioned in bios, lore, or memories unless a memory explicitly describes that third-party relationship.\n\n## Conversation Summary\n{{context_summary}}\n\n## Live Companion State\n{{companion_state}}\n\n## Scheduled Background Context\n{{scheduled_notes}}\n\n## Key Memories\nUnless a memory explicitly describes a third-party relationship, interpret relationship, boundary, preference, profile, routine, plan, and milestone memories as continuity between {{char.name}} and {{persona.name}}.\n{{key_memories}}\n\n## Relevant Lore\n{{lorebook}}".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -2917,7 +2917,7 @@ pub fn default_modular_prompt_entries() -> Vec<SystemPromptEntry> {
             content: "# World Information\n    The following is essential lore about this world, its characters, locations, items, and concepts. You MUST incorporate this information naturally into your roleplay when relevant. Treat this as established canon that shapes how characters behave, what they know, and how the world works.\n    {{lorebook}}"
                 .to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -2931,7 +2931,7 @@ pub fn default_modular_prompt_entries() -> Vec<SystemPromptEntry> {
             role: PromptEntryRole::System,
             content: "# Context Summary\n{{context_summary}}".to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -2947,7 +2947,7 @@ pub fn default_modular_prompt_entries() -> Vec<SystemPromptEntry> {
                 "# Key Memories\nImportant facts to remember in this conversation:\n{{key_memories}}"
                     .to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -3451,6 +3451,12 @@ pub fn build_system_prompt_entries(
         }
         let mut output_entry = entry.clone();
         output_entry.content = rendered;
+        if output_entry.injection_position == PromptEntryPosition::Relative
+            && entry_contains_volatile_turn_context(entry)
+        {
+            output_entry.injection_position = PromptEntryPosition::InChat;
+            output_entry.injection_depth = 0;
+        }
         rendered_entries.push(output_entry);
     }
 
@@ -3463,7 +3469,7 @@ pub fn build_system_prompt_entries(
                     role: PromptEntryRole::System,
                     content: format!("# Context Summary\n{}", summary),
                     enabled: true,
-                    injection_position: PromptEntryPosition::Relative,
+                    injection_position: PromptEntryPosition::InChat,
                     injection_depth: 0,
                     conditional_min_messages: None,
                     interval_turns: None,
@@ -3510,7 +3516,7 @@ pub fn build_system_prompt_entries(
             role: PromptEntryRole::System,
             content: content.trim().to_string(),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -3527,7 +3533,7 @@ pub fn build_system_prompt_entries(
             role: PromptEntryRole::System,
             content: format!("# World Information\n{}", lorebook_content.trim()),
             enabled: true,
-            injection_position: PromptEntryPosition::Relative,
+            injection_position: PromptEntryPosition::InChat,
             injection_depth: 0,
             conditional_min_messages: None,
             interval_turns: None,
@@ -3567,7 +3573,7 @@ pub fn build_system_prompt_entries(
                 role: PromptEntryRole::System,
                 content: format!("# Companion State\n{}", companion_state),
                 enabled: true,
-                injection_position: PromptEntryPosition::Relative,
+                injection_position: PromptEntryPosition::InChat,
                 injection_depth: 0,
                 conditional_min_messages: None,
                 interval_turns: None,
@@ -3589,7 +3595,7 @@ pub fn build_system_prompt_entries(
                 role: PromptEntryRole::System,
                 content: scheduled_notes.to_string(),
                 enabled: true,
-                injection_position: PromptEntryPosition::Relative,
+                injection_position: PromptEntryPosition::InChat,
                 injection_depth: 0,
                 conditional_min_messages: None,
                 interval_turns: None,
@@ -3790,40 +3796,91 @@ fn get_app_default_template_content(
     }
 }
 
-fn condense_entries_into_single_system_message(
-    entries: Vec<SystemPromptEntry>,
-) -> Vec<SystemPromptEntry> {
-    let merged = entries
-        .into_iter()
-        .filter_map(|entry| {
-            let trimmed = entry.content.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
+pub(crate) fn entry_contains_volatile_turn_context(entry: &SystemPromptEntry) -> bool {
+    const VOLATILE_PLACEHOLDERS: &[&str] = &[
+        "{{lorebook}}",
+        "{{key_memories}}",
+        "{{context_summary}}",
+        "{{memory_summary}}",
+        "{{selected_memories}}",
+        "{{companion_state}}",
+        "{{scheduled_notes}}",
+        "{{date",
+        "{{time",
+        "{{weekday}}",
+        "{{datetime_",
+    ];
 
-    if merged.trim().is_empty() {
-        return Vec::new();
-    }
+    VOLATILE_PLACEHOLDERS
+        .iter()
+        .any(|placeholder| entry.content.contains(placeholder))
+}
 
-    vec![SystemPromptEntry {
-        id: "entry_condensed_system".to_string(),
-        name: "Condensed System Prompt".to_string(),
+fn condensed_system_entry(
+    id: &str,
+    name: &str,
+    content: String,
+    injection_position: PromptEntryPosition,
+    injection_depth: u32,
+) -> SystemPromptEntry {
+    SystemPromptEntry {
+        id: id.to_string(),
+        name: name.to_string(),
         role: PromptEntryRole::System,
-        content: merged,
+        content,
         enabled: true,
-        injection_position: PromptEntryPosition::Relative,
-        injection_depth: 0,
+        injection_position,
+        injection_depth,
         conditional_min_messages: None,
         interval_turns: None,
         system_prompt: true,
         conditions: None,
         prompt_entry_payload: None,
-    }]
+    }
+}
+
+fn condense_entries_into_single_system_message(
+    entries: Vec<SystemPromptEntry>,
+) -> Vec<SystemPromptEntry> {
+    let mut relative = Vec::new();
+    let mut late_turn = Vec::new();
+    let mut passthrough = Vec::new();
+
+    for entry in entries {
+        let trimmed = entry.content.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match entry.injection_position {
+            PromptEntryPosition::Relative => relative.push(trimmed.to_string()),
+            PromptEntryPosition::InChat if entry.injection_depth == 0 => {
+                late_turn.push(trimmed.to_string());
+            }
+            _ => passthrough.push(entry),
+        }
+    }
+
+    let mut condensed = Vec::new();
+    if !relative.is_empty() {
+        condensed.push(condensed_system_entry(
+            "entry_condensed_system",
+            "Condensed System Prompt",
+            relative.join("\n\n"),
+            PromptEntryPosition::Relative,
+            0,
+        ));
+    }
+    condensed.extend(passthrough);
+    if !late_turn.is_empty() {
+        condensed.push(condensed_system_entry(
+            "entry_condensed_turn_context",
+            "Current Turn Context",
+            late_turn.join("\n\n"),
+            PromptEntryPosition::InChat,
+            0,
+        ));
+    }
+    condensed
 }
 
 /// Render a base template string with the provided context (character, persona, scene, settings).
@@ -4225,4 +4282,85 @@ fn build_debug_vars(
         "companion_mode": companion::is_companion_mode(session, character),
         "author_note_present": session.author_note.as_deref().map(|value| !value.trim().is_empty()).unwrap_or(false),
     })
+}
+
+#[cfg(test)]
+mod prompt_cache_tests {
+    use super::{
+        condense_entries_into_single_system_message, condensed_system_entry,
+        default_companion_entries, default_group_chat_entries,
+        default_group_chat_roleplay_entries, default_local_roleplay_entries,
+        default_modular_prompt_entries, entry_contains_volatile_turn_context,
+    };
+    use crate::chat_manager::types::PromptEntryPosition;
+
+    #[test]
+    fn volatile_prompt_entries_are_detected_before_rendering() {
+        let entry = condensed_system_entry(
+            "memory",
+            "Memory",
+            "Relevant memories:\n{{key_memories}}".to_string(),
+            PromptEntryPosition::Relative,
+            0,
+        );
+
+        assert!(entry_contains_volatile_turn_context(&entry));
+    }
+
+    #[test]
+    fn chat_defaults_place_all_volatile_context_at_depth_zero() {
+        let templates = [
+            default_modular_prompt_entries(),
+            default_local_roleplay_entries(),
+            default_companion_entries(),
+            default_group_chat_entries(),
+            default_group_chat_roleplay_entries(),
+        ];
+
+        for entries in templates {
+            for entry in entries
+                .iter()
+                .filter(|entry| entry_contains_volatile_turn_context(entry))
+            {
+                assert!(
+                    matches!(entry.injection_position, PromptEntryPosition::InChat),
+                    "{} must be injected in chat",
+                    entry.id
+                );
+                assert_eq!(entry.injection_depth, 0, "{} must be depth zero", entry.id);
+            }
+        }
+    }
+
+    #[test]
+    fn condensing_keeps_current_turn_context_after_the_transcript() {
+        let static_entry = condensed_system_entry(
+            "rules",
+            "Rules",
+            "Stay in character.".to_string(),
+            PromptEntryPosition::Relative,
+            0,
+        );
+        let dynamic_entry = condensed_system_entry(
+            "memory",
+            "Memory",
+            "Current memory.".to_string(),
+            PromptEntryPosition::InChat,
+            0,
+        );
+
+        let condensed =
+            condense_entries_into_single_system_message(vec![static_entry, dynamic_entry]);
+
+        assert_eq!(condensed.len(), 2);
+        assert!(matches!(
+            condensed[0].injection_position,
+            PromptEntryPosition::Relative
+        ));
+        assert!(matches!(
+            condensed[1].injection_position,
+            PromptEntryPosition::InChat
+        ));
+        assert_eq!(condensed[1].injection_depth, 0);
+    }
 }

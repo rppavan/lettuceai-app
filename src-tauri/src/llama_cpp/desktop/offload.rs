@@ -8,10 +8,31 @@ use std::sync::{Mutex, OnceLock};
 pub(super) struct LlamaModelMetadata {
     pub(super) model_size_bytes: u64,
     pub(super) layer_count: u32,
+    pub(super) nextn_layer_count: u32,
     pub(super) max_context_length: u32,
     pub(super) n_embd: u64,
     pub(super) n_head: u64,
     pub(super) n_head_kv: u64,
+}
+
+impl LlamaModelMetadata {
+    pub(super) fn model_layer_count(&self) -> u32 {
+        self.layer_count
+            .max(1)
+            .saturating_add(self.nextn_layer_count)
+    }
+
+    pub(super) fn offload_layer_count(&self) -> u32 {
+        self.model_layer_count().saturating_add(1)
+    }
+
+    pub(super) fn normalize_requested_gpu_layers(&self, requested: u32) -> u32 {
+        if requested >= self.layer_count.max(1) {
+            self.offload_layer_count()
+        } else {
+            requested
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +144,7 @@ fn load_model_metadata_uncached(model_path: &str) -> Result<LlamaModelMetadata, 
     Ok(LlamaModelMetadata {
         model_size_bytes: model.size(),
         layer_count: model.n_layer().max(1),
+        nextn_layer_count: model.n_layer_nextn(),
         max_context_length: model.n_ctx_train().max(1),
         n_embd: u64::try_from(model.n_embd()).unwrap_or(0).max(1),
         n_head: u64::from(model.n_head()).max(1),
@@ -192,11 +214,6 @@ fn candidate_gpu_layers(total_layers: u32, estimated_gpu_layers: u32) -> Vec<u32
     }
 
     let mut candidates = Vec::new();
-    // If the estimate is within 10% of total, optimistically try all layers first.
-    // The smart fallback ladder will step down gracefully on OOM.
-    if estimate >= total_layers.saturating_mul(9) / 10 {
-        push_unique(&mut candidates, total_layers);
-    }
     push_unique(&mut candidates, estimate);
     push_unique(&mut candidates, estimate.saturating_mul(3) / 4);
     push_unique(&mut candidates, estimate / 2);
@@ -244,7 +261,7 @@ pub(super) fn model_weight_split_bytes(
     metadata: &LlamaModelMetadata,
     gpu_layers: u32,
 ) -> (u64, u64) {
-    let total_layers = metadata.layer_count.max(1);
+    let total_layers = metadata.offload_layer_count();
     let clamped_gpu_layers = gpu_layers.min(total_layers);
     let gpu_weight_bytes = metadata
         .model_size_bytes
@@ -298,7 +315,7 @@ pub(super) fn plan_smart_gpu_offload(
     sidecar_vram_reserve_bytes: u64,
 ) -> Result<SmartGpuOffloadPlan, String> {
     let metadata = load_model_metadata(model_path)?;
-    let total_layers = metadata.layer_count.max(1);
+    let total_layers = metadata.offload_layer_count();
     let recommended_context = compute_recommended_context(
         &metadata,
         available_memory_bytes,
@@ -322,8 +339,8 @@ pub(super) fn plan_smart_gpu_offload(
     );
     let bytes_per_layer = metadata
         .model_size_bytes
-        .checked_add(u64::from(total_layers) - 1)
-        .and_then(|bytes| bytes.checked_div(u64::from(total_layers)))
+        .checked_add(u64::from(metadata.model_layer_count()) - 1)
+        .and_then(|bytes| bytes.checked_div(u64::from(metadata.model_layer_count())))
         .unwrap_or(0);
     let kv_bytes_per_token = estimate_kv_bytes_per_token(&metadata, llama_kv_type).unwrap_or(0);
 
@@ -342,7 +359,7 @@ pub(super) fn plan_smart_gpu_offload(
         let kv_bytes_per_layer = if kqv_vram_reserved {
             kv_bytes_per_token
                 .saturating_mul(u64::from(planned_context))
-                .checked_div(u64::from(total_layers.max(1)))
+                .checked_div(u64::from(metadata.layer_count.max(1)))
                 .unwrap_or(0)
         } else {
             0
@@ -359,7 +376,9 @@ pub(super) fn plan_smart_gpu_offload(
                 .min(total_layers)
         };
         // Report the KV bytes that will actually land on GPU (scales with GPU layers).
-        let estimated_kv_bytes = kv_bytes_per_layer.saturating_mul(u64::from(estimated_gpu_layers));
+        let estimated_kv_bytes = kv_bytes_per_layer.saturating_mul(u64::from(
+            estimated_gpu_layers.min(metadata.layer_count.max(1)),
+        ));
 
         if selected_plan.is_none() {
             selected_plan = Some((
@@ -582,14 +601,15 @@ pub(super) fn plan_multi_gpu_distribution(
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_gpu_layers, estimated_runtime_reserve_bytes, plan_multi_gpu_distribution,
-        LlamaModelMetadata,
+        candidate_gpu_layers, estimated_runtime_reserve_bytes, model_weight_split_bytes,
+        plan_multi_gpu_distribution, LlamaModelMetadata,
     };
 
     fn large_context_metadata() -> LlamaModelMetadata {
         LlamaModelMetadata {
             model_size_bytes: 16 * 1024 * 1024 * 1024,
             layer_count: 60,
+            nextn_layer_count: 0,
             max_context_length: 262_144,
             n_embd: 4096,
             n_head: 32,
@@ -636,12 +656,46 @@ mod tests {
     }
 
     #[test]
-    fn candidate_ladder_tries_full_offload_when_estimate_is_near_total() {
-        let candidates = candidate_gpu_layers(60, 55);
+    fn metadata_counts_output_tensor_as_an_offload_layer() {
+        let metadata = large_context_metadata();
+
+        assert_eq!(metadata.offload_layer_count(), 61);
+        assert_eq!(metadata.normalize_requested_gpu_layers(59), 59);
+        assert_eq!(metadata.normalize_requested_gpu_layers(60), 61);
+        assert_eq!(metadata.normalize_requested_gpu_layers(99), 61);
+    }
+
+    #[test]
+    fn metadata_counts_bundled_nextn_and_output_layers() {
+        let metadata = LlamaModelMetadata {
+            nextn_layer_count: 1,
+            ..large_context_metadata()
+        };
+
+        assert_eq!(metadata.model_layer_count(), 61);
+        assert_eq!(metadata.offload_layer_count(), 62);
+        assert_eq!(metadata.normalize_requested_gpu_layers(60), 62);
+        assert_eq!(metadata.normalize_requested_gpu_layers(62), 62);
+    }
+
+    #[test]
+    fn candidate_ladder_does_not_exceed_the_vram_estimate() {
+        let candidates = candidate_gpu_layers(61, 60);
 
         assert_eq!(candidates.first(), Some(&60));
-        assert!(candidates.contains(&55));
+        assert!(!candidates.contains(&61));
         assert_eq!(candidates.last(), Some(&0));
+    }
+
+    #[test]
+    fn full_offload_places_all_model_weights_on_gpu() {
+        let metadata = large_context_metadata();
+
+        let (cpu_bytes, gpu_bytes) =
+            model_weight_split_bytes(&metadata, metadata.offload_layer_count());
+
+        assert_eq!(cpu_bytes, 0);
+        assert_eq!(gpu_bytes, metadata.model_size_bytes);
     }
 
     #[test]

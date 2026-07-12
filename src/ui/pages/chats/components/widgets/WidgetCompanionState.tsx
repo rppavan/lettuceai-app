@@ -35,14 +35,14 @@ function Meter({
 }) {
   if (bipolar) {
     const v = Math.max(-1, Math.min(1, value));
-    const pct = Math.round(v * 100);
+    const pct = Math.round(v * 1000) / 10;
     const mag = Math.abs(v) * 50;
     return (
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between text-[11px]">
           <span className="text-fg/55">{label}</span>
           <span className="tabular-nums text-fg/45">
-            {pct > 0 ? `+${pct}` : pct}%
+            {pct > 0 ? `+${pct.toFixed(1)}` : pct.toFixed(1)}%
           </span>
         </div>
         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-fg/10">
@@ -63,12 +63,12 @@ function Meter({
       </div>
     );
   }
-  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
+  const pct = Math.round(Math.max(0, Math.min(1, value)) * 1000) / 10;
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between text-[11px]">
         <span className="text-fg/55">{label}</span>
-        <span className="tabular-nums text-fg/45">{pct}%</span>
+        <span className="tabular-nums text-fg/45">{pct.toFixed(1)}%</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-fg/10">
         <div className="h-full rounded-full bg-accent/70" style={{ width: `${pct}%` }} />

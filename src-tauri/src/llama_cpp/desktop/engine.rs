@@ -1,5 +1,7 @@
 use super::*;
+use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
+use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::mtmd::{MtmdContext, MtmdContextParams};
 use llama_cpp_sys_2::{
     ggml_backend_dev_count, ggml_backend_dev_get, ggml_backend_dev_type,
@@ -8,6 +10,7 @@ use llama_cpp_sys_2::{
 use serde_json::{json, Value};
 use std::ffi::{c_void, CString};
 use std::path::Path;
+use std::pin::Pin;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -57,6 +60,68 @@ pub(super) struct LlamaGpuConfig {
     pub(super) main_gpu: Option<i32>,
     pub(super) distribution_mode: Option<String>,
     pub(super) total_layer_count: Option<u32>,
+}
+
+pub(super) struct NativeFitPlan {
+    pub(super) model_params: Pin<Box<LlamaModelParams>>,
+    pub(super) n_ctx: u32,
+    pub(super) n_gpu_layers: u32,
+    pub(super) tensor_split: Vec<f32>,
+}
+
+// Keep aligned with llama.cpp's common_params::fit_params_target default.
+pub(super) const NATIVE_FIT_MARGIN_BYTES: usize = 1024 * 1024 * 1024;
+
+pub(super) fn fit_model_params(
+    model_path: &str,
+    device_ids: &[usize],
+    mut context_params: LlamaContextParams,
+    n_ctx_min: u32,
+) -> Result<NativeFitPlan, String> {
+    let path = CString::new(model_path).map_err(|e| {
+        crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            format!("Invalid llama model path for native fitting: {e}"),
+        )
+    })?;
+    let mut model_params = LlamaModelParams::default();
+    if !device_ids.is_empty() {
+        model_params = model_params.with_devices(device_ids).map_err(|e| {
+            crate::utils::err_msg(
+                module_path!(),
+                line!(),
+                format!("Failed to select devices for native fitting: {e}"),
+            )
+        })?;
+    }
+    let mut model_params = Box::pin(model_params);
+    let mut margins = vec![NATIVE_FIT_MARGIN_BYTES; llama_cpp_2::max_devices().max(1)];
+    let result = model_params
+        .as_mut()
+        .fit_params(
+            &path,
+            &mut context_params,
+            &mut margins,
+            n_ctx_min,
+            llama_cpp_sys_2::GGML_LOG_LEVEL_INFO,
+        )
+        .map_err(|e| {
+            crate::utils::err_msg(
+                module_path!(),
+                line!(),
+                format!("llama.cpp native parameter fitting failed: {e}"),
+            )
+        })?;
+    let n_gpu_layers = u32::try_from(model_params.n_gpu_layers().max(0)).unwrap_or(0);
+    let tensor_split = model_params.tensor_split().to_vec();
+
+    Ok(NativeFitPlan {
+        model_params,
+        n_ctx: result.n_ctx,
+        n_gpu_layers,
+        tensor_split,
+    })
 }
 
 const LLAMA_MODEL_LOAD_PROGRESS_EVENT: &str = "llama-model-load-progress";
@@ -334,24 +399,23 @@ fn load_model_with_progress(
     gpu_config: &LlamaGpuConfig,
     backend_path: &str,
     stage: u8,
+    fitted_params: Option<&LlamaModelParams>,
 ) -> Result<LlamaModel, String> {
-    let cstr = CString::new(model_path).map_err(|e| {
-        crate::utils::err_msg(
-            module_path!(),
-            line!(),
-            format!("Invalid llama model path: {e}"),
-        )
-    })?;
-
-    let mut params = unsafe { llama_cpp_sys_2::llama_model_default_params() };
-    if let Some(n_gpu_layers) = n_gpu_layers {
-        params.n_gpu_layers = i32::try_from(n_gpu_layers).unwrap_or(i32::MAX);
+    let mut params = fitted_params
+        .map(|params| *params.as_raw())
+        .unwrap_or_else(|| unsafe { llama_cpp_sys_2::llama_model_default_params() });
+    if fitted_params.is_none() {
+        if let Some(n_gpu_layers) = n_gpu_layers {
+            params.n_gpu_layers = i32::try_from(n_gpu_layers).unwrap_or(i32::MAX);
+        }
     }
     let mut selected_devices = Vec::new();
     // Must outlive the model-load call below: llama.cpp reads `params.tensor_split`
     // during load, so the backing buffer cannot be dropped before then.
-    let tensor_split_storage: Vec<f32> = gpu_config.tensor_split.clone();
-    if gpu_config.multi_gpu_enabled {
+    let tensor_split_storage: Vec<f32> = fitted_params
+        .map(|params| params.tensor_split().to_vec())
+        .unwrap_or_else(|| gpu_config.tensor_split.clone());
+    if fitted_params.is_none() && gpu_config.multi_gpu_enabled {
         if gpu_config.device_ids.len() < 2 {
             return Err(crate::utils::err_msg(
                 module_path!(),
@@ -372,7 +436,8 @@ fn load_model_with_progress(
         if let Some(main_gpu) = gpu_config.main_gpu {
             params.main_gpu = main_gpu;
         }
-    } else if let [device_id] = gpu_config.device_ids[..] {
+    } else if fitted_params.is_none() && gpu_config.device_ids.len() == 1 {
+        let device_id = gpu_config.device_ids[0];
         // Single-GPU override: restrict llama.cpp to exactly this device.
         selected_devices.push(resolve_selected_gpu_device(device_id)?);
         selected_devices.push(std::ptr::null_mut());
@@ -380,7 +445,14 @@ fn load_model_with_progress(
         params.main_gpu = 0;
     }
 
-    let gpu_ranges = if gpu_config.multi_gpu_enabled {
+    let cstr = CString::new(model_path).map_err(|e| {
+        crate::utils::err_msg(
+            module_path!(),
+            line!(),
+            format!("Invalid llama model path: {e}"),
+        )
+    })?;
+    let gpu_ranges = if gpu_config.multi_gpu_enabled || !tensor_split_storage.is_empty() {
         compute_gpu_progress_ranges(
             &gpu_config.device_labels,
             &tensor_split_storage,
@@ -486,6 +558,7 @@ pub(super) fn load_engine(
     model_path: &str,
     requested_gpu_layers: Option<u32>,
     auto_gpu_layer_candidates: Option<&[u32]>,
+    native_fit_plan: Option<&NativeFitPlan>,
     gpu_config: LlamaGpuConfig,
     strict_mode: bool,
     mmproj_path: Option<&str>,
@@ -578,8 +651,22 @@ pub(super) fn load_engine(
             .map(|v| v.to_string())
             .unwrap_or_else(|| "auto".to_string())
     };
+    let native_fit_key = native_fit_plan
+        .map(|plan| {
+            format!(
+                "ctx={},layers={},split={}",
+                plan.n_ctx,
+                plan.n_gpu_layers,
+                plan.tensor_split
+                    .iter()
+                    .map(|value| format!("{value:.4}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        })
+        .unwrap_or_else(|| "none".to_string());
     let model_params_key = format!(
-        "requested_gpu_layers={requested_gpu_layers_key};strict_mode={};multi_gpu={};devices={};distribution={};tensor_split={};main_gpu={}",
+        "requested_gpu_layers={requested_gpu_layers_key};native_fit={native_fit_key};strict_mode={};multi_gpu={};devices={};distribution={};tensor_split={};main_gpu={}",
         strict_mode,
         gpu_config.multi_gpu_enabled,
         gpu_config
@@ -607,6 +694,7 @@ pub(super) fn load_engine(
         || guard.model_path.as_deref() != Some(model_path)
         || guard.model_params_key.as_deref() != Some(&model_params_key);
     let reusing_loaded_smart_gpu_model = should_reload
+        && native_fit_plan.is_none()
         && auto_gpu_layer_candidates.is_some()
         && guard.model.is_some()
         && guard.model_path.as_deref() == Some(model_path)
@@ -641,6 +729,7 @@ pub(super) fn load_engine(
         }
     }
     if should_reload {
+        super::discard_hot_context();
         if guard.model.is_some() {
             guard.model = None;
             guard.model_path = None;
@@ -705,12 +794,26 @@ pub(super) fn load_engine(
                         &gpu_config,
                         "gpu_offload",
                         MODEL_LOAD_STAGE_GPU_OFFLOAD,
+                        native_fit_plan
+                            .filter(|plan| index == 0 && plan.n_gpu_layers == candidate)
+                            .map(|plan| plan.model_params.as_ref().get_ref()),
                     ) {
                         Ok(model) => {
                             backend_path_used = "gpu_offload".to_string();
                             actual_gpu_layers_used = Some(candidate);
                             if let Some(app) = app {
-                                if smart_gpu_layer_fallback_activated {
+                                if native_fit_plan.is_some_and(|plan| {
+                                    index == 0 && plan.n_gpu_layers == candidate
+                                }) {
+                                    log_info(
+                                        app,
+                                        "llama_cpp",
+                                        format!(
+                                            "Loaded model with llama.cpp native fit at {} GPU layers",
+                                            candidate
+                                        ),
+                                    );
+                                } else if smart_gpu_layer_fallback_activated {
                                     log_warn(
                                         app,
                                         "llama_cpp",
@@ -808,6 +911,7 @@ pub(super) fn load_engine(
                             } else {
                                 MODEL_LOAD_STAGE_CPU
                             },
+                            None,
                         )
                         .inspect_err(|_err| {
                             if let Some(app) = app {
@@ -837,6 +941,7 @@ pub(super) fn load_engine(
                     &gpu_config,
                     "gpu_offload",
                     MODEL_LOAD_STAGE_GPU_OFFLOAD,
+                    native_fit_plan.map(|plan| plan.model_params.as_ref().get_ref()),
                 ) {
                     Ok(model) => {
                         backend_path_used = "gpu_offload".to_string();
@@ -919,6 +1024,7 @@ pub(super) fn load_engine(
                                 &LlamaGpuConfig::default(),
                                 "cpu",
                                 MODEL_LOAD_STAGE_CPU_FALLBACK,
+                                None,
                             )
                             .inspect_err(|_err| {
                                 if let Some(app) = app {
@@ -948,6 +1054,7 @@ pub(super) fn load_engine(
                     &LlamaGpuConfig::default(),
                     "cpu",
                     MODEL_LOAD_STAGE_CPU,
+                    None,
                 )
                 .inspect_err(|_err| {
                     if let Some(app) = app {
@@ -1065,6 +1172,7 @@ pub(super) fn load_engine(
                 &LlamaGpuConfig::default(),
                 guard.backend_path_used.as_deref().unwrap_or("cpu"),
                 MODEL_LOAD_STAGE_FINALIZING,
+                None,
             )?;
 
             if let Some(app) = app {

@@ -646,6 +646,7 @@ pub struct AdvancedModelSettings {
     pub llama_rope_freq_scale: Option<f64>,
     pub llama_offload_kqv: Option<bool>,
     pub llama_batch_size: Option<u32>,
+    pub llama_ubatch_size: Option<u32>,
     pub llama_kv_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llama_flash_attention: Option<String>,
@@ -771,6 +772,7 @@ impl Default for AdvancedModelSettings {
             llama_rope_freq_scale: None,
             llama_offload_kqv: None,
             llama_batch_size: None,
+            llama_ubatch_size: None,
             llama_kv_type: None,
             llama_flash_attention: None,
             llama_swa_full: None,
@@ -1162,6 +1164,10 @@ pub struct Persona {
 #[serde(rename_all = "camelCase")]
 pub struct MtpStats {
     pub draft_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_draft_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptation_count: Option<u32>,
     pub rounds: u64,
     pub drafted: u64,
     pub accepted: u64,
@@ -1243,6 +1249,8 @@ pub struct ChatRegenerateArgs {
     pub swap_places: Option<bool>,
     #[serde(default)]
     pub guidance: Option<String>,
+    #[serde(default, alias = "modelId")]
+    pub model_id: Option<String>,
     pub stream: Option<bool>,
     #[serde(alias = "requestId")]
     pub request_id: Option<String>,

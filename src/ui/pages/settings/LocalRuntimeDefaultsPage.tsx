@@ -46,6 +46,8 @@ type RuntimeDefaults = {
   llamaKvPlacement: "auto" | "split" | "systemRam" | "pin" | null;
   llamaMainGpu: number | null;
   llamaPriorityVramLimitBytes: number | null;
+  llamaBatchSize: number | null;
+  llamaUbatchSize: number | null;
 };
 
 type LlamaGpuDevice = {
@@ -235,6 +237,8 @@ export function LocalRuntimeDefaultsPage() {
           llamaKvPlacement: advancedModel.llamaKvPlacement ?? null,
           llamaMainGpu: advancedModel.llamaMainGpu ?? null,
           llamaPriorityVramLimitBytes: advancedModel.llamaPriorityVramLimitBytes ?? null,
+          llamaBatchSize: advancedModel.llamaBatchSize ?? null,
+          llamaUbatchSize: advancedModel.llamaUbatchSize ?? null,
         });
       })
       .catch(() => {});
@@ -265,6 +269,8 @@ export function LocalRuntimeDefaultsPage() {
           llamaKvPlacement: next.llamaKvPlacement ?? undefined,
           llamaMainGpu: next.llamaMainGpu ?? undefined,
           llamaPriorityVramLimitBytes: next.llamaPriorityVramLimitBytes ?? undefined,
+          llamaBatchSize: next.llamaBatchSize ?? undefined,
+          llamaUbatchSize: next.llamaUbatchSize ?? undefined,
         });
       } catch (err) {
         toast.error(
@@ -503,6 +509,54 @@ export function LocalRuntimeDefaultsPage() {
                     })
                   }
                   placeholder="8192"
+                  className={cn(controlClassName, "w-full text-center")}
+                />
+              </div>
+            </SettingRow>
+
+            <SettingRow
+              icon={<Gauge className="h-4 w-4 text-warning/80" />}
+              iconClassName="border-warning/30 bg-warning/10"
+              title={t("runtimeDefaults.llamaBatchTitle")}
+              description={t("runtimeDefaults.llamaBatchDescription")}
+            >
+              <div className="w-28">
+                <NumberInput
+                  min={1}
+                  max={8192}
+                  step={128}
+                  value={defaults.llamaBatchSize}
+                  onChange={(next) =>
+                    void persistDefaults({
+                      ...defaults,
+                      llamaBatchSize: next === null ? null : Math.trunc(next),
+                    })
+                  }
+                  placeholder={t("common.labels.auto")}
+                  className={cn(controlClassName, "w-full text-center")}
+                />
+              </div>
+            </SettingRow>
+
+            <SettingRow
+              icon={<ListOrdered className="h-4 w-4 text-warning/80" />}
+              iconClassName="border-warning/30 bg-warning/10"
+              title={t("runtimeDefaults.llamaUbatchTitle")}
+              description={t("runtimeDefaults.llamaUbatchDescription")}
+            >
+              <div className="w-28">
+                <NumberInput
+                  min={1}
+                  max={8192}
+                  step={128}
+                  value={defaults.llamaUbatchSize}
+                  onChange={(next) =>
+                    void persistDefaults({
+                      ...defaults,
+                      llamaUbatchSize: next === null ? null : Math.trunc(next),
+                    })
+                  }
+                  placeholder={t("common.labels.auto")}
                   className={cn(controlClassName, "w-full text-center")}
                 />
               </div>

@@ -801,7 +801,7 @@ export function GroupChatPage() {
   ]);
 
   const handleRegenerate = useCallback(
-    async (messageId: string, forceCharacterId?: string, guidance?: string) => {
+    async (messageId: string, forceCharacterId?: string, guidance?: string, modelId?: string) => {
       if (!groupSessionId || regeneratingMessageId) return;
 
       const requestId = crypto.randomUUID();
@@ -856,6 +856,7 @@ export function GroupChatPage() {
           forceCharacterId,
           requestId,
           guidance,
+          modelId,
         );
 
         // Update messages with final saved data
@@ -1245,13 +1246,17 @@ export function GroupChatPage() {
       setMessages(updatedMessages);
       const stats = await storageBridge.groupParticipationStats(groupSessionId);
       setParticipationStats(stats);
+      const refreshedSession = await storageBridge.groupSessionGet(groupSessionId);
+      if (refreshedSession) {
+        updateSession(refreshedSession);
+      }
       closeMessageActions();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to rewind");
     } finally {
       setActionBusy(false);
     }
-  }, [messageAction, groupSessionId, closeMessageActions, messages]);
+  }, [messageAction, groupSessionId, closeMessageActions, messages, updateSession]);
 
   const handleTogglePin = useCallback(async () => {
     if (!messageAction || !groupSessionId) return;
@@ -2293,8 +2298,9 @@ export function GroupChatPage() {
                       getVariantState={getVariantState}
                       handleVariantDrag={handleVariantDrag}
                       handleRegenerate={async (msg, options) => {
-                        await handleRegenerate(msg.id, undefined, options?.guidance);
+                        await handleRegenerate(msg.id, undefined, options?.guidance, options?.modelId);
                       }}
+                      models={settings?.models ?? []}
                       onLongPress={(msg) => openMessageActions(msg)}
                       displayContent={parsed.content}
                       reasoning={combinedReasoning || undefined}

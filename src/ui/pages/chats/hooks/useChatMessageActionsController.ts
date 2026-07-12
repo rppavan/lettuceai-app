@@ -370,9 +370,12 @@ export function useChatMessageActionsController({ context }: UseChatMessageActio
         await deleteMessagesAfter(state.session.id, message.id);
         const updatedMessages = messagesRef.current.slice(0, messageIndex + 1);
         messagesRef.current = updatedMessages;
+        const refreshedSession = await getSession(state.session.id).catch(() => null);
         dispatch({
           type: "SET_SESSION",
-          payload: { ...state.session, messages: updatedMessages, updatedAt: Date.now() },
+          payload: refreshedSession
+            ? { ...refreshedSession, messages: updatedMessages }
+            : { ...state.session, messages: updatedMessages, updatedAt: Date.now() },
         });
         dispatch({
           type: "REWIND_TO_MESSAGE",

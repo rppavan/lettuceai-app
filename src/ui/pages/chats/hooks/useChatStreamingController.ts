@@ -695,7 +695,10 @@ export function useChatStreamingController({
   );
 
   const handleRegenerate = useCallback(
-    async (message: StoredMessage, options?: { swapPlaces?: boolean; guidance?: string }) => {
+    async (
+      message: StoredMessage,
+      options?: { swapPlaces?: boolean; guidance?: string; modelId?: string },
+    ) => {
       if (!state.session) return;
       const currentSessionId = state.session.id;
       if (
@@ -830,6 +833,7 @@ export function useChatStreamingController({
           messageId: message.id,
           swapPlaces: options?.swapPlaces ?? false,
           guidance: options?.guidance,
+          modelId: options?.modelId,
           stream: true,
           requestId,
         });

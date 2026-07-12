@@ -929,6 +929,7 @@ export const storageBridge = {
     forceCharacterId?: string | null,
     requestId?: string,
     guidance?: string | null,
+    modelId?: string | null,
     stream?: boolean,
   ) =>
     invoke<string>("group_chat_regenerate", {
@@ -937,6 +938,7 @@ export const storageBridge = {
       forceCharacterId: forceCharacterId ?? null,
       requestId: requestId ?? null,
       guidance: guidance ?? null,
+      modelId: modelId ?? null,
       stream: stream ?? true,
     }).then((s) => JSON.parse(s)),
   groupChatContinue: (

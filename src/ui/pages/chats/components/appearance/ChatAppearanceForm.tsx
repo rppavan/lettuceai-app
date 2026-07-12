@@ -309,6 +309,7 @@ export interface ChatAppearanceFormProps {
   settings: ChatAppearanceSettings;
   mode: "global" | "character";
   activeTab: AppearanceTab;
+  showParticipantsBar?: boolean;
   onUpdate: <K extends AppearanceKey>(key: K, value: ChatAppearanceSettings[K]) => void;
   onResetField: (key: AppearanceKey) => void;
   isOverridden: (key: AppearanceKey) => boolean;
@@ -318,6 +319,7 @@ export function ChatAppearanceForm({
   settings,
   mode,
   activeTab,
+  showParticipantsBar = false,
   onUpdate,
   onResetField,
   isOverridden,
@@ -770,6 +772,7 @@ export function ChatAppearanceForm({
         )}
         </CollapsibleSection>
         </div>
+        {showParticipantsBar && (
         <CollapsibleSection
           title={t("chatAppearance.participantsBar.title")}
           active={anyOverridden(
@@ -867,6 +870,7 @@ export function ChatAppearanceForm({
           </>
         )}
         </CollapsibleSection>
+        )}
       </div>
     );
   }

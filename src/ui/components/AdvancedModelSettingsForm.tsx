@@ -29,6 +29,7 @@ export const ADVANCED_LLAMA_SEED_RANGE = { min: 0, max: 2_147_483_647 };
 export const ADVANCED_LLAMA_ROPE_FREQ_BASE_RANGE = { min: 0, max: 1_000_000 };
 export const ADVANCED_LLAMA_ROPE_FREQ_SCALE_RANGE = { min: 0, max: 10 };
 export const ADVANCED_LLAMA_BATCH_SIZE_RANGE = { min: 1, max: 8192 };
+export const ADVANCED_LLAMA_UBATCH_SIZE_RANGE = { min: 1, max: 8192 };
 export const ADVANCED_LLAMA_DRY_MULTIPLIER_RANGE = { min: 0, max: 10 };
 export const ADVANCED_LLAMA_DRY_BASE_RANGE = { min: 0, max: 10 };
 export const ADVANCED_LLAMA_DRY_ALLOWED_LENGTH_RANGE = { min: 0, max: 128 };
@@ -172,6 +173,7 @@ export function sanitizeAdvancedModelSettings(input: AdvancedModelSettings): Adv
     ),
     llamaOffloadKqv: input.llamaOffloadKqv ?? null,
     llamaBatchSize: sanitize(input.llamaBatchSize, ADVANCED_LLAMA_BATCH_SIZE_RANGE, true),
+    llamaUbatchSize: sanitize(input.llamaUbatchSize, ADVANCED_LLAMA_UBATCH_SIZE_RANGE, true),
     llamaKvType: input.llamaKvType ?? null,
     llamaFlashAttention: input.llamaFlashAttention ?? null,
     llamaSwaFull: input.llamaSwaFull ?? null,

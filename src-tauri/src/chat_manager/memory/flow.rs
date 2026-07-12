@@ -34,6 +34,7 @@ use super::structured_fallback::{
     structured_fallback_format_label,
 };
 use crate::chat_manager::companion;
+use crate::chat_manager::entries::{in_chat_user_entry, relative_system_entry};
 use crate::chat_manager::execution::{
     find_model_with_credential, prepare_default_sampling_request,
 };
@@ -57,6 +58,7 @@ use crate::chat_manager::thinking::normalize_thinking_content;
 use crate::chat_manager::tooling::{
     parse_tool_calls, ToolCall, ToolChoice, ToolConfig, ToolDefinition,
 };
+use crate::chat_manager::turn_builder::assemble_prompt_messages;
 use crate::chat_manager::types::{
     Character, DynamicMemorySettings, MemoryEmbedding, MemoryRetrievalStrategy, Model, Persona,
     PromptEntryChatMode, PromptEntryInfoSource, ProviderCredential, Session, Settings,
@@ -271,7 +273,7 @@ fn render_active_prompt_entries(
     persona: Option<&Persona>,
     session: &Session,
     settings: &Settings,
-) -> String {
+) -> Vec<SystemPromptEntry> {
     let lorebook_text = prompt_engine::resolve_lorebook_content(app, character, persona, session);
     entries
         .iter()
@@ -291,11 +293,12 @@ fn render_active_prompt_entries(
             if trimmed.is_empty() {
                 None
             } else {
-                Some(trimmed.to_string())
+                let mut rendered_entry = entry.clone();
+                rendered_entry.content = trimmed.to_string();
+                Some(rendered_entry)
             }
         })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        .collect()
 }
 
 fn push_memory_debug_step(debug_steps: &mut Vec<Value>, enabled: bool, step: Value) {
@@ -3160,6 +3163,7 @@ async fn send_dynamic_memory_request(
         stream: Some(false),
         request_id: built.request_id.clone(),
         provider_id: Some(provider_cred.provider_id.clone()),
+        cache_key: None,
     };
 
     let first_response = match api_request(app.clone(), api_request_payload).await {
@@ -3223,6 +3227,7 @@ async fn send_dynamic_memory_request(
                     stream: Some(false),
                     request_id: built.request_id.clone(),
                     provider_id: Some(provider_cred.provider_id.clone()),
+                    cache_key: None,
                 };
 
                 api_request(app.clone(), api_request_payload).await?
@@ -3298,6 +3303,7 @@ async fn send_dynamic_memory_request(
                     stream: Some(false),
                     request_id: built.request_id.clone(),
                     provider_id: Some(provider_cred.provider_id.clone()),
+                    cache_key: None,
                 };
 
                 return api_request(app.clone(), api_request_payload).await;
@@ -3350,6 +3356,7 @@ async fn send_dynamic_memory_request(
                     stream: Some(false),
                     request_id: built.request_id.clone(),
                     provider_id: Some(provider_cred.provider_id.clone()),
+                    cache_key: None,
                 };
 
                 return api_request(app.clone(), api_request_payload).await;
@@ -3443,7 +3450,6 @@ async fn run_memory_tool_update(
     let tool_config = build_memory_tool_config(memory_supersede_enabled);
     let max_entries = dynamic_max_entries(settings);
 
-    let mut messages_for_api = Vec::new();
     let system_role = request_builder::system_role_for(provider_cred);
 
     let template_id = dynamic_memory_manager_template_id(settings, provider_cred, model);
@@ -3475,19 +3481,23 @@ async fn run_memory_tool_update(
         !summary.trim().is_empty(),
         !session.memory_embeddings.is_empty(),
     );
-    let base_prompt = base_template
+    let mut prompt_entries = base_template
         .as_ref()
         .map(|template| {
             if template.entries.is_empty() {
-                prompt_engine::render_with_context(
-                    app,
-                    &template.content,
-                    character,
-                    None,
-                    session,
-                    settings,
-                    None,
-                )
+                vec![relative_system_entry(
+                    "legacy_dynamic_memory_prompt",
+                    "Dynamic Memory Instructions",
+                    prompt_engine::render_with_context(
+                        app,
+                        &template.content,
+                        character,
+                        None,
+                        session,
+                        settings,
+                        None,
+                    ),
+                )]
             } else {
                 render_active_prompt_entries(
                     app,
@@ -3501,29 +3511,33 @@ async fn run_memory_tool_update(
             }
         })
         .unwrap_or_else(|| {
-            "You maintain a long-term memory index for a conversation transcript. Use tools to add or delete concise factual memories. Every create_memory call must include a category tag. Keep the list tidy and capped at {{max_entries}} entries. Prefer deleting by ID when removing items. When finished, call the done tool.".to_string()
+            vec![relative_system_entry(
+                "fallback_dynamic_memory_prompt",
+                "Dynamic Memory Instructions",
+                "You maintain a long-term memory index for a conversation transcript. Use tools to add or delete concise factual memories. Every create_memory call must include a category tag. Keep the list tidy and capped at {{max_entries}} entries. Prefer deleting by ID when removing items. When finished, call the done tool.",
+            )]
         });
 
-    let rendered = base_prompt
-        .replace("{{max_entries}}", &max_entries.to_string())
-        .replace("{{current_memory_tokens}}", &current_tokens.to_string())
-        .replace("{{hot_token_budget}}", &token_budget.to_string());
-
-    crate::chat_manager::messages::push_system_message(
-        &mut messages_for_api,
-        &system_role,
-        Some(rendered),
-    );
+    for entry in &mut prompt_entries {
+        entry.content = entry
+            .content
+            .replace("{{max_entries}}", &max_entries.to_string())
+            .replace("{{current_memory_tokens}}", &current_tokens.to_string())
+            .replace("{{hot_token_budget}}", &token_budget.to_string());
+    }
     let memory_lines = format_memories_with_ids(session);
-    messages_for_api.push(json!({
-        "role": "user",
-        "content": format!(
+    prompt_entries.push(in_chat_user_entry(
+        "runtime_dynamic_memory_input",
+        "Memory Update Input",
+        format!(
             "Conversation transcript summary:\n{}\n\nRecent transcript lines:\n{}\n\nCurrent memories (with IDs):\n{}",
             summary,
             convo_window.iter().map(|m| format!("{}: {}", m.role, m.content)).collect::<Vec<_>>().join("\n"),
             if memory_lines.is_empty() { "none".to_string() } else { memory_lines.join("\n") }
-        )
-    }));
+        ),
+        0,
+    ));
+    let mut messages_for_api = assemble_prompt_messages(prompt_entries, Vec::new(), &system_role);
 
     let request_session = dynamic_memory_request_session(session);
     let (request_settings, extra_body_fields) = prepare_default_sampling_request(
@@ -4483,19 +4497,17 @@ async fn run_memory_tag_repair(
         return Ok(HashMap::new());
     }
 
-    let mut messages_for_api = Vec::new();
     let system_role = request_builder::system_role_for(provider_cred);
-    crate::chat_manager::messages::push_system_message(
-        &mut messages_for_api,
-        &system_role,
-        Some(
-            "Classify each memory text with exactly one valid category. Use only retag_memory tool calls."
-                .to_string(),
+    let prompt_entries = vec![
+        relative_system_entry(
+            "memory_tag_repair_rules",
+            "Memory Tag Repair Rules",
+            "Classify each memory text with exactly one valid category. Use only retag_memory tool calls.",
         ),
-    );
-    messages_for_api.push(json!({
-        "role": "user",
-        "content": format!(
+        in_chat_user_entry(
+            "memory_tag_repair_input",
+            "Memory Tag Repair Input",
+            format!(
             "Valid categories: {}.\nReturn one retag_memory tool call per text.\nTexts:\n{}",
             ALLOWED_MEMORY_CATEGORIES.join(", "),
             texts
@@ -4504,8 +4516,11 @@ async fn run_memory_tag_repair(
                 .map(|(i, t)| format!("{}. {}", i + 1, t))
                 .collect::<Vec<_>>()
                 .join("\n")
-        )
-    }));
+            ),
+            0,
+        ),
+    ];
+    let messages_for_api = assemble_prompt_messages(prompt_entries, Vec::new(), &system_role);
 
     let mut repaired = HashMap::new();
     let fallback_label = structured_fallback_format_label(fallback_format);
@@ -4767,7 +4782,6 @@ async fn summarize_messages(
     cancel_token: Option<&DynamicMemoryCancellationToken>,
 ) -> Result<String, String> {
     let overwrite_llama_sampler_config = dynamic_memory_llama_sampler_overwrite_enabled(settings);
-    let mut messages_for_api = Vec::new();
     let system_role = request_builder::system_role_for(provider_cred);
 
     let summary_template =
@@ -4789,19 +4803,23 @@ async fn summarize_messages(
             .unwrap_or(false),
         !session.memory_embeddings.is_empty(),
     );
-    let base_prompt = summary_template
+    let mut prompt_entries = summary_template
         .as_ref()
         .map(|template| {
             if template.entries.is_empty() {
-                prompt_engine::render_with_context(
-                    app,
-                    &template.content,
-                    character,
-                    persona,
-                    session,
-                    settings,
-                    None,
-                )
+                vec![relative_system_entry(
+                    "legacy_dynamic_summary_prompt",
+                    "Dynamic Summary Instructions",
+                    prompt_engine::render_with_context(
+                        app,
+                        &template.content,
+                        character,
+                        persona,
+                        session,
+                        settings,
+                        None,
+                    ),
+                )]
             } else {
                 render_active_prompt_entries(
                     app,
@@ -4815,30 +4833,35 @@ async fn summarize_messages(
             }
         })
         .unwrap_or_else(|| {
-            "Summarize the recent conversation transcript into a concise paragraph capturing durable facts and decisions. Avoid adding new information.".to_string()
+            vec![relative_system_entry(
+                "fallback_dynamic_summary_prompt",
+                "Dynamic Summary Instructions",
+                "Summarize the recent conversation transcript into a concise paragraph capturing durable facts and decisions. Avoid adding new information.",
+            )]
         });
 
-    let mut rendered = base_prompt;
     let prev_text = prior_summary
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("No previous summary provided.");
-    rendered = rendered.replace("{{prev_summary}}", prev_text);
-    crate::chat_manager::messages::push_system_message(
-        &mut messages_for_api,
-        &system_role,
-        Some(rendered),
-    );
+    for entry in &mut prompt_entries {
+        entry.content = entry.content.replace("{{prev_summary}}", prev_text);
+    }
+    let mut conversation_messages = Vec::new();
     for msg in convo_window {
-        messages_for_api.push(json!({
+        conversation_messages.push(json!({
             "role": msg.role,
             "content": msg.content
         }));
     }
 
-    messages_for_api.push(json!({
-        "role": "user",
-        "content": "Return only the concise summary for the above conversation window. Use the write_summary tool."
-    }));
+    prompt_entries.push(in_chat_user_entry(
+        "runtime_dynamic_summary_request",
+        "Summary Output Request",
+        "Return only the concise summary for the above conversation window. Use the write_summary tool.",
+        0,
+    ));
+    let messages_for_api =
+        assemble_prompt_messages(prompt_entries, conversation_messages, &system_role);
 
     let request_session = dynamic_memory_request_session(session);
     let (request_settings, extra_body_fields) = prepare_default_sampling_request(

@@ -1,11 +1,23 @@
 import { motion, type PanInfo, AnimatePresence } from "framer-motion";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Pin, User, Bot, ChevronDown, Volume2, Loader2, Square } from "lucide-react";
+import {
+  RefreshCw,
+  Pin,
+  User,
+  Bot,
+  ChevronDown,
+  Volume2,
+  Loader2,
+  Square,
+  Wand2,
+  Cpu,
+} from "lucide-react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { SceneContent } from "./SceneContent";
-import type { StoredMessage, Character, Persona } from "../../../../core/storage/schemas";
+import type { StoredMessage, Character, Persona, Model } from "../../../../core/storage/schemas";
 import { radius, typography, interactive, cn } from "../../../design-tokens";
 import { BottomMenu } from "../../../components/BottomMenu";
+import { ModelSelectionBottomMenu } from "../../../components/ModelSelectionBottomMenu";
 import type { ThemeColors } from "../../../../core/utils/imageAnalysis";
 import type { ChatAppearanceSettings } from "../../../../core/storage/schemas";
 import { AvatarImage } from "../../../components/AvatarImage";
@@ -31,7 +43,10 @@ interface ChatMessageProps {
   eventHandlers: Record<string, any>;
   getVariantState: (message: StoredMessage) => VariantState;
   handleVariantDrag: (messageId: string, offsetX: number) => void;
-  handleRegenerate: (message: StoredMessage, options?: { guidance?: string }) => Promise<void>;
+  handleRegenerate: (
+    message: StoredMessage,
+    options?: { guidance?: string; modelId?: string },
+  ) => Promise<void>;
   isStartingSceneMessage: boolean;
   theme: ThemeColors;
   chatAppearance?: ChatAppearanceSettings;
@@ -46,6 +61,7 @@ interface ChatMessageProps {
   reasoning?: string;
   swapPlaces?: boolean;
   modelName?: string;
+  models?: Model[];
   scenePromptStreaming?: boolean;
 }
 
@@ -236,13 +252,16 @@ const MessageActions = React.memo(function MessageActions({
   isRegenerating,
   onRegenerate,
   onGuidedRegenerate,
+  onRegenerateWithModel,
 }: {
   disabled: boolean;
   isRegenerating: boolean;
   onRegenerate: () => void;
   onGuidedRegenerate: (guidance: string) => void;
+  onRegenerateWithModel?: () => void;
 }) {
   const { t } = useI18n();
+  const [menuOpen, setMenuOpen] = useState(false);
   const [guidedOpen, setGuidedOpen] = useState(false);
   const [guidance, setGuidance] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -256,11 +275,15 @@ const MessageActions = React.memo(function MessageActions({
     }
   }, []);
 
-  const openGuidedRegeneration = useCallback(() => {
+  const openRegenerateMenu = useCallback(() => {
     if (disabled) return;
     longPressTriggeredRef.current = true;
-    setGuidedOpen(true);
-  }, [disabled]);
+    if (onRegenerateWithModel) {
+      setMenuOpen(true);
+    } else {
+      setGuidedOpen(true);
+    }
+  }, [disabled, onRegenerateWithModel]);
 
   const resetGuidedRegeneration = useCallback(() => {
     setGuidedOpen(false);
@@ -272,9 +295,9 @@ const MessageActions = React.memo(function MessageActions({
       if (disabled || event.button !== 0) return;
       clearLongPressTimer();
       longPressTriggeredRef.current = false;
-      longPressTimerRef.current = window.setTimeout(openGuidedRegeneration, 450);
+      longPressTimerRef.current = window.setTimeout(openRegenerateMenu, 450);
     },
-    [clearLongPressTimer, disabled, openGuidedRegeneration],
+    [clearLongPressTimer, disabled, openRegenerateMenu],
   );
 
   const handlePointerEnd = useCallback(() => {
@@ -303,10 +326,20 @@ const MessageActions = React.memo(function MessageActions({
       event.preventDefault();
       event.stopPropagation();
       clearLongPressTimer();
-      openGuidedRegeneration();
+      openRegenerateMenu();
     },
-    [clearLongPressTimer, disabled, openGuidedRegeneration],
+    [clearLongPressTimer, disabled, openRegenerateMenu],
   );
+
+  const chooseGuidedRegeneration = useCallback(() => {
+    setMenuOpen(false);
+    setGuidedOpen(true);
+  }, []);
+
+  const chooseModelRegeneration = useCallback(() => {
+    setMenuOpen(false);
+    onRegenerateWithModel?.();
+  }, [onRegenerateWithModel]);
 
   const submitGuidedRegeneration = useCallback(() => {
     const trimmed = guidance.trim();
@@ -365,6 +398,45 @@ const MessageActions = React.memo(function MessageActions({
           )}
         </button>
       </motion.div>
+
+      <BottomMenu
+        isOpen={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        title={t("chats.message.regenerateMenuTitle")}
+      >
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={chooseGuidedRegeneration}
+            className="flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-fg/5 px-3.5 py-3 text-left transition hover:bg-fg/10"
+          >
+            <Wand2 className="h-5 w-5 shrink-0 text-fg/40" />
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-fg">
+                {t("chats.message.regenerateWithDirection")}
+              </span>
+              <span className="block truncate text-xs text-fg/40">
+                {t("chats.message.regenerateWithDirectionDescription")}
+              </span>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={chooseModelRegeneration}
+            className="flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-fg/5 px-3.5 py-3 text-left transition hover:bg-fg/10"
+          >
+            <Cpu className="h-5 w-5 shrink-0 text-fg/40" />
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-fg">
+                {t("chats.message.regenerateWithModel")}
+              </span>
+              <span className="block truncate text-xs text-fg/40">
+                {t("chats.message.regenerateWithModelDescription")}
+              </span>
+            </div>
+          </button>
+        </div>
+      </BottomMenu>
 
       <BottomMenu
         isOpen={guidedOpen}
@@ -540,11 +612,13 @@ function ChatMessageInner({
   reasoning,
   swapPlaces = false,
   modelName,
+  models,
   scenePromptStreaming = false,
 }: ChatMessageProps) {
   const { t } = useI18n();
   const prevRoleRef = useRef(message.role);
   const [crossShift, setCrossShift] = useState(0);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
 
   useLayoutEffect(() => {
     const prevRole = prevRoleRef.current;
@@ -674,6 +748,8 @@ function ChatMessageInner({
   const messageUsage = message.usage;
   const infoEligible = computed.isAssistant || computed.isScene;
   const showInfoModel = infoEligible && !!chatAppearance?.showMessageModel && !!modelName;
+  const regenBusy = regeneratingMessageId === message.id || sending;
+  const canPickRegenerateModel = computed.showRegenerateButton && (models?.length ?? 0) > 0;
   const showInfoInput =
     infoEligible &&
     !!chatAppearance?.showMessageInputTokens &&
@@ -720,7 +796,22 @@ function ChatMessageInner({
       {showInfoOutput && (
         <span title={t("chats.actions.completionTokens")}>↑&#8202;{messageUsage?.completionTokens}</span>
       )}
-      {showInfoModel && <span className="min-w-0 truncate text-fg/55">{modelName}</span>}
+      {showInfoModel &&
+        (canPickRegenerateModel ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!regenBusy) setModelPickerOpen(true);
+            }}
+            title={t("chats.message.regenerateWithModel")}
+            className="min-w-0 truncate text-fg/55 underline decoration-dotted decoration-fg/25 underline-offset-2 transition hover:text-fg/80"
+          >
+            {modelName}
+          </button>
+        ) : (
+          <span className="min-w-0 truncate text-fg/55">{modelName}</span>
+        ))}
       {showInfoTtft && (
         <span className="whitespace-nowrap" title={t("chats.actions.timeToFirstToken")}>
           TTFT {messageUsage?.firstTokenMs}ms
@@ -1159,10 +1250,27 @@ function ChatMessageInner({
 
       {computed.showRegenerateButton && (
         <MessageActions
-          disabled={regeneratingMessageId === message.id || sending}
+          disabled={regenBusy}
           isRegenerating={regeneratingMessageId === message.id}
           onRegenerate={() => void handleRegenerate(message)}
           onGuidedRegenerate={(guidance) => void handleRegenerate(message, { guidance })}
+          onRegenerateWithModel={
+            canPickRegenerateModel ? () => setModelPickerOpen(true) : undefined
+          }
+        />
+      )}
+
+      {canPickRegenerateModel && (
+        <ModelSelectionBottomMenu
+          isOpen={modelPickerOpen}
+          onClose={() => setModelPickerOpen(false)}
+          title={t("chats.message.regenerateModelPickerTitle")}
+          models={models ?? []}
+          selectedModelIds={message.modelId ? [message.modelId] : []}
+          onSelectModel={(modelId) => {
+            setModelPickerOpen(false);
+            void handleRegenerate(message, { modelId });
+          }}
         />
       )}
     </motion.div>
@@ -1237,6 +1345,7 @@ export const ChatMessage = React.memo(ChatMessageInner, (prev, next) => {
     prev.persona?.avatarCrop?.scale === next.persona?.avatarCrop?.scale &&
     prev.displayContent === next.displayContent &&
     prev.modelName === next.modelName &&
+    prev.models === next.models &&
     prev.scenePromptStreaming === next.scenePromptStreaming &&
     prev.swapPlaces === next.swapPlaces &&
     prev.audioStatus === next.audioStatus &&

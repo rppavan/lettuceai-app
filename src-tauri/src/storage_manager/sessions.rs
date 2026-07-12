@@ -1,4 +1,4 @@
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -3250,6 +3250,8 @@ pub fn messages_delete_after(
     .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     tx.commit()
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+
+    rewind_session_memory_state(&mut conn, &session_id)?;
     Ok(())
 }
 
@@ -3743,6 +3745,137 @@ pub fn message_toggle_pin_state(
     }
 }
 
+fn session_conversation_anchor(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<(usize, Option<String>), String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(1) FROM messages WHERE session_id = ?1 AND role IN ('user','assistant')",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let anchor: Option<String> = conn
+        .query_row(
+            "SELECT id FROM messages WHERE session_id = ?1 AND role IN ('user','assistant') ORDER BY created_at DESC, id DESC LIMIT 1",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    Ok((count.max(0) as usize, anchor))
+}
+
+fn append_session_user_memory_event(
+    conn: &Connection,
+    session_id: &str,
+    action: serde_json::Value,
+) -> Result<(), String> {
+    let (count, anchor) = session_conversation_anchor(conn, session_id)?;
+    let event =
+        crate::conversation_manager::memory::build_user_memory_edit_event(action, count, anchor);
+    let raw: Option<Option<String>> = conn
+        .query_row(
+            "SELECT memory_tool_events FROM sessions WHERE id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let mut events: Vec<serde_json::Value> = raw
+        .flatten()
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or_default();
+    events.push(event);
+    if events.len() > crate::conversation_manager::memory::MEMORY_TOOL_EVENT_CAP {
+        let excess = events.len() - crate::conversation_manager::memory::MEMORY_TOOL_EVENT_CAP;
+        events.drain(0..excess);
+    }
+    conn.execute(
+        "UPDATE sessions SET memory_tool_events = ?1 WHERE id = ?2",
+        params![
+            serde_json::to_string(&events)
+                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
+            session_id
+        ],
+    )
+    .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    Ok(())
+}
+
+fn rewind_session_memory_state(conn: &mut Connection, session_id: &str) -> Result<(), String> {
+    let row: Option<(Option<String>, Option<String>)> = conn
+        .query_row(
+            "SELECT memory_tool_events, memory_summary FROM sessions WHERE id = ?1",
+            params![session_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    let Some((raw_events, prior_summary)) = row else {
+        return Ok(());
+    };
+    let events: Vec<serde_json::Value> = raw_events
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or_default();
+    if events.is_empty() {
+        return Ok(());
+    }
+    let prior_summary = prior_summary.unwrap_or_default();
+    let embeddings = read_session_embeddings_with_fallback(conn, session_id)?;
+    let (remaining_count, _) = session_conversation_anchor(conn, session_id)?;
+
+    let replayed = {
+        let conn_ref: &Connection = conn;
+        crate::conversation_manager::memory::replay_memory_state_after_rewind(
+            &events,
+            &embeddings,
+            &prior_summary,
+            remaining_count,
+            |message_id| {
+                let found: i64 = conn_ref
+                    .query_row(
+                        "SELECT COUNT(1) FROM messages WHERE id = ?1 AND session_id = ?2",
+                        params![message_id, session_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+                Ok(found > 0)
+            },
+        )?
+    };
+
+    let Some(state) = replayed else {
+        return Ok(());
+    };
+
+    write_session_embeddings_through_table(&mut *conn, session_id, &state.embeddings)?;
+    let memories: Vec<String> = state
+        .embeddings
+        .iter()
+        .map(|memory| memory.text.clone())
+        .collect();
+    let memories_json = serde_json::to_string(&memories)
+        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    write_resolved_memories_json(conn, session_id, &memories_json)?;
+    conn.execute(
+        "UPDATE sessions SET memory_tool_events = ?1, memory_summary = ?2,
+                memory_summary_token_count = CASE WHEN ?3 THEN memory_summary_token_count ELSE 0 END,
+                memory_status = 'idle', memory_error = NULL
+         WHERE id = ?4",
+        params![
+            serde_json::to_string(&state.events)
+                .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
+            state.summary,
+            state.summary_unchanged,
+            session_id
+        ],
+    )
+    .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn session_add_memory(
     app: tauri::AppHandle,
@@ -3810,8 +3943,10 @@ pub async fn session_add_memory(
         };
 
     let now_u = now_ms();
+    let new_memory_id = uuid::Uuid::new_v4().to_string();
+    let event_category = normalized_category.clone();
     memory_embeddings.push(MemoryEmbedding {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: new_memory_id.clone(),
         text: memory.clone(),
         embedding,
         created_at: now_u,
@@ -3845,6 +3980,16 @@ pub async fn session_add_memory(
     let new_memories_json = serde_json::to_string(&memories)
         .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
     write_resolved_memories_json(&conn, &session_id, &new_memories_json)?;
+    append_session_user_memory_event(
+        &conn,
+        &session_id,
+        serde_json::json!({
+            "name": "create_memory",
+            "memoryId": new_memory_id,
+            "timestamp": now_u,
+            "arguments": { "text": memory, "category": event_category, "important": false },
+        }),
+    )?;
 
     if let Some(json) = read_session_meta(&conn, &session_id)? {
         return Ok(Some(serde_json::to_string(&json).map_err(|e| {
@@ -3869,14 +4014,31 @@ pub fn session_remove_memory(
     let mut memory_embeddings = read_session_embeddings_with_fallback(&conn, &session_id)?;
 
     if memory_index < memories.len() {
-        memories.remove(memory_index);
-        if memory_index < memory_embeddings.len() {
-            memory_embeddings.remove(memory_index);
-        }
+        let removed_text = memories.remove(memory_index);
+        let removed_embedding = if memory_index < memory_embeddings.len() {
+            Some(memory_embeddings.remove(memory_index))
+        } else {
+            None
+        };
         write_session_embeddings_through_table(&mut *conn, &session_id, &memory_embeddings)?;
         let new_memories_json = serde_json::to_string(&memories)
             .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
         write_resolved_memories_json(&conn, &session_id, &new_memories_json)?;
+        if let Some(removed) = removed_embedding {
+            append_session_user_memory_event(
+                &conn,
+                &session_id,
+                serde_json::json!({
+                    "name": "delete_memory",
+                    "deletedMemoryId": removed.id,
+                    "softDelete": false,
+                    "memorySnapshot": serde_json::to_value(&removed)
+                        .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?,
+                    "timestamp": now_ms(),
+                    "arguments": { "text": removed_text },
+                }),
+            )?;
+        }
     }
 
     if let Some(json) = read_session_meta(&conn, &session_id)? {
@@ -3904,9 +4066,14 @@ pub async fn session_update_memory(
     let mut memory_embeddings = read_session_embeddings_with_fallback(&conn, &session_id)?;
 
     if memory_index < memories.len() {
+        let previous_text = memories[memory_index].clone();
+        let previous_category = memory_embeddings
+            .get(memory_index)
+            .and_then(|m| m.category.clone());
         memories[memory_index] = new_memory.clone();
         let category_mode = resolve_memory_category_mode(&conn, &session_id);
         let normalized_category = normalize_memory_category(new_category, &category_mode)?;
+        let event_category = normalized_category.clone();
 
         let embedding = match embedding::compute_embedding(app.clone(), new_memory.clone()).await {
             Ok(vec) => vec,
@@ -3924,7 +4091,13 @@ pub async fn session_update_memory(
                 .unwrap_or_else(|_| ("v3".to_string(), 512));
 
         let now_u = now_ms();
-        if memory_index < memory_embeddings.len() {
+        let edited_existing = memory_index < memory_embeddings.len();
+        let edited_memory_id = if edited_existing {
+            memory_embeddings[memory_index].id.clone()
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        };
+        if edited_existing {
             let m = &mut memory_embeddings[memory_index];
             m.text = memories[memory_index].clone();
             m.embedding = embedding;
@@ -3933,7 +4106,7 @@ pub async fn session_update_memory(
             m.category = normalized_category;
         } else {
             memory_embeddings.push(MemoryEmbedding {
-                id: uuid::Uuid::new_v4().to_string(),
+                id: edited_memory_id.clone(),
                 text: memories[memory_index].clone(),
                 embedding,
                 created_at: now_u,
@@ -3967,6 +4140,24 @@ pub async fn session_update_memory(
         let new_memories_json = serde_json::to_string(&memories)
             .map_err(|e| crate::utils::err_to_string(module_path!(), line!(), e))?;
         write_resolved_memories_json(&conn, &session_id, &new_memories_json)?;
+        let action = if edited_existing {
+            serde_json::json!({
+                "name": "update_memory",
+                "memoryId": edited_memory_id,
+                "previousText": previous_text,
+                "previousCategory": previous_category,
+                "timestamp": now_u,
+                "arguments": { "text": new_memory, "category": event_category },
+            })
+        } else {
+            serde_json::json!({
+                "name": "create_memory",
+                "memoryId": edited_memory_id,
+                "timestamp": now_u,
+                "arguments": { "text": new_memory, "category": event_category, "important": false },
+            })
+        };
+        append_session_user_memory_event(&conn, &session_id, action)?;
     }
 
     if let Some(json) = read_session_meta(&conn, &session_id)? {
@@ -3989,15 +4180,30 @@ pub fn session_toggle_memory_pin(
     let now = now_ms();
 
     if memory_index < memory_embeddings.len() {
-        let m = &mut memory_embeddings[memory_index];
-        let next_pinned = !m.is_pinned;
-        m.is_pinned = next_pinned;
-        if next_pinned {
-            m.is_cold = false;
-            m.importance_score = 1.0;
-            m.last_accessed_at = now;
-        }
+        let (memory_id, previous_pinned, next_pinned) = {
+            let m = &mut memory_embeddings[memory_index];
+            let previous_pinned = m.is_pinned;
+            let next_pinned = !m.is_pinned;
+            m.is_pinned = next_pinned;
+            if next_pinned {
+                m.is_cold = false;
+                m.importance_score = 1.0;
+                m.last_accessed_at = now;
+            }
+            (m.id.clone(), previous_pinned, next_pinned)
+        };
         write_session_embeddings_through_table(&mut *conn, &session_id, &memory_embeddings)?;
+        append_session_user_memory_event(
+            &conn,
+            &session_id,
+            serde_json::json!({
+                "name": if next_pinned { "pin_memory" } else { "unpin_memory" },
+                "memoryId": memory_id,
+                "previousPinned": previous_pinned,
+                "timestamp": now,
+                "arguments": { "id": memory_id },
+            }),
+        )?;
     }
 
     if let Some(json) = read_session_meta(&conn, &session_id)? {
@@ -4067,7 +4273,7 @@ pub fn session_set_memory_cold_state(
         });
     }
 
-    {
+    let (memory_id, previous_is_cold) = {
         let m = &mut memory_embeddings[memory_index];
         if m.is_pinned && is_cold {
             return Err(crate::utils::err_msg(
@@ -4076,6 +4282,7 @@ pub fn session_set_memory_cold_state(
                 "Pinned memories cannot be moved to cold storage",
             ));
         }
+        let previous_is_cold = m.is_cold;
         m.is_cold = is_cold;
         if is_cold {
             m.importance_score = 0.0;
@@ -4083,9 +4290,21 @@ pub fn session_set_memory_cold_state(
             m.importance_score = 1.0;
             m.last_accessed_at = now_u;
         }
-    }
+        (m.id.clone(), previous_is_cold)
+    };
 
     write_session_embeddings_through_table(&mut *conn, &session_id, &memory_embeddings)?;
+    append_session_user_memory_event(
+        &conn,
+        &session_id,
+        serde_json::json!({
+            "name": "set_memory_cold",
+            "memoryId": memory_id,
+            "previousIsCold": previous_is_cold,
+            "timestamp": now_u,
+            "arguments": { "isCold": is_cold },
+        }),
+    )?;
 
     if let Some(json) = read_session_meta(&conn, &session_id)? {
         return Ok(Some(serde_json::to_string(&json).map_err(|e| {
@@ -4153,13 +4372,28 @@ pub fn session_set_memory_observed_at(
         });
     }
 
-    {
+    let (memory_id, previous_observed_at, previous_precision) = {
         let m = &mut memory_embeddings[memory_index];
+        let previous_observed_at = m.observed_at;
+        let previous_precision = m.observed_time_precision.clone();
         m.observed_at = observed_at;
         m.observed_time_precision = observed_at.map(|_| "user".to_string());
-    }
+        (m.id.clone(), previous_observed_at, previous_precision)
+    };
 
     write_session_embeddings_through_table(&mut *conn, &session_id, &memory_embeddings)?;
+    append_session_user_memory_event(
+        &conn,
+        &session_id,
+        serde_json::json!({
+            "name": "set_memory_observed_at",
+            "memoryId": memory_id,
+            "previousObservedAt": previous_observed_at,
+            "previousObservedTimePrecision": previous_precision,
+            "timestamp": now_u,
+            "arguments": { "observedAt": observed_at },
+        }),
+    )?;
 
     if let Some(json) = read_session_meta(&conn, &session_id)? {
         return Ok(Some(serde_json::to_string(&json).map_err(|e| {

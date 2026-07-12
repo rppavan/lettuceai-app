@@ -1368,6 +1368,7 @@ async fn send_lorebook_entry_request(
             stream: Some(false),
             request_id: built.request_id,
             provider_id: Some(provider_cred.provider_id.clone()),
+            cache_key: None,
         },
     )
     .await?;
@@ -1415,6 +1416,7 @@ async fn send_lorebook_entry_request(
                         stream: Some(false),
                         request_id: built.request_id,
                         provider_id: Some(provider_cred.provider_id.clone()),
+                        cache_key: None,
                     },
                 )
                 .await;
@@ -1458,6 +1460,7 @@ async fn send_lorebook_entry_request(
                         stream: Some(false),
                         request_id: built.request_id,
                         provider_id: Some(provider_cred.provider_id.clone()),
+                        cache_key: None,
                     },
                 )
                 .await;

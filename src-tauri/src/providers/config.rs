@@ -39,6 +39,7 @@ fn supported_extra_body_keys(provider_id: &str) -> &'static [&'static str] {
             "llamaRopeFreqScale",
             "llamaOffloadKqv",
             "llamaBatchSize",
+            "llamaUbatchSize",
             "llamaKvType",
             "llamaFlashAttentionPolicy",
             "llamaSwaFull",

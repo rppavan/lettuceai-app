@@ -5,16 +5,16 @@ use crate::chat_manager::types::{
     ImageAttachment, PromptEntryRole, StoredMessage, SystemPromptEntry,
 };
 
-/// Pushes a system message to the API message list if present.
-/// Uses the provider-specific system role.
-pub fn push_system_message(
-    target: &mut Vec<Value>,
-    system_role: &str,
-    system_prompt: Option<String>,
-) {
-    if let Some(system) = system_prompt {
-        target.push(serde_json::json!({ "role": system_role, "content": system }));
+pub fn prompt_entry_message(system_role: &str, entry: &SystemPromptEntry) -> Option<Value> {
+    if entry.content.trim().is_empty() {
+        return None;
     }
+    let role = match entry.role {
+        PromptEntryRole::System => system_role,
+        PromptEntryRole::User => "user",
+        PromptEntryRole::Assistant => "assistant",
+    };
+    Some(serde_json::json!({ "role": role, "content": entry.content }))
 }
 
 pub fn push_prompt_entry_message(
@@ -22,15 +22,9 @@ pub fn push_prompt_entry_message(
     system_role: &str,
     entry: &SystemPromptEntry,
 ) {
-    if entry.content.trim().is_empty() {
-        return;
+    if let Some(message) = prompt_entry_message(system_role, entry) {
+        target.push(message);
     }
-    let role = match entry.role {
-        PromptEntryRole::System => system_role,
-        PromptEntryRole::User => "user",
-        PromptEntryRole::Assistant => "assistant",
-    };
-    target.push(serde_json::json!({ "role": role, "content": entry.content }));
 }
 
 pub fn audio_format_from_mime(mime: &str) -> &'static str {

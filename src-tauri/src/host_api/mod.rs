@@ -405,6 +405,7 @@ async fn chat_completions_handler(
             stream: Some(false),
             request_id: None,
             provider_id: Some(model.provider_id.clone()),
+            cache_key: None,
         },
     )
     .await
@@ -706,6 +707,7 @@ async fn execute_streaming_chat_completion(
                 stream: Some(true),
                 request_id: Some(request_id.clone()),
                 provider_id: Some(model_provider_id),
+                cache_key: None,
             },
         )
         .await;

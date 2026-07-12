@@ -68,8 +68,9 @@ impl ChatContext {
     pub fn select_model_with_credential<'a>(
         &'a self,
         character: &Character,
+        model_override: Option<&str>,
     ) -> Result<(&'a Model, &'a ProviderCredential), String> {
-        select_model_with_credential(&self.settings, character)
+        select_model_with_credential(&self.settings, character, model_override)
     }
 
     pub fn load_session(&self, session_id: &str) -> Result<Option<Session>, String> {
@@ -133,16 +134,20 @@ impl ChatService {
             .context
             .load_session(session_id)?
             .ok_or_else(|| "Session not found".to_string())?;
-        self.prepare_loaded_turn(session, character_id, persona_id, true)
+        self.prepare_loaded_turn(session, character_id, persona_id, true, None)
     }
 
-    pub fn prepare_regeneration(self, session_id: &str) -> Result<PreparedChatTurn, String> {
+    pub fn prepare_regeneration(
+        self,
+        session_id: &str,
+        model_override: Option<&str>,
+    ) -> Result<PreparedChatTurn, String> {
         let session = self
             .context
             .load_session(session_id)?
             .ok_or_else(|| "Session not found".to_string())?;
         let character_id = session.character_id.clone();
-        self.prepare_loaded_turn(session, &character_id, None, false)
+        self.prepare_loaded_turn(session, &character_id, None, false, model_override)
     }
 
     fn prepare_loaded_turn(
@@ -151,6 +156,7 @@ impl ChatService {
         character_id: &str,
         persona_id: Option<&str>,
         sync_character_id: bool,
+        model_override: Option<&str>,
     ) -> Result<PreparedChatTurn, String> {
         let character = self.context.find_character(character_id)?;
 
@@ -160,7 +166,9 @@ impl ChatService {
 
         let effective_persona_id = resolve_persona_id(&session, persona_id);
         let persona = self.context.choose_persona(effective_persona_id).cloned();
-        let (model, credential) = self.context.select_model_with_credential(&character)?;
+        let (model, credential) = self
+            .context
+            .select_model_with_credential(&character, model_override)?;
         let model = model.clone();
         let credential = credential.clone();
 

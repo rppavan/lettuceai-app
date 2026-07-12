@@ -1,5 +1,5 @@
 #[cfg(not(mobile))]
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 #[cfg(not(mobile))]
 use std::io::Cursor;
 
@@ -42,18 +42,22 @@ mod desktop {
     mod sampler;
 
     use llama_cpp_2::context::params::{KvCacheType, LlamaContextParams};
+    use llama_cpp_2::context::LlamaContext;
     use llama_cpp_2::llama_batch::LlamaBatch;
     use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
     use llama_cpp_2::mtmd::{MtmdBitmap, MtmdInputChunks, MtmdInputText};
     use llama_cpp_2::sampling::LlamaSampler;
+    use llama_cpp_2::token::LlamaToken;
     use llama_cpp_2::TokenToStringError;
     use llama_cpp_sys_2::{
         llama_flash_attn_type, LLAMA_FLASH_ATTN_TYPE_AUTO, LLAMA_FLASH_ATTN_TYPE_DISABLED,
         LLAMA_FLASH_ATTN_TYPE_ENABLED,
     };
+    use std::cell::RefCell;
     use std::num::NonZeroU32;
     use std::path::Path;
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::sync::{mpsc, Arc, OnceLock};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use tokio::sync::oneshot::error::TryRecvError;
 
     use context::{
@@ -63,8 +67,8 @@ mod desktop {
     };
     use engine::{
         consume_kqv_fallback_toast, emit_model_load_complete, emit_model_load_failed,
-        emit_model_load_finalizing, load_engine, shared_backend, using_rocm_backend,
-        LlamaGpuConfig,
+        emit_model_load_finalizing, fit_model_params, load_engine, shared_backend,
+        using_rocm_backend, LlamaGpuConfig, NativeFitPlan, NATIVE_FIT_MARGIN_BYTES,
     };
     use offload::{context_bucket_upper, merge_cached_candidate_layers, plan_smart_gpu_offload};
     use prompt::{
@@ -79,6 +83,325 @@ mod desktop {
     };
 
     const LLAMA_RUNTIME_REPORT_UPDATED_EVENT: &str = "llama-runtime-report-updated";
+
+    struct HotTextContext {
+        mtp_runtime: Option<mtp::MtpRuntime<'static>>,
+        context: Option<LlamaContext<'static>>,
+        model: Arc<LlamaModel>,
+        draft_model: Arc<LlamaModel>,
+        model_path: String,
+        cache_key: String,
+        context_key: String,
+        tokens: Vec<LlamaToken>,
+        allocated_bytes: usize,
+    }
+
+    struct HotTextContextCache {
+        entries: VecDeque<HotTextContext>,
+        allocated_bytes: usize,
+    }
+
+    const HOT_CONTEXT_CACHE_MAX_BYTES: usize = NATIVE_FIT_MARGIN_BYTES;
+
+    thread_local! {
+        static HOT_TEXT_CONTEXTS: RefCell<HotTextContextCache> = const { RefCell::new(HotTextContextCache {
+            entries: VecDeque::new(),
+            allocated_bytes: 0,
+        }) };
+    }
+
+    enum LocalWorkerJob {
+        Request {
+            app: AppHandle,
+            request: ApiRequest,
+            response: tokio::sync::oneshot::Sender<Result<ApiResponse, String>>,
+        },
+        Unload {
+            app: AppHandle,
+            response: tokio::sync::oneshot::Sender<Result<(), String>>,
+        },
+    }
+
+    static LOCAL_WORKER: OnceLock<mpsc::Sender<LocalWorkerJob>> = OnceLock::new();
+
+    fn local_worker() -> &'static mpsc::Sender<LocalWorkerJob> {
+        LOCAL_WORKER.get_or_init(|| {
+            let (sender, receiver) = mpsc::channel::<LocalWorkerJob>();
+            std::thread::Builder::new()
+                .name("lettuce-llama".to_string())
+                .spawn(move || {
+                    while let Ok(job) = receiver.recv() {
+                        match job {
+                            LocalWorkerJob::Request {
+                                app,
+                                request,
+                                response,
+                            } => {
+                                let _ = response.send(handle_local_request_sync(app, request));
+                            }
+                            LocalWorkerJob::Unload { app, response } => {
+                                discard_hot_context();
+                                let _ = response.send(engine::unload_engine(&app));
+                            }
+                        }
+                    }
+                    discard_hot_context();
+                })
+                .expect("failed to start llama.cpp inference worker");
+            sender
+        })
+    }
+
+    pub async fn handle_local_request(
+        app: AppHandle,
+        request: ApiRequest,
+    ) -> Result<ApiResponse, String> {
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        local_worker()
+            .send(LocalWorkerJob::Request {
+                app,
+                request,
+                response: response_tx,
+            })
+            .map_err(|_| "llama.cpp inference worker stopped".to_string())?;
+        response_rx
+            .await
+            .map_err(|_| "llama.cpp inference worker dropped its response".to_string())?
+    }
+
+    pub async fn unload_local_engine(app: AppHandle) -> Result<(), String> {
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        local_worker()
+            .send(LocalWorkerJob::Unload {
+                app,
+                response: response_tx,
+            })
+            .map_err(|_| "llama.cpp inference worker stopped".to_string())?;
+        response_rx
+            .await
+            .map_err(|_| "llama.cpp inference worker dropped its response".to_string())?
+    }
+
+    pub(super) fn discard_hot_context() {
+        HOT_TEXT_CONTEXTS.with(|slot| {
+            let mut cache = slot.borrow_mut();
+            cache.entries.clear();
+            cache.allocated_bytes = 0;
+        });
+    }
+
+    fn discard_hot_context_if_model_differs(model_path: &str) {
+        HOT_TEXT_CONTEXTS.with(|slot| {
+            let mut cache = slot.borrow_mut();
+            cache
+                .entries
+                .retain(|cached| cached.model_path == model_path);
+            cache.allocated_bytes = cache
+                .entries
+                .iter()
+                .map(|cached| cached.allocated_bytes)
+                .sum();
+        });
+    }
+
+    fn hot_context_matches_model_path(model_path: &str) -> bool {
+        HOT_TEXT_CONTEXTS.with(|slot| {
+            slot.borrow()
+                .entries
+                .iter()
+                .any(|cached| cached.model_path == model_path)
+        })
+    }
+
+    fn cache_eviction_count(
+        mut allocated_bytes: usize,
+        incoming_bytes: usize,
+        entry_bytes: impl IntoIterator<Item = usize>,
+        capacity_bytes: usize,
+        available_bytes: Option<usize>,
+    ) -> usize {
+        let mut evictions = 0;
+        let mut freed_bytes = 0usize;
+        for bytes in entry_bytes {
+            let within_capacity = allocated_bytes.saturating_add(incoming_bytes) <= capacity_bytes;
+            let within_headroom = available_bytes
+                .map(|available| incoming_bytes <= available.saturating_add(freed_bytes))
+                .unwrap_or(true);
+            if within_capacity && within_headroom {
+                break;
+            }
+            allocated_bytes = allocated_bytes.saturating_sub(bytes);
+            freed_bytes = freed_bytes.saturating_add(bytes);
+            evictions += 1;
+        }
+        evictions
+    }
+
+    fn prepare_hot_context_capacity(available_bytes: Option<usize>) -> usize {
+        HOT_TEXT_CONTEXTS.with(|slot| {
+            let mut cache = slot.borrow_mut();
+            let expected_bytes = cache
+                .entries
+                .iter()
+                .map(|cached| cached.allocated_bytes)
+                .max()
+                .unwrap_or(0);
+            let evicted = cache_eviction_count(
+                cache.allocated_bytes,
+                expected_bytes,
+                cache.entries.iter().map(|cached| cached.allocated_bytes),
+                HOT_CONTEXT_CACHE_MAX_BYTES,
+                available_bytes,
+            );
+            for _ in 0..evicted {
+                let cached = cache
+                    .entries
+                    .pop_front()
+                    .expect("eviction count cannot exceed cache entries");
+                cache.allocated_bytes =
+                    cache.allocated_bytes.saturating_sub(cached.allocated_bytes);
+            }
+            evicted
+        })
+    }
+
+    fn hot_context_cache_stats() -> (usize, usize) {
+        HOT_TEXT_CONTEXTS.with(|slot| {
+            let cache = slot.borrow();
+            (cache.entries.len(), cache.allocated_bytes)
+        })
+    }
+
+    fn take_hot_context(
+        model: &Arc<LlamaModel>,
+        draft_model: &Arc<LlamaModel>,
+        cache_key: &str,
+        context_key: &str,
+    ) -> Option<(
+        LlamaContext<'static>,
+        Option<mtp::MtpRuntime<'static>>,
+        Vec<LlamaToken>,
+    )> {
+        HOT_TEXT_CONTEXTS.with(|slot| {
+            let mut cache = slot.borrow_mut();
+            let index = cache.entries.iter().position(|cached| {
+                cached.cache_key == cache_key
+                    && cached.context_key == context_key
+                    && Arc::ptr_eq(&cached.model, model)
+                    && Arc::ptr_eq(&cached.draft_model, draft_model)
+            })?;
+            let mut cached = cache.entries.remove(index)?;
+            cache.allocated_bytes = cache.allocated_bytes.saturating_sub(cached.allocated_bytes);
+            let context = cached.context.take()?;
+            let mtp_runtime = cached.mtp_runtime.take();
+            Some((context, mtp_runtime, cached.tokens))
+        })
+    }
+
+    fn store_hot_context(
+        context: LlamaContext<'_>,
+        mtp_runtime: Option<mtp::MtpRuntime<'_>>,
+        model: Arc<LlamaModel>,
+        draft_model: Arc<LlamaModel>,
+        model_path: &str,
+        cache_key: String,
+        context_key: String,
+        tokens: Vec<LlamaToken>,
+    ) -> usize {
+        let mut allocated_bytes = context.allocated_memory_size();
+        if let Some(runtime) = mtp_runtime.as_ref() {
+            allocated_bytes = allocated_bytes
+                .saturating_add(runtime.draft.allocated_memory_size())
+                .saturating_add(runtime.carry_hidden.capacity() * std::mem::size_of::<f32>())
+                .saturating_add(runtime.h_last.capacity() * std::mem::size_of::<f32>())
+                .saturating_add(runtime.pending.capacity() * std::mem::size_of::<LlamaToken>());
+        }
+        allocated_bytes =
+            allocated_bytes.saturating_add(tokens.capacity() * std::mem::size_of::<LlamaToken>());
+        if allocated_bytes == 0 || allocated_bytes > HOT_CONTEXT_CACHE_MAX_BYTES {
+            return 0;
+        }
+        // The contexts only borrow the models stored beside them. The worker is
+        // single-threaded, and field order drops both contexts before either Arc.
+        let context =
+            unsafe { std::mem::transmute::<LlamaContext<'_>, LlamaContext<'static>>(context) };
+        let mtp_runtime = mtp_runtime.map(|runtime| unsafe {
+            std::mem::transmute::<mtp::MtpRuntime<'_>, mtp::MtpRuntime<'static>>(runtime)
+        });
+        HOT_TEXT_CONTEXTS.with(|slot| {
+            let mut cache = slot.borrow_mut();
+            if let Some(index) = cache
+                .entries
+                .iter()
+                .position(|cached| cached.cache_key == cache_key)
+            {
+                if let Some(replaced) = cache.entries.remove(index) {
+                    cache.allocated_bytes = cache
+                        .allocated_bytes
+                        .saturating_sub(replaced.allocated_bytes);
+                }
+            }
+            let evicted = cache_eviction_count(
+                cache.allocated_bytes,
+                allocated_bytes,
+                cache.entries.iter().map(|cached| cached.allocated_bytes),
+                HOT_CONTEXT_CACHE_MAX_BYTES,
+                None,
+            );
+            for _ in 0..evicted {
+                let cached = cache
+                    .entries
+                    .pop_front()
+                    .expect("eviction count cannot exceed cache entries");
+                cache.allocated_bytes =
+                    cache.allocated_bytes.saturating_sub(cached.allocated_bytes);
+            }
+            cache.allocated_bytes = cache.allocated_bytes.saturating_add(allocated_bytes);
+            cache.entries.push_back(HotTextContext {
+                mtp_runtime,
+                context: Some(context),
+                model,
+                draft_model,
+                model_path: model_path.to_string(),
+                cache_key,
+                context_key,
+                tokens,
+                allocated_bytes,
+            });
+            evicted
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn text_context_key(
+        n_ctx: u32,
+        n_batch: u32,
+        n_ubatch: Option<u32>,
+        n_outputs_max: u32,
+        n_threads: Option<u32>,
+        n_threads_batch: Option<u32>,
+        offload_kqv: Option<bool>,
+        swa_full: Option<bool>,
+        kv_type: Option<&str>,
+        flash_attention: llama_flash_attn_type,
+        rope_freq_base: Option<f64>,
+        rope_freq_scale: Option<f64>,
+        mtp_active: bool,
+        mtp_draft_tokens: u32,
+    ) -> String {
+        format!(
+            "ctx={n_ctx};batch={n_batch};ubatch={n_ubatch:?};outputs={n_outputs_max};threads={n_threads:?};threads_batch={n_threads_batch:?};kqv={offload_kqv:?};swa={swa_full:?};kv={};flash={};rope_base={rope_freq_base:?};rope_scale={rope_freq_scale:?};mtp={mtp_active};mtp_n={mtp_draft_tokens}",
+            kv_type.unwrap_or("f16"),
+            flash_attention_policy_label(flash_attention),
+        )
+    }
+
+    fn common_token_prefix(left: &[LlamaToken], right: &[LlamaToken]) -> usize {
+        left.iter()
+            .zip(right.iter())
+            .take_while(|(left, right)| left == right)
+            .count()
+    }
 
     trait GenerationSampler<Ctx> {
         fn sample_generated_token(&mut self, ctx: &Ctx, idx: i32)
@@ -218,10 +541,58 @@ mod desktop {
         }
     }
 
-    fn parse_local_enable_thinking(body: &Value, reasoning_format: Option<&str>) -> bool {
-        body.get("enable_thinking")
-            .and_then(|v| v.as_bool())
-            .unwrap_or_else(|| reasoning_format.is_some())
+    fn message_thinking_directive(messages: &[Value]) -> Option<bool> {
+        let message = messages
+            .iter()
+            .rev()
+            .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))?;
+        let text = match message.get("content")? {
+            Value::String(text) => text.clone(),
+            Value::Array(parts) => parts
+                .iter()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => return None,
+        };
+        match text
+            .split_whitespace()
+            .last()?
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "/think" => Some(true),
+            "/no_think" => Some(false),
+            _ => None,
+        }
+    }
+
+    fn parse_local_thinking_options(
+        body: &Value,
+        messages: &[Value],
+        reasoning_format: Option<&str>,
+    ) -> (bool, Option<String>) {
+        let explicit = body
+            .get("enable_thinking")
+            .and_then(Value::as_bool)
+            .or_else(|| {
+                body.get("chat_template_kwargs")
+                    .and_then(Value::as_object)
+                    .and_then(|kwargs| kwargs.get("enable_thinking"))
+                    .and_then(Value::as_bool)
+            });
+        let enable_thinking = message_thinking_directive(messages)
+            .or(explicit)
+            .unwrap_or_else(|| reasoning_format.is_some());
+        let mut kwargs = body
+            .get("chat_template_kwargs")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        kwargs.insert("enable_thinking".to_string(), json!(enable_thinking));
+        let kwargs = serde_json::to_string(&kwargs).ok();
+        (enable_thinking, kwargs)
     }
 
     fn parse_local_parallel_tool_calls(body: &Value) -> bool {
@@ -317,17 +688,15 @@ mod desktop {
         fn parse_value(value: &Value) -> Vec<String> {
             match value {
                 Value::String(text) => {
-                    let trimmed = text.trim();
-                    if trimmed.is_empty() {
+                    if text.is_empty() {
                         Vec::new()
                     } else {
-                        vec![trimmed.to_string()]
+                        vec![text.clone()]
                     }
                 }
                 Value::Array(values) => values
                     .iter()
                     .filter_map(|value| value.as_str())
-                    .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(ToOwned::to_owned)
                     .collect(),
@@ -343,14 +712,56 @@ mod desktop {
         )
     }
 
-    fn earliest_stop_match<'a>(
-        text: &str,
+    struct IncrementalStopMatcher<'a> {
         stop_sequences: &'a [String],
-    ) -> Option<(usize, &'a str)> {
-        stop_sequences
-            .iter()
-            .filter_map(|stop| text.find(stop).map(|index| (index, stop.as_str())))
-            .min_by_key(|(index, _)| *index)
+        max_len: usize,
+    }
+
+    impl<'a> IncrementalStopMatcher<'a> {
+        fn new(stop_sequences: &'a [String]) -> Self {
+            Self {
+                max_len: stop_sequences
+                    .iter()
+                    .map(|stop| stop.len())
+                    .max()
+                    .unwrap_or(0),
+                stop_sequences,
+            }
+        }
+
+        fn find(&self, text: &str, appended_from: usize) -> Option<usize> {
+            if self.max_len == 0 {
+                return None;
+            }
+            let search_start = clamp_to_char_boundary(
+                text,
+                appended_from.saturating_sub(self.max_len.saturating_sub(1)),
+            );
+            self.stop_sequences
+                .iter()
+                .filter_map(|stop| {
+                    text[search_start..]
+                        .find(stop)
+                        .map(|index| search_start + index)
+                })
+                .min()
+        }
+    }
+
+    const STREAM_EMIT_INTERVAL: Duration = Duration::from_millis(32);
+    const STREAM_EMIT_BYTES: usize = 256;
+
+    fn should_flush_stream(
+        pending_bytes: usize,
+        has_flushed: bool,
+        elapsed: Duration,
+        force: bool,
+    ) -> bool {
+        pending_bytes > 0
+            && (force
+                || !has_flushed
+                || pending_bytes >= STREAM_EMIT_BYTES
+                || elapsed >= STREAM_EMIT_INTERVAL)
     }
 
     fn clamp_to_char_boundary(text: &str, index: usize) -> usize {
@@ -632,10 +1043,13 @@ mod desktop {
         }
     }
 
-    pub async fn handle_local_request(
-        app: AppHandle,
-        req: ApiRequest,
-    ) -> Result<ApiResponse, String> {
+    fn handle_local_request_sync(app: AppHandle, req: ApiRequest) -> Result<ApiResponse, String> {
+        let prompt_cache_key = req
+            .cache_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(ToOwned::to_owned);
         let body = req
             .body
             .as_ref()
@@ -665,11 +1079,24 @@ mod desktop {
         });
         let tool_choice = body.get("tool_choice");
         let reasoning_format = parse_local_reasoning_format(body);
+        let thinking_directive = message_thinking_directive(messages);
+        let (enable_thinking, chat_template_kwargs) =
+            parse_local_thinking_options(body, messages, reasoning_format.as_deref());
         let openai_compat_options = OpenAICompatPromptOptions {
-            enable_thinking: parse_local_enable_thinking(body, reasoning_format.as_deref()),
+            enable_thinking,
+            chat_template_kwargs,
             parallel_tool_calls: parse_local_parallel_tool_calls(body),
             reasoning_format,
         };
+        if let Some(enabled) = thinking_directive {
+            log_info(
+                &app,
+                "llama_cpp",
+                format!(
+                    "local thinking mode overridden by trailing message directive: enable_thinking={enabled}"
+                ),
+            );
+        }
         let llama_mmproj_path = body
             .get("llamaMmprojPath")
             .or_else(|| body.get("llama_mmproj_path"))
@@ -927,6 +1354,15 @@ mod desktop {
             .and_then(|v| u32::try_from(v).ok())
             .filter(|v| *v > 0)
             .unwrap_or(512);
+        let llama_ubatch_size = body
+            .get("llamaUbatchSize")
+            .or_else(|| body.get("llama_ubatch_size"))
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u32::try_from(v).ok())
+            .filter(|v| *v > 0);
+        let llama_compute_batch_size = llama_ubatch_size
+            .unwrap_or(llama_batch_size)
+            .min(llama_batch_size);
         let llama_seed = body
             .get("llamaSeed")
             .or_else(|| body.get("llama_seed"))
@@ -1027,6 +1463,7 @@ mod desktop {
             .and_then(|v| u32::try_from(v).ok())
             .filter(|v| *v > 0);
         let requested_batch_limit = llama_batch_size;
+        let requested_ubatch_limit = llama_ubatch_size;
 
         let request_id = req.request_id.clone();
         let stream = req.stream.unwrap_or(false);
@@ -1048,10 +1485,21 @@ mod desktop {
 
         let mut output = String::new();
         let mut prompt_tokens = 0u64;
+        let mut cached_prompt_tokens = 0u64;
+        let mut prompt_cache_hit = false;
+        let mut prompt_cache_evictions = 0usize;
         let mut completion_tokens = 0u64;
-        let inference_started_at = Instant::now();
+        let request_started_at = Instant::now();
         let mut first_token_ms: Option<u64> = None;
         let mut generation_elapsed_ms: Option<u64> = None;
+        let mut generation_elapsed_seconds: Option<f64> = None;
+        let mut native_prompt_eval_ms: Option<f64> = None;
+        let mut native_prompt_eval_tokens: Option<u64> = None;
+        let mut native_prompt_eval_tps: Option<f64> = None;
+        let mut native_draft_prompt_eval_ms: Option<f64> = None;
+        let mut native_generation_compute_ms: Option<f64> = None;
+        let mut native_generation_tps: Option<f64> = None;
+        let mut app_generation_overhead_ms: Option<f64> = None;
         let mut metric_samples: Vec<Value> = Vec::new();
         let mut finish_reason = "stop";
         let mut stream_emitted_len = 0usize;
@@ -1063,14 +1511,27 @@ mod desktop {
             "modelPath": model_path,
             "requestedContext": requested_context,
             "requestedBatchLimit": requested_batch_limit,
+            "requestedUbatchLimit": requested_ubatch_limit,
             "requestedGpuLayers": llama_gpu_layers,
             "targetNewTokens": max_tokens,
+            "thinkingEnabled": openai_compat_options.enable_thinking,
+            "thinkingDirective": thinking_directive.map(|enabled| if enabled { "/think" } else { "/no_think" }),
         });
 
         const KV_LAYER_RETRY_PREFIX: &str = "__kv_layer_retry__:";
         let mut run_generation = |forced_smart_gpu_layers: Option<u32>| -> Result<(), String> {
             check_abort_signal(abort_rx.as_mut())?;
             failure_stage = "load_engine";
+            cached_prompt_tokens = 0;
+            prompt_cache_hit = false;
+            prompt_cache_evictions = 0;
+            native_prompt_eval_ms = None;
+            native_prompt_eval_tokens = None;
+            native_prompt_eval_tps = None;
+            native_draft_prompt_eval_ms = None;
+            native_generation_compute_ms = None;
+            native_generation_tps = None;
+            app_generation_overhead_ms = None;
             if forced_smart_gpu_layers.is_some() {
                 for field in [
                     "actualGpuLayersUsed",
@@ -1087,6 +1548,12 @@ mod desktop {
             // Planning reads free RAM/VRAM, so a resident model (including the
             // first attempt of a KV-aware retry) must not count against the
             // budget or skew the per-device split of the model replacing it.
+            if forced_smart_gpu_layers.is_some() {
+                discard_hot_context();
+            } else {
+                discard_hot_context_if_model_differs(model_path);
+            }
+            let hot_context_resident = hot_context_matches_model_path(model_path);
             if engine::unload_engine_if_model_differs(&app, model_path)? {
                 log_info(
                     &app,
@@ -1101,6 +1568,15 @@ mod desktop {
             let multi_gpu_active = llama_multi_gpu_enabled
                 && llama_gpu_device_ids.len() >= 2
                 && llama_single_gpu_device_id.is_none();
+            let native_fit_request = llama_gpu_layers.is_none()
+                && forced_smart_gpu_layers.is_none()
+                && !multi_gpu_active
+                && llama_mmproj_path.is_none()
+                && !llama_mtp_enabled
+                && requested_context.is_some();
+            if native_fit_request && !hot_context_resident {
+                engine::unload_engine(&app)?;
+            }
             // KV cache placement (multi-GPU only): drives both planning and the
             // runtime context's offload_kqv. "pin" makes the chosen GPU the main
             // device for shared scratch buffers; under layer split each layer's
@@ -1251,12 +1727,31 @@ mod desktop {
             let mut effective_gpu_layers = llama_gpu_layers;
             let mut smart_gpu_layer_candidates: Option<Vec<u32>> = None;
             let mut smart_kv_aware_layer_estimate: Option<u32> = None;
+            let mut native_fit_plan: Option<NativeFitPlan> = None;
             let cached_runtime_report =
                 crate::storage_manager::models::model_get_llama_runtime_report(&app, model_path)
                     .ok()
                     .flatten();
 
             let backend_supports_gpu_offload = shared_backend()?.supports_gpu_offload();
+            if backend_supports_gpu_offload && !manual_distribution {
+                if let Some(requested) = llama_gpu_layers {
+                    if let Ok(metadata) = offload::load_model_metadata(model_path) {
+                        let normalized = metadata.normalize_requested_gpu_layers(requested);
+                        if normalized != requested {
+                            log_info(
+                                &app,
+                                "llama_cpp",
+                                format!(
+                                    "normalized requested GPU layers from {} to {} to include the output layer",
+                                    requested, normalized
+                                ),
+                            );
+                        }
+                        effective_gpu_layers = Some(normalized);
+                    }
+                }
+            }
             let llama_mtp_bundled = llama_mtp_enabled && mtp::model_has_mtp(model_path);
             let llama_mtp_external_path = if llama_mtp_enabled && !llama_mtp_bundled {
                 llama_mtp_model_path
@@ -1294,6 +1789,10 @@ mod desktop {
 
             if manual_distribution && backend_supports_gpu_offload {
                 // Manual mode: fixed per-GPU layer counts, no smart backoff ladder.
+                let manual_total_layers = offload::load_model_metadata(model_path)
+                    .ok()
+                    .map(|metadata| metadata.offload_layer_count())
+                    .unwrap_or_else(|| manual_layers_aligned.iter().copied().sum());
                 log_info(
                     &app,
                     "llama_cpp",
@@ -1313,7 +1812,7 @@ mod desktop {
                     let gib = 1024.0 * 1024.0 * 1024.0;
                     let bytes_per_layer = metadata
                         .model_size_bytes
-                        .checked_div(u64::from(metadata.layer_count.max(1)))
+                        .checked_div(u64::from(metadata.model_layer_count()))
                         .unwrap_or(0);
                     for (position, layers) in manual_layers_aligned.iter().enumerate() {
                         let projected = bytes_per_layer.saturating_mul(u64::from(*layers));
@@ -1342,7 +1841,7 @@ mod desktop {
                 let dist = offload::plan_multi_gpu_distribution(
                     "manual",
                     &device_free_aligned,
-                    u32::MAX,
+                    manual_total_layers,
                     0,
                     0,
                     0,
@@ -1361,7 +1860,7 @@ mod desktop {
                     available_memory_bytes,
                     available_vram_bytes,
                     requested_context,
-                    llama_batch_size,
+                    llama_compute_batch_size,
                     resolved_offload_kqv,
                     llama_kv_type_raw.as_deref(),
                     resolved_flash_attention_policy,
@@ -1410,6 +1909,14 @@ mod desktop {
                             .and_then(|v| v.as_str());
                         let planning_config_matches =
                             cached_planning_config == Some(smart_offload_planning_config.as_str());
+                        let cached_total_layers = report
+                            .get("smartOffloadTotalLayers")
+                            .and_then(|value| value.as_u64())
+                            .and_then(|value| u32::try_from(value).ok());
+                        let total_layers_match =
+                            cached_total_layers == Some(smart_offload_plan.total_layers);
+                        let context_bucket_matches =
+                            hot_context_resident || bucket == current_context_bucket;
                         // A run that fell back to RAM KV proves its layer count
                         // does NOT fit with GPU KV; reusing it would repeat the
                         // fallback forever.
@@ -1419,19 +1926,25 @@ mod desktop {
                             .unwrap_or(false);
                         let cached_vram_budget =
                             report.get("availableVramBytes").and_then(|v| v.as_u64());
-                        let vram_budget_matches = match (cached_vram_budget, available_vram_bytes) {
-                            (Some(cached), Some(current)) => {
-                                cached.abs_diff(current) <= current / 20
-                            }
-                            _ => true,
-                        };
-                        if !planning_config_matches || cached_kqv_fallback || !vram_budget_matches {
+                        let vram_budget_matches = hot_context_resident
+                            || match (cached_vram_budget, available_vram_bytes) {
+                                (Some(cached), Some(current)) => {
+                                    cached.abs_diff(current) <= current / 20
+                                }
+                                _ => true,
+                            };
+                        if !planning_config_matches
+                            || !total_layers_match
+                            || cached_kqv_fallback
+                            || !vram_budget_matches
+                        {
                             log_info(
                                 &app,
                                 "llama_cpp",
                                 format!(
-                                    "smart gpu offload cache invalidated: config_match={} kqv_fallback={} vram_budget_match={}",
+                                    "smart gpu offload cache invalidated: config_match={} total_layers_match={} kqv_fallback={} vram_budget_match={}",
                                     planning_config_matches,
+                                    total_layers_match,
                                     cached_kqv_fallback,
                                     vram_budget_matches
                                 ),
@@ -1439,8 +1952,9 @@ mod desktop {
                         }
                         if cached_status == Some("succeeded")
                             && cached_backend_path == Some("gpu_offload")
-                            && bucket == current_context_bucket
+                            && context_bucket_matches
                             && planning_config_matches
+                            && total_layers_match
                             && !cached_kqv_fallback
                             && vram_budget_matches
                         {
@@ -1491,6 +2005,11 @@ mod desktop {
                         llama_priority_vram_limit_bytes,
                     ));
                 }
+                update_runtime_report_field(
+                    &mut runtime_report,
+                    "smartOffloadTotalLayers",
+                    json!(smart_offload_plan.total_layers),
+                );
                 update_runtime_report_field(
                     &mut runtime_report,
                     "smartOffloadPlannedContext",
@@ -1566,14 +2085,153 @@ mod desktop {
                 );
             }
 
+            let native_fit_eligible =
+                native_fit_request && backend_supports_gpu_offload && !hot_context_resident;
+            if native_fit_eligible {
+                if let Some(fit_context) = requested_context {
+                    let fit_batch = fit_context.min(llama_batch_size).max(1);
+                    let mut fit_context_params = LlamaContextParams::default()
+                        .with_n_ctx(NonZeroU32::new(fit_context))
+                        .with_n_batch(fit_batch)
+                        .with_n_outputs_max(1)
+                        .with_flash_attention_policy(resolved_flash_attention_policy);
+                    if let Some(n_ubatch) = llama_ubatch_size {
+                        fit_context_params =
+                            fit_context_params.with_n_ubatch(n_ubatch.min(fit_batch));
+                    }
+                    if let Some(n_threads) = llama_threads {
+                        fit_context_params = fit_context_params.with_n_threads(n_threads as i32);
+                    }
+                    if let Some(n_threads_batch) = llama_threads_batch {
+                        fit_context_params =
+                            fit_context_params.with_n_threads_batch(n_threads_batch as i32);
+                    }
+                    if let Some(offload) = resolved_offload_kqv {
+                        fit_context_params = fit_context_params.with_offload_kqv(offload);
+                    }
+                    if let Some(swa_full) = llama_swa_full {
+                        fit_context_params = fit_context_params.with_swa_full(swa_full);
+                    }
+                    if let Some(kv_type) = llama_kv_type {
+                        fit_context_params =
+                            fit_context_params.with_type_k(kv_type).with_type_v(kv_type);
+                    }
+                    if let Some(base) = llama_rope_freq_base {
+                        fit_context_params = fit_context_params.with_rope_freq_base(base as f32);
+                    }
+                    if let Some(scale) = llama_rope_freq_scale {
+                        fit_context_params = fit_context_params.with_rope_freq_scale(scale as f32);
+                    }
+                    let fit_devices = llama_single_gpu_device_id
+                        .map(|device_id| vec![device_id])
+                        .unwrap_or_default();
+                    match fit_model_params(
+                        model_path,
+                        &fit_devices,
+                        fit_context_params,
+                        fit_context,
+                    ) {
+                        Ok(plan) => {
+                            let mut candidates = vec![plan.n_gpu_layers];
+                            if let Some(fallbacks) = smart_gpu_layer_candidates.take() {
+                                candidates.extend(
+                                    fallbacks
+                                        .into_iter()
+                                        .filter(|layers| *layers != plan.n_gpu_layers),
+                                );
+                            }
+                            effective_gpu_layers = Some(plan.n_gpu_layers);
+                            smart_gpu_layer_candidates = Some(candidates.clone());
+                            update_runtime_report_field(
+                                &mut runtime_report,
+                                "nativeFitApplied",
+                                json!(true),
+                            );
+                            update_runtime_report_field(
+                                &mut runtime_report,
+                                "nativeFitContext",
+                                json!(plan.n_ctx),
+                            );
+                            update_runtime_report_field(
+                                &mut runtime_report,
+                                "nativeFitGpuLayers",
+                                json!(plan.n_gpu_layers),
+                            );
+                            update_runtime_report_field(
+                                &mut runtime_report,
+                                "nativeFitMarginBytes",
+                                json!(NATIVE_FIT_MARGIN_BYTES),
+                            );
+                            update_runtime_report_field(
+                                &mut runtime_report,
+                                "nativeFitTensorSplit",
+                                json!(plan.tensor_split.clone()),
+                            );
+                            log_info(
+                                &app,
+                                "llama_cpp",
+                                format!(
+                                    "llama.cpp native fit selected context={} gpu_layers={} candidates={:?}",
+                                    plan.n_ctx, plan.n_gpu_layers, candidates
+                                ),
+                            );
+                            native_fit_plan = Some(plan);
+                        }
+                        Err(err) => {
+                            update_runtime_report_field(
+                                &mut runtime_report,
+                                "nativeFitApplied",
+                                json!(false),
+                            );
+                            update_runtime_report_field(
+                                &mut runtime_report,
+                                "nativeFitError",
+                                json!(err.clone()),
+                            );
+                            log_warn(
+                                &app,
+                                "llama_cpp",
+                                format!(
+                                    "llama.cpp native fit unavailable; retaining conservative planner: {err}"
+                                ),
+                            );
+                        }
+                    }
+                }
+            } else if native_fit_request && hot_context_resident {
+                if let Some(report) = cached_runtime_report.as_ref() {
+                    for field in [
+                        "nativeFitApplied",
+                        "nativeFitContext",
+                        "nativeFitGpuLayers",
+                        "nativeFitMarginBytes",
+                        "nativeFitTensorSplit",
+                        "nativeFitError",
+                    ] {
+                        if let Some(value) = report.get(field) {
+                            update_runtime_report_field(&mut runtime_report, field, value.clone());
+                        }
+                    }
+                }
+                log_info(
+                    &app,
+                    "llama_cpp",
+                    "reusing resident llama.cpp model and context without refitting parameters",
+                );
+            }
+
             check_abort_signal(abort_rx.as_mut())?;
             if multi_gpu_active && multi_gpu_distribution.is_none() {
                 // Smart planning did not run (explicit layers / strict / no offload):
                 // still honor the chosen strategy with whatever total we have.
+                let max_gpu_layers = offload::load_model_metadata(model_path)
+                    .ok()
+                    .map(|metadata| metadata.offload_layer_count())
+                    .unwrap_or(u32::MAX);
                 multi_gpu_distribution = Some(offload::plan_multi_gpu_distribution(
                     &distribution_mode,
                     &device_free_aligned,
-                    u32::MAX,
+                    max_gpu_layers,
                     0,
                     0,
                     effective_gpu_layers.unwrap_or(0),
@@ -1617,6 +2275,7 @@ mod desktop {
                 model_path,
                 effective_gpu_layers,
                 smart_gpu_layer_candidates.as_deref(),
+                native_fit_plan.as_ref(),
                 LlamaGpuConfig {
                     multi_gpu_enabled: multi_gpu_active,
                     device_ids: if multi_gpu_active {
@@ -1665,7 +2324,7 @@ mod desktop {
                     total_layer_count: if multi_gpu_active {
                         offload::load_model_metadata(model_path)
                             .ok()
-                            .map(|metadata| metadata.layer_count)
+                            .map(|metadata| metadata.model_layer_count())
                     } else {
                         None
                     },
@@ -2027,11 +2686,7 @@ mod desktop {
                     stop_sequences.push(stop.clone());
                 }
             }
-            let max_stop_sequence_len = stop_sequences
-                .iter()
-                .map(|stop| stop.len())
-                .max()
-                .unwrap_or(0);
+            let stop_matcher = IncrementalStopMatcher::new(&stop_sequences);
             if built_prompt.used_raw_completion_fallback {
                 log_warn(
                     &app,
@@ -2219,6 +2874,9 @@ mod desktop {
                 .filter(|(attempt_ctx, _)| *attempt_ctx != requested_ctx_size)
                 .collect();
             let can_fallback_kqv_to_ram = !llama_strict_mode && preferred_offload_kqv == Some(true);
+            let hot_draft_model = llama_mtp_draft_model
+                .clone()
+                .unwrap_or_else(|| engine.model.clone());
             let mut attempt_groups: Vec<(Option<bool>, Vec<(u32, u32)>)> = Vec::new();
             if !same_ctx_attempts.is_empty() {
                 attempt_groups.push((preferred_offload_kqv, same_ctx_attempts.clone()));
@@ -2237,6 +2895,9 @@ mod desktop {
                 ));
             }
             let mut ctx: Option<_> = None;
+            let mut reused_mtp_runtime = None;
+            let mut cached_context_tokens = None;
+            let mut active_context_key = None;
             failure_stage = "create_context";
 
             'context_attempt_groups: for (group_index, (attempt_offload_kqv, attempts)) in
@@ -2266,9 +2927,19 @@ mod desktop {
                 }
 
                 for (attempt_ctx, attempt_batch) in attempts {
+                    let attempt_ubatch = llama_ubatch_size.map(|value| value.min(attempt_batch));
+                    let n_outputs_max = if llama_mtp_active {
+                        llama_mtp_draft_tokens.saturating_add(1).min(attempt_batch)
+                    } else {
+                        1
+                    };
                     let mut ctx_params = LlamaContextParams::default()
                         .with_n_ctx(NonZeroU32::new(attempt_ctx))
-                        .with_n_batch(attempt_batch);
+                        .with_n_batch(attempt_batch)
+                        .with_n_outputs_max(n_outputs_max);
+                    if let Some(n_ubatch) = attempt_ubatch {
+                        ctx_params = ctx_params.with_n_ubatch(n_ubatch);
+                    }
                     if let Some(n_threads) = llama_threads {
                         ctx_params = ctx_params.with_n_threads(n_threads as i32);
                     }
@@ -2300,20 +2971,73 @@ mod desktop {
                         &app,
                         "llama_cpp",
                         format!(
-                            "creating context attempt: ctx={} batch={} gpu_layers={:?} offload_kqv={:?} flash_attention_policy={:?}",
+                            "creating context attempt: ctx={} batch={} ubatch={:?} outputs={} gpu_layers={:?} offload_kqv={:?} flash_attention_policy={:?}",
                             attempt_ctx,
                             attempt_batch,
+                            attempt_ubatch,
+                            n_outputs_max,
                             actual_gpu_layers_used,
                             attempt_offload_kqv,
                             resolved_flash_attention_policy
                         ),
                     );
 
+                    let attempt_context_key = text_context_key(
+                        attempt_ctx,
+                        attempt_batch,
+                        attempt_ubatch,
+                        n_outputs_max,
+                        llama_threads,
+                        llama_threads_batch,
+                        attempt_offload_kqv,
+                        llama_swa_full,
+                        llama_kv_type_raw.as_deref(),
+                        resolved_flash_attention_policy,
+                        llama_rope_freq_base,
+                        llama_rope_freq_scale,
+                        llama_mtp_active,
+                        llama_mtp_draft_tokens,
+                    );
+                    if !use_vision {
+                        if let Some(cache_key) = prompt_cache_key.as_deref() {
+                            if let Some((cached_ctx, cached_mtp, cached_tokens)) = take_hot_context(
+                                &engine.model,
+                                &hot_draft_model,
+                                cache_key,
+                                &attempt_context_key,
+                            ) {
+                                prompt_cache_hit = true;
+                                resolved_ctx_size = attempt_ctx;
+                                resolved_n_batch = attempt_batch;
+                                resolved_offload_kqv = attempt_offload_kqv;
+                                reused_mtp_runtime = cached_mtp;
+                                cached_context_tokens = Some(cached_tokens);
+                                active_context_key = Some(attempt_context_key);
+                                ctx = Some(cached_ctx);
+                                log_info(
+                                    &app,
+                                    "llama_cpp",
+                                    "reusing hot llama.cpp context for prompt prefix cache",
+                                );
+                                break 'context_attempt_groups;
+                            }
+                        }
+                    }
+                    let context_memory_headroom = if actual_gpu_layers_used.unwrap_or(0) > 0 {
+                        get_available_vram_bytes()
+                    } else {
+                        get_available_memory_bytes()
+                    }
+                    .and_then(|bytes| usize::try_from(bytes).ok());
+                    prompt_cache_evictions = prompt_cache_evictions
+                        .saturating_add(prepare_hot_context_capacity(context_memory_headroom));
+
                     match model.new_context(backend, ctx_params) {
                         Ok(created) => {
                             resolved_ctx_size = attempt_ctx;
                             resolved_n_batch = attempt_batch;
                             resolved_offload_kqv = attempt_offload_kqv;
+                            active_context_key = Some(attempt_context_key);
                             kqv_fallback_activated = preferred_offload_kqv == Some(true)
                                 && attempt_offload_kqv == Some(false);
                             if kqv_fallback_activated {
@@ -2389,10 +3113,13 @@ mod desktop {
             })?;
             ctx_size = resolved_ctx_size;
             let n_batch = resolved_n_batch;
+            let n_ubatch = ctx.n_ubatch();
             let context_fallback_activated =
                 (ctx_size, n_batch) != (requested_ctx_size, initial_batch);
 
-            let mut mtp_runtime = if llama_mtp_active {
+            let mut mtp_runtime = if let Some(runtime) = reused_mtp_runtime {
+                Some(runtime)
+            } else if llama_mtp_active {
                 let mut draft_params = LlamaContextParams::default()
                     .with_n_ctx(NonZeroU32::new(resolved_ctx_size))
                     .with_n_batch(resolved_n_batch)
@@ -2548,8 +3275,10 @@ mod desktop {
                     "initialContextCandidate": requested_ctx_size,
                     "actualContextUsed": ctx_size,
                     "requestedBatchLimit": llama_batch_size,
+                    "requestedUbatchLimit": llama_ubatch_size,
                     "initialBatchCandidate": initial_batch,
                     "actualNBatchUsed": n_batch,
+                    "actualNUbatchUsed": n_ubatch,
                     "requestedGpuLayers": llama_gpu_layers,
                     "actualGpuLayersUsed": actual_gpu_layers_used,
                     "actualKvTypeUsed": kv_type_label(llama_kv_type_raw.as_deref()),
@@ -2582,6 +3311,7 @@ mod desktop {
             });
             update_runtime_report_field(&mut runtime_report, "actualContextUsed", json!(ctx_size));
             update_runtime_report_field(&mut runtime_report, "actualBatchUsed", json!(n_batch));
+            update_runtime_report_field(&mut runtime_report, "actualUbatchUsed", json!(n_ubatch));
             update_runtime_report_field(
                 &mut runtime_report,
                 "actualKvTypeUsed",
@@ -2621,7 +3351,7 @@ mod desktop {
                 &app,
                 "llama_cpp",
                 format!(
-                    "llama runtime resolved: prompt_mode={} template_source={} fallback_prompt={} bos={} ctx={} n_batch={} gpu_layers={:?} kv_type={} offload_kqv={} backend_path={} flash_attention={} smart_gpu_fallback={} kqv_fallback={} context_fallback={}",
+                    "llama runtime resolved: prompt_mode={} template_source={} fallback_prompt={} bos={} ctx={} n_batch={} n_ubatch={} gpu_layers={:?} kv_type={} offload_kqv={} backend_path={} flash_attention={} smart_gpu_fallback={} kqv_fallback={} context_fallback={}",
                     prompt_mode_label(built_prompt.prompt_mode),
                     built_prompt
                         .applied_template_source
@@ -2631,6 +3361,7 @@ mod desktop {
                     add_bos_label(prompt_add_bos),
                     ctx_size,
                     n_batch,
+                    n_ubatch,
                     actual_gpu_layers_used,
                     kv_type_label(llama_kv_type_raw.as_deref()),
                     offload_kqv_mode_label(resolved_offload_kqv),
@@ -2654,13 +3385,123 @@ mod desktop {
 
             failure_stage = "prompt_evaluation";
             check_abort_signal(abort_rx.as_mut())?;
+            ctx.reset_timings();
+            if let Some(runtime) = mtp_runtime.as_mut() {
+                runtime.draft.reset_timings();
+            }
             let batch_size = n_batch as usize;
             let mut batch = LlamaBatch::new(batch_size, 1);
             let mut global_pos: i32 = 0;
+            let mut context_tokens: Option<Vec<LlamaToken>> = None;
             let prompt_last_logits_index = match prepared_prompt {
                 PreparedPrompt::Text(tokens) => {
                     let tokens_len = tokens.len();
                     let mut chunk_start = 0usize;
+                    if let Some(cached_tokens) = cached_context_tokens.take() {
+                        let common_prefix = common_token_prefix(&cached_tokens, &tokens);
+                        let mut rewind_from = common_prefix.saturating_sub(1);
+                        let rewind_succeeded;
+
+                        if let Some(runtime) = mtp_runtime.as_mut() {
+                            if !runtime.shared && common_prefix >= 2 {
+                                let carry_position = common_prefix - 2;
+                                rewind_from = common_prefix - 1;
+                                rewind_succeeded = ctx
+                                    .clear_kv_cache_seq(Some(0), Some(carry_position as u32), None)
+                                    .map_err(|e| {
+                                        crate::utils::err_msg(
+                                            module_path!(),
+                                            line!(),
+                                            format!("Failed to rewind prompt KV cache: {e}"),
+                                        )
+                                    })?;
+                                if rewind_succeeded {
+                                    mtp::reset_for_prompt_reuse(runtime, rewind_from as u32)
+                                        .map_err(|e| {
+                                            crate::utils::err_msg(module_path!(), line!(), e)
+                                        })?;
+                                    batch.clear();
+                                    batch
+                                        .add(
+                                            tokens[carry_position],
+                                            carry_position as i32,
+                                            &[0],
+                                            false,
+                                        )
+                                        .map_err(|e| {
+                                            crate::utils::err_msg(
+                                                module_path!(),
+                                                line!(),
+                                                format!(
+                                                    "Failed to rebuild prompt-cache carry token: {e}"
+                                                ),
+                                            )
+                                        })?;
+                                    ctx.decode(&mut batch).map_err(|e| {
+                                        crate::utils::err_msg(
+                                            module_path!(),
+                                            line!(),
+                                            format!(
+                                                "Failed to rebuild prompt-cache carry state: {e}"
+                                            ),
+                                        )
+                                    })?;
+                                    mtp::set_prefill_carry_from_target(runtime, &ctx, 0).map_err(
+                                        |e| crate::utils::err_msg(module_path!(), line!(), e),
+                                    )?;
+                                    cached_prompt_tokens = carry_position as u64;
+                                }
+                            } else {
+                                rewind_succeeded = ctx
+                                    .clear_kv_cache_seq(Some(0), Some(rewind_from as u32), None)
+                                    .map_err(|e| {
+                                        crate::utils::err_msg(
+                                            module_path!(),
+                                            line!(),
+                                            format!("Failed to rewind prompt KV cache: {e}"),
+                                        )
+                                    })?;
+                                if rewind_succeeded {
+                                    mtp::reset_for_prompt_reuse(runtime, rewind_from as u32)
+                                        .map_err(|e| {
+                                            crate::utils::err_msg(module_path!(), line!(), e)
+                                        })?;
+                                    cached_prompt_tokens = rewind_from as u64;
+                                }
+                            }
+                        } else {
+                            rewind_succeeded = ctx
+                                .clear_kv_cache_seq(Some(0), Some(rewind_from as u32), None)
+                                .map_err(|e| {
+                                    crate::utils::err_msg(
+                                        module_path!(),
+                                        line!(),
+                                        format!("Failed to rewind prompt KV cache: {e}"),
+                                    )
+                                })?;
+                            if rewind_succeeded {
+                                cached_prompt_tokens = rewind_from as u64;
+                            }
+                        }
+
+                        if rewind_succeeded {
+                            chunk_start = rewind_from;
+                            global_pos = rewind_from as i32;
+                        } else {
+                            ctx.clear_kv_cache();
+                            if let Some(runtime) = mtp_runtime.as_mut() {
+                                mtp::reset_for_prompt_reuse(runtime, 0).map_err(|e| {
+                                    crate::utils::err_msg(module_path!(), line!(), e)
+                                })?;
+                            }
+                            cached_prompt_tokens = 0;
+                            log_warn(
+                                &app,
+                                "llama_cpp",
+                                "prompt KV cache could not be partially rewound; evaluating the full prompt",
+                            );
+                        }
+                    }
                     while chunk_start < tokens_len {
                         check_abort_signal(abort_rx.as_mut())?;
                         let chunk_end = (chunk_start + batch_size).min(tokens_len);
@@ -2702,6 +3543,7 @@ mod desktop {
                         global_pos += (chunk_end - chunk_start) as i32;
                         chunk_start = chunk_end;
                     }
+                    context_tokens = Some(tokens);
                     batch.n_tokens().saturating_sub(1)
                 }
                 PreparedPrompt::Vision(chunks) => {
@@ -2737,9 +3579,35 @@ mod desktop {
             update_runtime_report_field(&mut runtime_report, "promptTokens", json!(prompt_tokens));
             update_runtime_report_field(
                 &mut runtime_report,
+                "cachedPromptTokens",
+                json!(cached_prompt_tokens),
+            );
+            update_runtime_report_field(
+                &mut runtime_report,
                 "promptPositions",
                 json!(u64::try_from(global_pos).ok()),
             );
+
+            let prompt_timings = ctx.timings();
+            let prompt_eval_ms = prompt_timings.t_p_eval_ms() + prompt_timings.t_eval_ms();
+            let prompt_eval_tokens = i64::from(prompt_timings.n_p_eval())
+                .saturating_add(i64::from(prompt_timings.n_eval()))
+                .max(0) as u64;
+            native_prompt_eval_ms = Some(prompt_eval_ms.max(0.0));
+            native_prompt_eval_tokens = Some(prompt_eval_tokens);
+            native_prompt_eval_tps = if prompt_eval_ms > 0.0 && prompt_eval_tokens > 0 {
+                Some(prompt_eval_tokens as f64 * 1_000.0 / prompt_eval_ms)
+            } else {
+                None
+            };
+            native_draft_prompt_eval_ms = mtp_runtime.as_mut().map(|runtime| {
+                let timings = runtime.draft.timings();
+                (timings.t_p_eval_ms() + timings.t_eval_ms()).max(0.0)
+            });
+            ctx.reset_timings();
+            if let Some(runtime) = mtp_runtime.as_mut() {
+                runtime.draft.reset_timings();
+            }
 
             let prompt_len = global_pos;
             let mut n_cur = prompt_len;
@@ -2835,8 +3703,11 @@ mod desktop {
             let mut reached_stop_sequence = false;
             let mut pending_utf8 = Vec::<u8>::new();
             let mut sample_index = prompt_last_logits_index;
+            let generation_started_at = Instant::now();
             let mut last_heartbeat_at = Instant::now();
             let mut heartbeat_emitted = false;
+            let mut last_stream_flush_at = Instant::now();
+            let mut stream_has_flushed = false;
             failure_stage = "generation";
             while n_cur < target_len {
                 check_abort_signal(abort_rx.as_mut())?;
@@ -2906,8 +3777,9 @@ mod desktop {
                 }
 
                 if !piece.is_empty() {
+                    let appended_from = output.len();
                     output.push_str(&piece);
-                    if let Some((stop_index, _)) = earliest_stop_match(&output, &stop_sequences) {
+                    if let Some(stop_index) = stop_matcher.find(&output, appended_from) {
                         output.truncate(stop_index);
                         reached_stop_sequence = true;
                     }
@@ -2916,17 +3788,23 @@ mod desktop {
                         if stream && stream_emitted_len < output.len() {
                             let safe_emit_end = if reached_stop_sequence {
                                 output.len()
-                            } else if max_stop_sequence_len > 0 {
+                            } else if stop_matcher.max_len > 0 {
                                 clamp_to_char_boundary(
                                     &output,
                                     output
                                         .len()
-                                        .saturating_sub(max_stop_sequence_len.saturating_sub(1)),
+                                        .saturating_sub(stop_matcher.max_len.saturating_sub(1)),
                                 )
                             } else {
                                 output.len()
                             };
-                            if safe_emit_end > stream_emitted_len {
+                            let pending_bytes = safe_emit_end.saturating_sub(stream_emitted_len);
+                            if should_flush_stream(
+                                pending_bytes,
+                                stream_has_flushed,
+                                last_stream_flush_at.elapsed(),
+                                reached_stop_sequence,
+                            ) {
                                 if let Some(ref id) = request_id {
                                     let split = streamed_thinking_parser
                                         .feed(&output[stream_emitted_len..safe_emit_end]);
@@ -2950,23 +3828,32 @@ mod desktop {
                                     }
                                 }
                                 stream_emitted_len = safe_emit_end;
+                                stream_has_flushed = true;
+                                last_stream_flush_at = Instant::now();
                             }
                         }
                     } else if stream {
                         if let Some(parser) = structured_parser.as_mut() {
                             let safe_parse_end = if reached_stop_sequence {
                                 output.len()
-                            } else if max_stop_sequence_len > 0 {
+                            } else if stop_matcher.max_len > 0 {
                                 clamp_to_char_boundary(
                                     &output,
                                     output
                                         .len()
-                                        .saturating_sub(max_stop_sequence_len.saturating_sub(1)),
+                                        .saturating_sub(stop_matcher.max_len.saturating_sub(1)),
                                 )
                             } else {
                                 output.len()
                             };
-                            if safe_parse_end > structured_parsed_len {
+                            let pending_bytes =
+                                safe_parse_end.saturating_sub(structured_parsed_len);
+                            if should_flush_stream(
+                                pending_bytes,
+                                stream_has_flushed,
+                                last_stream_flush_at.elapsed(),
+                                reached_stop_sequence,
+                            ) {
                                 let delta_input = &output[structured_parsed_len..safe_parse_end];
                                 let deltas = parser.update(delta_input, true).map_err(|e| {
                                     structured_output_failure(
@@ -2988,6 +3875,8 @@ mod desktop {
                                     &mut streamed_structured_text,
                                 )?;
                                 structured_parsed_len = safe_parse_end;
+                                stream_has_flushed = true;
+                                last_stream_flush_at = Instant::now();
                             }
                         }
                     }
@@ -3000,15 +3889,18 @@ mod desktop {
 
                 completion_tokens += 1;
                 if first_token_ms.is_none() {
-                    first_token_ms = Some(inference_started_at.elapsed().as_millis() as u64);
+                    first_token_ms = Some(request_started_at.elapsed().as_millis() as u64);
                 }
 
                 if !heartbeat_emitted || last_heartbeat_at.elapsed().as_secs() >= 1 {
                     heartbeat_emitted = true;
                     last_heartbeat_at = Instant::now();
-                    let elapsed_ms = inference_started_at.elapsed().as_millis() as u64;
-                    let tps = if elapsed_ms > 0 {
-                        (completion_tokens as f64) / (elapsed_ms as f64 / 1000.0)
+                    let generation_elapsed = generation_started_at.elapsed();
+                    let elapsed_ms = generation_elapsed.as_millis() as u64;
+                    let elapsed_seconds = generation_elapsed.as_secs_f64();
+                    let has_stable_rate = elapsed_seconds >= 1.0;
+                    let tps = if has_stable_rate {
+                        (completion_tokens as f64) / elapsed_seconds
                     } else {
                         0.0
                     };
@@ -3017,12 +3909,14 @@ mod desktop {
                     } else {
                         0.0
                     };
-                    metric_samples.push(json!({
-                        "tMs": elapsed_ms,
-                        "tokens": completion_tokens,
-                        "tps": tps,
-                        "ctxFill": ctx_fill,
-                    }));
+                    if has_stable_rate {
+                        metric_samples.push(json!({
+                            "tMs": elapsed_ms,
+                            "tokens": completion_tokens,
+                            "tps": tps,
+                            "ctxFill": ctx_fill,
+                        }));
+                    }
                     if let Some(ref id) = request_id {
                         let _ = app.emit(
                             "llm-generation-heartbeat",
@@ -3038,6 +3932,9 @@ mod desktop {
                 }
 
                 if mtp_runtime.is_some() {
+                    if let Some(tokens) = context_tokens.as_mut() {
+                        tokens.push(token);
+                    }
                     n_cur += 1;
                     continue;
                 }
@@ -3059,13 +3956,17 @@ mod desktop {
                         format!("llama_decode failed: {e}"),
                     )
                 })?;
+                if let Some(tokens) = context_tokens.as_mut() {
+                    tokens.push(token);
+                }
                 sample_index = batch.n_tokens() - 1;
             }
 
             if !pending_utf8.is_empty() {
                 let tail = String::from_utf8_lossy(&pending_utf8).to_string();
+                let appended_from = output.len();
                 output.push_str(&tail);
-                if let Some((stop_index, _)) = earliest_stop_match(&output, &stop_sequences) {
+                if let Some(stop_index) = stop_matcher.find(&output, appended_from) {
                     output.truncate(stop_index);
                     reached_stop_sequence = true;
                     finish_reason = "stop";
@@ -3100,7 +4001,28 @@ mod desktop {
                 stream_emitted_len = output.len();
             }
 
-            generation_elapsed_ms = Some(inference_started_at.elapsed().as_millis() as u64);
+            let generation_elapsed = generation_started_at.elapsed();
+            generation_elapsed_ms = Some(generation_elapsed.as_millis() as u64);
+            generation_elapsed_seconds = Some(generation_elapsed.as_secs_f64());
+            let target_generation_timings = ctx.timings();
+            let target_compute_ms =
+                target_generation_timings.t_p_eval_ms() + target_generation_timings.t_eval_ms();
+            let draft_compute_ms = mtp_runtime
+                .as_mut()
+                .map(|runtime| {
+                    let timings = runtime.draft.timings();
+                    timings.t_p_eval_ms() + timings.t_eval_ms()
+                })
+                .unwrap_or(0.0);
+            let compute_ms = (target_compute_ms + draft_compute_ms).max(0.0);
+            native_generation_compute_ms = Some(compute_ms);
+            native_generation_tps = if compute_ms > 0.0 && completion_tokens > 0 {
+                Some(completion_tokens as f64 * 1_000.0 / compute_ms)
+            } else {
+                None
+            };
+            app_generation_overhead_ms =
+                Some((generation_elapsed.as_secs_f64() * 1_000.0 - compute_ms).max(0.0));
 
             if let Some(runtime) = mtp_runtime.as_ref() {
                 let tokens_per_round = if runtime.rounds > 0 {
@@ -3117,16 +4039,21 @@ mod desktop {
                     &app,
                     "llama_cpp",
                     format!(
-                        "MTP stats: rounds={} drafted={} accepted={} tokens_per_round={:.2} draft_acceptance={:.2}",
+                        "MTP stats: rounds={} drafted={} accepted={} tokens_per_round={:.2} draft_acceptance={:.2} configured_draft_n={} final_draft_n={} adaptations={}",
                         runtime.rounds,
                         runtime.drafted,
                         runtime.accepted,
                         tokens_per_round,
-                        draft_acceptance
+                        draft_acceptance,
+                        runtime.draft_n_max,
+                        runtime.draft_n,
+                        runtime.adaptation_count,
                     ),
                 );
                 let stats = MtpStats {
                     draft_tokens: llama_mtp_draft_tokens,
+                    final_draft_tokens: u32::try_from(runtime.draft_n).ok(),
+                    adaptation_count: Some(runtime.adaptation_count),
                     rounds: runtime.rounds,
                     drafted: runtime.drafted,
                     accepted: runtime.accepted,
@@ -3320,6 +4247,48 @@ mod desktop {
                 }
             }
 
+            if let (Some(tokens), Some(context_key)) =
+                (context_tokens.take(), active_context_key.take())
+            {
+                let cache_ready = if llama_mtp_active && mtp_runtime.is_none() {
+                    false
+                } else if let Some(runtime) = mtp_runtime.as_mut() {
+                    match u32::try_from(tokens.len()) {
+                        Ok(token_count) => {
+                            match mtp::truncate_for_prompt_cache(&mut ctx, runtime, token_count) {
+                                Ok(()) => true,
+                                Err(err) => {
+                                    log_warn(
+                                        &app,
+                                        "llama_cpp",
+                                        format!("discarding unusable prompt cache: {err}"),
+                                    );
+                                    false
+                                }
+                            }
+                        }
+                        Err(_) => false,
+                    }
+                } else {
+                    true
+                };
+                if cache_ready {
+                    if let Some(cache_key) = prompt_cache_key.as_ref() {
+                        prompt_cache_evictions =
+                            prompt_cache_evictions.saturating_add(store_hot_context(
+                                ctx,
+                                mtp_runtime.take(),
+                                engine.model.clone(),
+                                hot_draft_model.clone(),
+                                model_path,
+                                cache_key.clone(),
+                                context_key,
+                                tokens,
+                            ));
+                    }
+                }
+            }
+
             Ok(())
         };
         // One-shot retry: when context creation cannot fit the GPU KV cache at
@@ -3432,15 +4401,41 @@ mod desktop {
             return Err(err);
         }
 
-        let tokens_per_second = generation_elapsed_ms
-            .and_then(|elapsed_ms| {
-                if elapsed_ms == 0 || completion_tokens == 0 {
+        let tokens_per_second = generation_elapsed_seconds
+            .and_then(|elapsed_seconds| {
+                if elapsed_seconds <= 0.0 || completion_tokens == 0 {
                     None
                 } else {
-                    Some((completion_tokens as f64) / (elapsed_ms as f64 / 1000.0))
+                    Some((completion_tokens as f64) / elapsed_seconds)
                 }
             })
             .filter(|v| v.is_finite() && *v >= 0.0);
+        let (prompt_cache_entries, prompt_cache_bytes) = hot_context_cache_stats();
+        update_runtime_report_field(
+            &mut runtime_report,
+            "promptCacheHit",
+            json!(prompt_cache_hit),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "promptCacheEntries",
+            json!(prompt_cache_entries),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "promptCacheBytes",
+            json!(prompt_cache_bytes),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "promptCacheCapacityBytes",
+            json!(HOT_CONTEXT_CACHE_MAX_BYTES),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "promptCacheEvictions",
+            json!(prompt_cache_evictions),
+        );
         update_runtime_report_field(
             &mut runtime_report,
             "updatedAt",
@@ -3457,6 +4452,41 @@ mod desktop {
             &mut runtime_report,
             "tokensPerSecond",
             json!(tokens_per_second),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "nativePromptEvalMs",
+            json!(native_prompt_eval_ms),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "nativePromptEvalTokens",
+            json!(native_prompt_eval_tokens),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "nativePromptEvalTokensPerSecond",
+            json!(native_prompt_eval_tps),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "nativeDraftPromptEvalMs",
+            json!(native_draft_prompt_eval_ms),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "nativeGenerationComputeMs",
+            json!(native_generation_compute_ms),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "nativeGenerationTokensPerSecond",
+            json!(native_generation_tps),
+        );
+        update_runtime_report_field(
+            &mut runtime_report,
+            "appGenerationOverheadMs",
+            json!(app_generation_overhead_ms),
         );
         let fallback_succeeded = runtime_report
             .get("gpuLoadFallbackActivated")
@@ -3475,6 +4505,10 @@ mod desktop {
                 .get("actualBatchUsed")
                 .cloned()
                 .unwrap_or(Value::Null);
+            let suggested_ubatch = runtime_report
+                .get("actualUbatchUsed")
+                .cloned()
+                .unwrap_or(Value::Null);
             update_runtime_report_field(
                 &mut runtime_report,
                 "status",
@@ -3486,6 +4520,7 @@ mod desktop {
                 json!({
                     "contextLength": suggested_context,
                     "llamaBatchSize": suggested_batch,
+                    "llamaUbatchSize": suggested_ubatch,
                 }),
             );
             persist_runtime_report(&app, model_path, Some(&runtime_report));
@@ -3502,14 +4537,23 @@ mod desktop {
                 "gpuLayers": rr("actualGpuLayersUsed"),
                 "nCtx": rr("actualContextUsed"),
                 "nBatch": rr("actualBatchUsed"),
+                "nUbatch": rr("actualUbatchUsed"),
                 "kvType": rr("actualKvTypeUsed"),
                 "modelSizeBytes": rr("modelSizeBytes"),
                 "promptTokens": prompt_tokens,
+                "cachedPromptTokens": cached_prompt_tokens,
                 "completionTokens": completion_tokens,
                 "totalTokens": prompt_tokens + completion_tokens,
                 "ttftMs": first_token_ms,
                 "decodeTokensPerSecond": tokens_per_second,
                 "generationElapsedMs": generation_elapsed_ms,
+                "nativePromptEvalMs": native_prompt_eval_ms,
+                "nativePromptEvalTokens": native_prompt_eval_tokens,
+                "nativePromptEvalTokensPerSecond": native_prompt_eval_tps,
+                "nativeDraftPromptEvalMs": native_draft_prompt_eval_ms,
+                "nativeGenerationComputeMs": native_generation_compute_ms,
+                "nativeGenerationTokensPerSecond": native_generation_tps,
+                "appGenerationOverheadMs": app_generation_overhead_ms,
                 "finishReason": finish_reason,
                 "mtpStats": rr("mtpStats"),
             });
@@ -3538,8 +4582,8 @@ mod desktop {
                     prompt_tokens: Some(prompt_tokens),
                     completion_tokens: Some(completion_tokens),
                     total_tokens: Some(prompt_tokens + completion_tokens),
-                    cached_prompt_tokens: None,
-                    cache_write_tokens: None,
+                    cached_prompt_tokens: Some(cached_prompt_tokens),
+                    cache_write_tokens: Some(prompt_tokens.saturating_sub(cached_prompt_tokens)),
                     reasoning_tokens: None,
                     image_tokens: None,
                     audio_tokens: None,
@@ -3558,6 +4602,7 @@ mod desktop {
 
         let usage_value = json!({
             "prompt_tokens": prompt_tokens,
+            "cached_prompt_tokens": cached_prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
             "first_token_ms": first_token_ms,
@@ -3586,7 +4631,14 @@ mod desktop {
 
     #[cfg(test)]
     mod tests {
-        use super::{sample_generated_token, GenerationSampler};
+        use super::{
+            cache_eviction_count, common_token_prefix, message_thinking_directive,
+            parse_local_thinking_options, sample_generated_token, should_flush_stream,
+            text_context_key, GenerationSampler, IncrementalStopMatcher, STREAM_EMIT_BYTES,
+            STREAM_EMIT_INTERVAL,
+        };
+        use serde_json::{json, Value};
+        use std::time::Duration;
 
         #[derive(Default)]
         struct FakeSampler {
@@ -3626,6 +4678,116 @@ mod desktop {
 
             sampler.accept(token);
             assert_eq!(sampler.accept_calls, 1);
+        }
+
+        #[test]
+        fn prompt_cache_reuses_only_the_contiguous_token_prefix() {
+            use llama_cpp_2::token::LlamaToken;
+
+            let cached = [1, 2, 3, 4, 5].map(LlamaToken::new);
+            let next = [1, 2, 3, 9, 5].map(LlamaToken::new);
+
+            assert_eq!(common_token_prefix(&cached, &next), 3);
+        }
+
+        #[test]
+        fn prompt_cache_context_key_tracks_microbatch_size() {
+            let key = |ubatch| {
+                text_context_key(
+                    8192,
+                    1024,
+                    Some(ubatch),
+                    1,
+                    None,
+                    None,
+                    Some(true),
+                    None,
+                    None,
+                    llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_AUTO,
+                    None,
+                    None,
+                    false,
+                    4,
+                )
+            };
+
+            assert_ne!(key(512), key(256));
+        }
+
+        #[test]
+        fn prompt_cache_evicts_oldest_entries_until_incoming_context_fits() {
+            assert_eq!(
+                cache_eviction_count(900, 400, [300, 300, 300], 1_000, None),
+                1
+            );
+            assert_eq!(
+                cache_eviction_count(900, 700, [300, 300, 300], 1_000, None),
+                2
+            );
+        }
+
+        #[test]
+        fn prompt_cache_keeps_entries_when_incoming_context_fits() {
+            assert_eq!(cache_eviction_count(500, 400, [250, 250], 1_000, None), 0);
+        }
+
+        #[test]
+        fn prompt_cache_evicts_for_runtime_memory_headroom() {
+            assert_eq!(
+                cache_eviction_count(500, 400, [250, 250], 1_000, Some(200)),
+                1
+            );
+        }
+
+        #[test]
+        fn incremental_stop_matcher_finds_sequence_across_append_boundary() {
+            let stops = vec!["END".to_string(), "STOP".to_string()];
+            let matcher = IncrementalStopMatcher::new(&stops);
+
+            assert_eq!(matcher.find("hello END", "hello E".len()), Some(6));
+        }
+
+        #[test]
+        fn stream_coalescer_flushes_first_chunk_latency_and_size_thresholds() {
+            assert!(should_flush_stream(1, false, Duration::ZERO, false));
+            assert!(!should_flush_stream(1, true, Duration::ZERO, false));
+            assert!(should_flush_stream(1, true, STREAM_EMIT_INTERVAL, false));
+            assert!(should_flush_stream(
+                STREAM_EMIT_BYTES,
+                true,
+                Duration::ZERO,
+                false
+            ));
+            assert!(should_flush_stream(1, true, Duration::ZERO, true));
+        }
+
+        #[test]
+        fn trailing_no_think_directive_overrides_reasoning_mode() {
+            let messages = vec![json!({
+                "role": "user",
+                "content": "Answer directly. /no_think"
+            })];
+            let body = json!({
+                "reasoning": { "effort": "high" },
+                "chat_template_kwargs": { "custom": 7 }
+            });
+
+            assert_eq!(message_thinking_directive(&messages), Some(false));
+            let (enabled, kwargs) = parse_local_thinking_options(&body, &messages, Some("auto"));
+            assert!(!enabled);
+            let kwargs: Value = serde_json::from_str(&kwargs.expect("kwargs")).expect("json");
+            assert_eq!(kwargs["enable_thinking"], json!(false));
+            assert_eq!(kwargs["custom"], json!(7));
+        }
+
+        #[test]
+        fn trailing_think_directive_enables_thinking_for_one_turn() {
+            let messages = vec![json!({
+                "role": "user",
+                "content": [{ "type": "text", "text": "Work it out. /think" }]
+            })];
+
+            assert_eq!(message_thinking_directive(&messages), Some(true));
         }
     }
 }
@@ -3850,7 +5012,7 @@ pub async fn llamacpp_embedded_chat_template(
 pub async fn llamacpp_unload(app: AppHandle) -> Result<(), String> {
     #[cfg(not(mobile))]
     {
-        desktop::engine::unload_engine(&app)
+        desktop::unload_local_engine(app).await
     }
     #[cfg(mobile)]
     {

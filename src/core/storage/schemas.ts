@@ -281,6 +281,8 @@ export type PromptParameterEngine = z.infer<typeof PromptParameterEngineSchema>;
 
 export const MtpStatsSchema = z.object({
   draftTokens: z.number().int().nonnegative().nullable().optional(),
+  finalDraftTokens: z.number().int().nonnegative().nullable().optional(),
+  adaptationCount: z.number().int().nonnegative().nullable().optional(),
   rounds: z.number().int().nonnegative().nullable().optional(),
   drafted: z.number().int().nonnegative().nullable().optional(),
   accepted: z.number().int().nonnegative().nullable().optional(),
@@ -305,6 +307,7 @@ export type UsageSummary = z.infer<typeof UsageSummarySchema>;
 export const LlamaRuntimeSuggestedSettingsSchema = z.object({
   contextLength: z.number().int().min(1).nullable().optional(),
   llamaBatchSize: z.number().int().min(1).nullable().optional(),
+  llamaUbatchSize: z.number().int().min(1).nullable().optional(),
 });
 export type LlamaRuntimeSuggestedSettings = z.infer<typeof LlamaRuntimeSuggestedSettingsSchema>;
 
@@ -324,8 +327,10 @@ export const LlamaLastRuntimeReportSchema = z.object({
   requestedGpuLayers: z.number().int().min(0).nullable().optional(),
   actualGpuLayersUsed: z.number().int().min(0).nullable().optional(),
   requestedBatchLimit: z.number().int().min(1).nullable().optional(),
+  requestedUbatchLimit: z.number().int().min(1).nullable().optional(),
   initialBatchCandidate: z.number().int().min(1).nullable().optional(),
   actualBatchUsed: z.number().int().min(1).nullable().optional(),
+  actualUbatchUsed: z.number().int().min(1).nullable().optional(),
   smartGpuLayerFallbackActivated: z.boolean().nullable().optional(),
   kqvFallbackActivated: z.boolean().nullable().optional(),
   smartOffloadPlannedContext: z.number().int().min(1).nullable().optional(),
@@ -341,6 +346,17 @@ export const LlamaLastRuntimeReportSchema = z.object({
   smartOffloadCacheHit: z.boolean().nullable().optional(),
   smartOffloadCachedGpuLayers: z.number().int().min(0).nullable().optional(),
   smartOffloadPlanningConfig: z.string().trim().min(1).nullable().optional(),
+  nativeFitApplied: z.boolean().nullable().optional(),
+  nativeFitContext: z.number().int().min(1).nullable().optional(),
+  nativeFitGpuLayers: z.number().int().min(0).nullable().optional(),
+  nativeFitMarginBytes: z.number().int().nonnegative().nullable().optional(),
+  nativeFitTensorSplit: z.array(z.number().nonnegative()).nullable().optional(),
+  nativeFitError: z.string().trim().min(1).nullable().optional(),
+  promptCacheHit: z.boolean().nullable().optional(),
+  promptCacheEntries: z.number().int().nonnegative().nullable().optional(),
+  promptCacheBytes: z.number().int().nonnegative().nullable().optional(),
+  promptCacheCapacityBytes: z.number().int().nonnegative().nullable().optional(),
+  promptCacheEvictions: z.number().int().nonnegative().nullable().optional(),
   actualKvTypeUsed: z.string().trim().min(1).nullable().optional(),
   actualOffloadKqvMode: z.string().trim().min(1).nullable().optional(),
   flashAttentionPolicy: z.string().trim().min(1).nullable().optional(),
@@ -367,7 +383,16 @@ export const LlamaLastRuntimeReportSchema = z.object({
   finishReason: z.string().trim().min(1).nullable().optional(),
   firstTokenMs: z.number().int().nonnegative().nullable().optional(),
   tokensPerSecond: z.number().nonnegative().nullable().optional(),
+  nativePromptEvalMs: z.number().nonnegative().nullable().optional(),
+  nativePromptEvalTokens: z.number().int().nonnegative().nullable().optional(),
+  nativePromptEvalTokensPerSecond: z.number().nonnegative().nullable().optional(),
+  nativeDraftPromptEvalMs: z.number().nonnegative().nullable().optional(),
+  nativeGenerationComputeMs: z.number().nonnegative().nullable().optional(),
+  nativeGenerationTokensPerSecond: z.number().nonnegative().nullable().optional(),
+  appGenerationOverheadMs: z.number().nonnegative().nullable().optional(),
   promptTemplateSource: z.string().trim().min(1).nullable().optional(),
+  thinkingEnabled: z.boolean().nullable().optional(),
+  thinkingDirective: z.string().trim().min(1).nullable().optional(),
   mtpStats: MtpStatsSchema.nullable().optional(),
   suggestedSettings: LlamaRuntimeSuggestedSettingsSchema.nullish().optional(),
 });
@@ -389,6 +414,7 @@ export const LlmMetricSummarySchema = z.object({
   gpuLayers: z.number().int().nonnegative().nullable().optional(),
   nCtx: z.number().int().nonnegative().nullable().optional(),
   nBatch: z.number().int().nonnegative().nullable().optional(),
+  nUbatch: z.number().int().nonnegative().nullable().optional(),
   kvType: z.string().nullable().optional(),
   modelSizeBytes: z.number().int().nonnegative().nullable().optional(),
   promptTokens: z.number().int().nonnegative().nullable().optional(),
@@ -397,6 +423,13 @@ export const LlmMetricSummarySchema = z.object({
   ttftMs: z.number().nonnegative().nullable().optional(),
   decodeTokensPerSecond: z.number().nonnegative().nullable().optional(),
   generationElapsedMs: z.number().nonnegative().nullable().optional(),
+  nativePromptEvalMs: z.number().nonnegative().nullable().optional(),
+  nativePromptEvalTokens: z.number().int().nonnegative().nullable().optional(),
+  nativePromptEvalTokensPerSecond: z.number().nonnegative().nullable().optional(),
+  nativeDraftPromptEvalMs: z.number().nonnegative().nullable().optional(),
+  nativeGenerationComputeMs: z.number().nonnegative().nullable().optional(),
+  nativeGenerationTokensPerSecond: z.number().nonnegative().nullable().optional(),
+  appGenerationOverheadMs: z.number().nonnegative().nullable().optional(),
   finishReason: z.string().nullable().optional(),
   mtpStats: MtpStatsSchema.nullable().optional(),
 });
@@ -450,6 +483,7 @@ export const AdvancedModelSettingsSchema = z.object({
   llamaRopeFreqScale: z.number().min(0).max(10).nullable().optional(),
   llamaOffloadKqv: z.boolean().nullable().optional(),
   llamaBatchSize: z.number().int().min(1).max(8192).nullable().optional(),
+  llamaUbatchSize: z.number().int().min(1).max(8192).nullable().optional(),
   llamaKvType: z
     .enum([
       "f32",

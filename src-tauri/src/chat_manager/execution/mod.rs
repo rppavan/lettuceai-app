@@ -678,6 +678,25 @@ pub(super) fn resolve_llama_batch_size(
         .filter(|v| *v > 0)
 }
 
+pub(super) fn resolve_llama_ubatch_size(
+    session: &Session,
+    model: &Model,
+    settings: &Settings,
+) -> Option<u32> {
+    session
+        .advanced_model_settings
+        .as_ref()
+        .and_then(|cfg| cfg.llama_ubatch_size)
+        .or_else(|| {
+            model
+                .advanced_model_settings
+                .as_ref()
+                .and_then(|cfg| cfg.llama_ubatch_size)
+        })
+        .or(settings.advanced_model_settings.llama_ubatch_size)
+        .filter(|v| *v > 0)
+}
+
 pub(super) fn resolve_llama_kv_type(
     session: &Session,
     model: &Model,

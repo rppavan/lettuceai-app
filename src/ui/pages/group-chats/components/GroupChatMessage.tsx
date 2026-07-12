@@ -1,14 +1,27 @@
 import { motion, type PanInfo, AnimatePresence } from "framer-motion";
 import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { RefreshCw, Pin, User, Bot, ChevronDown, Volume2, Loader2, Square } from "lucide-react";
+import {
+  RefreshCw,
+  Pin,
+  User,
+  Bot,
+  ChevronDown,
+  Volume2,
+  Loader2,
+  Square,
+  Wand2,
+  Cpu,
+} from "lucide-react";
 import { useI18n } from "../../../../core/i18n/context";
 import { BottomMenu } from "../../../components/BottomMenu";
+import { ModelSelectionBottomMenu } from "../../../components/ModelSelectionBottomMenu";
 import { MarkdownRenderer } from "../../chats/components/MarkdownRenderer";
 import type {
   GroupMessage,
   GroupMessageVariant,
   Character,
   Persona,
+  Model,
 } from "../../../../core/storage/schemas";
 import type { ThemeColors } from "../../../../core/utils/imageAnalysis";
 import type { ChatAppearanceSettings } from "../../../../core/storage/schemas";
@@ -75,7 +88,11 @@ export interface GroupChatMessageProps {
   chatAppearance?: ChatAppearanceSettings;
   getVariantState: (message: GroupMessage) => VariantState;
   handleVariantDrag: (messageId: string, offsetX: number) => void;
-  handleRegenerate: (message: GroupMessage, options?: { guidance?: string }) => Promise<void>;
+  handleRegenerate: (
+    message: GroupMessage,
+    options?: { guidance?: string; modelId?: string },
+  ) => Promise<void>;
+  models?: Model[];
   onLongPress: (message: GroupMessage) => void;
   displayContent?: string;
   onImageClick?: (src: string, alt: string) => void;
@@ -170,13 +187,16 @@ const MessageActions = React.memo(function MessageActions({
   isRegenerating,
   onRegenerate,
   onGuidedRegenerate,
+  onRegenerateWithModel,
 }: {
   disabled: boolean;
   isRegenerating: boolean;
   onRegenerate: () => void;
   onGuidedRegenerate: (guidance: string) => void;
+  onRegenerateWithModel?: () => void;
 }) {
   const { t } = useI18n();
+  const [menuOpen, setMenuOpen] = useState(false);
   const [guidedOpen, setGuidedOpen] = useState(false);
   const [guidance, setGuidance] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -190,11 +210,15 @@ const MessageActions = React.memo(function MessageActions({
     }
   }, []);
 
-  const openGuidedRegeneration = useCallback(() => {
+  const openRegenerateMenu = useCallback(() => {
     if (disabled) return;
     longPressTriggeredRef.current = true;
-    setGuidedOpen(true);
-  }, [disabled]);
+    if (onRegenerateWithModel) {
+      setMenuOpen(true);
+    } else {
+      setGuidedOpen(true);
+    }
+  }, [disabled, onRegenerateWithModel]);
 
   const resetGuidedRegeneration = useCallback(() => {
     setGuidedOpen(false);
@@ -206,9 +230,9 @@ const MessageActions = React.memo(function MessageActions({
       if (disabled || event.button !== 0) return;
       clearLongPressTimer();
       longPressTriggeredRef.current = false;
-      longPressTimerRef.current = window.setTimeout(openGuidedRegeneration, 450);
+      longPressTimerRef.current = window.setTimeout(openRegenerateMenu, 450);
     },
-    [clearLongPressTimer, disabled, openGuidedRegeneration],
+    [clearLongPressTimer, disabled, openRegenerateMenu],
   );
 
   const handlePointerEnd = useCallback(() => {
@@ -237,10 +261,20 @@ const MessageActions = React.memo(function MessageActions({
       event.preventDefault();
       event.stopPropagation();
       clearLongPressTimer();
-      openGuidedRegeneration();
+      openRegenerateMenu();
     },
-    [clearLongPressTimer, disabled, openGuidedRegeneration],
+    [clearLongPressTimer, disabled, openRegenerateMenu],
   );
+
+  const chooseGuidedRegeneration = useCallback(() => {
+    setMenuOpen(false);
+    setGuidedOpen(true);
+  }, []);
+
+  const chooseModelRegeneration = useCallback(() => {
+    setMenuOpen(false);
+    onRegenerateWithModel?.();
+  }, [onRegenerateWithModel]);
 
   const submitGuidedRegeneration = useCallback(() => {
     const trimmed = guidance.trim();
@@ -298,6 +332,45 @@ const MessageActions = React.memo(function MessageActions({
           )}
         </button>
       </motion.div>
+
+      <BottomMenu
+        isOpen={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        title={t("chats.message.regenerateMenuTitle")}
+      >
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={chooseGuidedRegeneration}
+            className="flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-fg/5 px-3.5 py-3 text-left transition hover:bg-fg/10"
+          >
+            <Wand2 className="h-5 w-5 shrink-0 text-fg/40" />
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-fg">
+                {t("chats.message.regenerateWithDirection")}
+              </span>
+              <span className="block truncate text-xs text-fg/40">
+                {t("chats.message.regenerateWithDirectionDescription")}
+              </span>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={chooseModelRegeneration}
+            className="flex w-full items-center gap-3 rounded-xl border border-fg/10 bg-fg/5 px-3.5 py-3 text-left transition hover:bg-fg/10"
+          >
+            <Cpu className="h-5 w-5 shrink-0 text-fg/40" />
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-fg">
+                {t("chats.message.regenerateWithModel")}
+              </span>
+              <span className="block truncate text-xs text-fg/40">
+                {t("chats.message.regenerateWithModelDescription")}
+              </span>
+            </div>
+          </button>
+        </div>
+      </BottomMenu>
 
       <BottomMenu
         isOpen={guidedOpen}
@@ -470,10 +543,12 @@ function GroupChatMessageInner({
   onStopAudio,
   onCancelAudio,
   reasoning,
+  models,
 }: GroupChatMessageProps) {
   const { t } = useI18n();
   const longPressTimer = useRef<number | null>(null);
   const isLongPress = useRef(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
 
   // Memoize all computed values
   const computed = useMemo(() => {
@@ -894,6 +969,23 @@ function GroupChatMessageInner({
           isRegenerating={regeneratingMessageId === message.id}
           onRegenerate={() => void handleRegenerate(message)}
           onGuidedRegenerate={(guidance) => void handleRegenerate(message, { guidance })}
+          onRegenerateWithModel={
+            (models?.length ?? 0) > 0 ? () => setModelPickerOpen(true) : undefined
+          }
+        />
+      )}
+
+      {computed.showRegenerateButton && (models?.length ?? 0) > 0 && (
+        <ModelSelectionBottomMenu
+          isOpen={modelPickerOpen}
+          onClose={() => setModelPickerOpen(false)}
+          title={t("chats.message.regenerateModelPickerTitle")}
+          models={models ?? []}
+          selectedModelIds={message.modelId ? [message.modelId] : []}
+          onSelectModel={(modelId) => {
+            setModelPickerOpen(false);
+            void handleRegenerate(message, { modelId });
+          }}
         />
       )}
     </div>
@@ -957,6 +1049,7 @@ export const GroupChatMessage = React.memo(GroupChatMessageInner, (prev, next) =
     prev.audioStatus === next.audioStatus &&
     a.reasoning === b.reasoning &&
     prev.reasoning === next.reasoning &&
+    prev.models === next.models &&
     prev.onPlayAudio === next.onPlayAudio &&
     prev.onStopAudio === next.onStopAudio &&
     prev.onCancelAudio === next.onCancelAudio

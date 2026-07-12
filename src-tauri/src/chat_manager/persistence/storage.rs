@@ -403,10 +403,11 @@ pub fn save_session(app: &AppHandle, session: &Session) -> Result<(), String> {
 pub fn select_model_with_credential<'a>(
     settings: &'a Settings,
     character: &Character,
+    model_override: Option<&str>,
 ) -> Result<(&'a Model, &'a ProviderCredential), String> {
-    let model_id = character
-        .default_model_id
-        .clone()
+    let model_id = model_override
+        .map(str::to_string)
+        .or_else(|| character.default_model_id.clone())
         .or_else(|| settings.default_model_id.clone())
         .ok_or_else(|| "No default model configured".to_string())?;
 

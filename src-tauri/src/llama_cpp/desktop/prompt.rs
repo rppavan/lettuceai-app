@@ -32,6 +32,7 @@ pub(super) struct BuiltPrompt {
 #[derive(Clone, Debug, Default)]
 pub(super) struct OpenAICompatPromptOptions {
     pub(super) reasoning_format: Option<String>,
+    pub(super) chat_template_kwargs: Option<String>,
     pub(super) parallel_tool_calls: bool,
     pub(super) enable_thinking: bool,
 }
@@ -352,7 +353,7 @@ fn build_oaicompat_prompt(
         json_schema: None,
         grammar: None,
         reasoning_format: options.reasoning_format.as_deref(),
-        chat_template_kwargs: None,
+        chat_template_kwargs: options.chat_template_kwargs.as_deref(),
         add_generation_prompt: true,
         use_jinja: true,
         parallel_tool_calls: has_tools && options.parallel_tool_calls,
@@ -432,7 +433,7 @@ fn build_plain_templated_prompt(
         json_schema: None,
         grammar: None,
         reasoning_format: options.reasoning_format.as_deref(),
-        chat_template_kwargs: None,
+        chat_template_kwargs: options.chat_template_kwargs.as_deref(),
         add_generation_prompt: true,
         use_jinja: true,
         parallel_tool_calls: false,

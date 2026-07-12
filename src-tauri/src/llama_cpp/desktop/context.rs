@@ -26,6 +26,7 @@ pub(crate) struct LlamaCppContextInfo {
     available_vram_bytes: Option<u64>,
     model_size_bytes: Option<u64>,
     layer_count: Option<u32>,
+    max_gpu_layers: Option<u32>,
     supports_gpu_offload: Option<bool>,
     selected_gpu_device_ids: Option<Vec<usize>>,
     per_device_vram: Option<Vec<PerDeviceVram>>,
@@ -455,8 +456,16 @@ fn resident_weight_bytes(model_size: u64, total_layers: u32, resident_layers: u3
     ((u128::from(model_size) * resident) / total) as u64
 }
 
+fn model_offload_layer_count(model: &LlamaModel) -> u32 {
+    model
+        .n_layer()
+        .max(1)
+        .saturating_add(model.n_layer_nextn())
+        .saturating_add(1)
+}
+
 fn ram_budget_for_context(model: &LlamaModel, available_memory_bytes: u64, gpu_layers: u32) -> u64 {
-    let total_layers = model.n_layer();
+    let total_layers = model_offload_layer_count(model);
     let cpu_layers = total_layers.saturating_sub(gpu_layers);
     let cpu_resident = resident_weight_bytes(model.size(), total_layers, cpu_layers);
     let reserve = default_memory_reserve_bytes(available_memory_bytes);
@@ -466,9 +475,11 @@ fn ram_budget_for_context(model: &LlamaModel, available_memory_bytes: u64, gpu_l
 fn cpu_fallback_headroom_bytes(base_budget: u64, available_memory_bytes: u64) -> u64 {
     let availability_headroom = (available_memory_bytes / 10).max(256 * 1024 * 1024);
     let budget_headroom = (base_budget / 4).max(128 * 1024 * 1024);
+    let minimum_usable_budget = (128 * 1024 * 1024).min(base_budget);
+    let maximum_headroom = base_budget.saturating_sub(minimum_usable_budget);
     availability_headroom
-        .min(base_budget)
-        .max(budget_headroom.min(base_budget))
+        .min(maximum_headroom)
+        .max(budget_headroom.min(maximum_headroom))
 }
 
 fn safe_cpu_context_from_budget(
@@ -502,7 +513,8 @@ pub(super) fn compute_recommended_context(
 ) -> Option<u32> {
     let available_for_ctx = if llama_offload_kqv == Some(true) {
         let vram = available_vram_bytes?;
-        let gpu_resident = resident_weight_bytes(model.size(), model.n_layer(), gpu_layers);
+        let gpu_resident =
+            resident_weight_bytes(model.size(), model_offload_layer_count(model), gpu_layers);
         let reserve = default_memory_reserve_bytes(vram);
         vram.saturating_sub(gpu_resident.saturating_add(reserve))
     } else {
@@ -589,7 +601,7 @@ fn compute_cpu_safe_recommended_context_for_metadata(
 mod tests {
     use super::{
         align_per_device_vram, choose_effective_vram_bytes, combined_effective_vram_bytes,
-        cpu_fallback_headroom_bytes,
+        cpu_fallback_headroom_bytes, resident_weight_bytes,
     };
 
     #[test]
@@ -610,6 +622,12 @@ mod tests {
 
         assert!(headroom < budget);
         assert!(budget - headroom >= 128_u64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn resident_weights_include_the_output_offload_slot() {
+        assert_eq!(resident_weight_bytes(3_400, 34, 34), 3_400);
+        assert_eq!(resident_weight_bytes(3_400, 34, 33), 3_300);
     }
 
     #[test]
@@ -778,7 +796,7 @@ pub(crate) async fn llamacpp_context_info(
     };
     let resolved_gpu_layers = if let Some(requested) = llama_gpu_layers {
         if supports_gpu_offload {
-            requested.min(metadata.layer_count.max(1))
+            metadata.normalize_requested_gpu_layers(requested)
         } else {
             0
         }
@@ -840,7 +858,7 @@ pub(crate) async fn llamacpp_context_info(
             plan_multi_gpu_distribution(
                 "manual",
                 &device_free_aligned,
-                metadata.layer_count.max(1),
+                metadata.offload_layer_count(),
                 0,
                 0,
                 0,
@@ -901,7 +919,8 @@ pub(crate) async fn llamacpp_context_info(
         available_memory_bytes,
         available_vram_bytes,
         model_size_bytes: Some(metadata.model_size_bytes),
-        layer_count: Some(metadata.layer_count),
+        layer_count: Some(metadata.model_layer_count()),
+        max_gpu_layers: Some(metadata.offload_layer_count()),
         supports_gpu_offload: Some(supports_gpu_offload),
         selected_gpu_device_ids: if multi_gpu_active {
             Some(selected_gpu_device_ids)

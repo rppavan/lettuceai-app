@@ -425,6 +425,15 @@ function resolveMemoryIdFromAction(
     return explicitMemoryId;
   }
 
+  const deletedMemoryId =
+    "deletedMemoryId" in action &&
+    typeof (action as { deletedMemoryId?: unknown }).deletedMemoryId === "string"
+      ? String((action as { deletedMemoryId?: unknown }).deletedMemoryId)
+      : null;
+  if (deletedMemoryId) {
+    return deletedMemoryId;
+  }
+
   const idArg = typeof args.id === "string" ? args.id.trim() : "";
   if (idArg) {
     return idArg;
@@ -571,6 +580,9 @@ function resolveBranchedDynamicMemoryStateCore(
   const activeMemories = new Map<string, SessionMemoryEmbedding>();
 
   for (const event of remappedEvents) {
+    if (event.revertedAt) {
+      continue;
+    }
     for (const action of event.actions ?? []) {
       if (action.name === "create_memory") {
         const memory = buildMemoryFromCreateAction(action, sourceMemoryById);
@@ -619,12 +631,72 @@ function resolveBranchedDynamicMemoryStateCore(
           ...memory,
           isPinned: action.name === "pin_memory",
         });
+        continue;
+      }
+
+      if (action.name === "update_memory") {
+        const memoryId = resolveMemoryIdFromAction(action, activeMemories);
+        if (!memoryId) {
+          continue;
+        }
+        const memory = activeMemories.get(memoryId);
+        if (!memory) {
+          continue;
+        }
+        const args = (action.arguments ?? {}) as Record<string, unknown>;
+        activeMemories.set(memoryId, {
+          ...memory,
+          text: typeof args.text === "string" && args.text ? args.text : memory.text,
+          category: typeof args.category === "string" ? args.category : memory.category,
+        });
+        continue;
+      }
+
+      if (action.name === "set_memory_cold") {
+        const memoryId = resolveMemoryIdFromAction(action, activeMemories);
+        if (!memoryId) {
+          continue;
+        }
+        const memory = activeMemories.get(memoryId);
+        if (!memory) {
+          continue;
+        }
+        const args = (action.arguments ?? {}) as Record<string, unknown>;
+        const isCold = typeof args.isCold === "boolean" ? args.isCold : false;
+        if (isCold && memory.isPinned) {
+          continue;
+        }
+        activeMemories.set(memoryId, { ...memory, isCold });
+        continue;
+      }
+
+      if (action.name === "set_memory_observed_at") {
+        const memoryId = resolveMemoryIdFromAction(action, activeMemories);
+        if (!memoryId) {
+          continue;
+        }
+        const memory = activeMemories.get(memoryId);
+        if (!memory) {
+          continue;
+        }
+        const args = (action.arguments ?? {}) as Record<string, unknown>;
+        const observedAt = typeof args.observedAt === "number" ? args.observedAt : null;
+        activeMemories.set(memoryId, {
+          ...memory,
+          observedAt,
+          observedTimePrecision: observedAt === null ? null : "user",
+        });
       }
     }
   }
 
-  const lastKeptEvent = remappedEvents[remappedEvents.length - 1];
-  const memorySummary = lastKeptEvent.summary ?? "";
+  const lastCycleEvent = [...remappedEvents]
+    .reverse()
+    .find(
+      (event) =>
+        event.status !== "error" && event.status !== "user_edit" && !event.revertedAt,
+    );
+  const memorySummary = lastCycleEvent?.summary ?? "";
   const memorySummaryTokenCount =
     memorySummary === (source.memorySummary ?? "")
       ? (source.memorySummaryTokenCount ?? 0)
@@ -635,8 +707,8 @@ function resolveBranchedDynamicMemoryStateCore(
     memorySummary,
     memorySummaryTokenCount,
     memoryToolEvents: remappedEvents,
-    memoryStatus: lastKeptEvent.error ? "failed" : "idle",
-    memoryError: lastKeptEvent.error,
+    memoryStatus: lastCycleEvent?.error ? "failed" : "idle",
+    memoryError: lastCycleEvent?.error,
   };
 }
 

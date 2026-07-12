@@ -691,6 +691,12 @@ type CompareSelection = {
 type TrackedDownloadRole = "model" | "mmproj" | "mtp";
 type KvPlacement = "auto" | "ram" | "vram";
 type ModelOffload = "auto" | "cpu" | "gpu" | "mixed";
+
+function gpuOffloadLayerCount(blockCount: number | null | undefined): number | null {
+  if (blockCount == null || blockCount <= 0) return null;
+  return blockCount + 1;
+}
+
 type QueueDownloadMetadata = {
   createModelWhenFinished?: boolean;
   mmprojFile?: string | false;
@@ -959,7 +965,7 @@ function DetailReportContent({
     return Math.min(Math.round((vramBudget / gpuResidentBytes) * 100), 99);
   })();
 
-  const detailTotalLayers = recData.arch?.blockCount;
+  const detailTotalLayers = gpuOffloadLayerCount(recData.arch?.blockCount);
   const detailRecLayers = (() => {
     if (!detailTotalLayers || detailTotalLayers <= 0) return null;
     if (!showGpuPlanning) return 0;
@@ -1850,7 +1856,7 @@ export function HuggingFaceBrowserPage() {
   const gpuOptionsEnabled = Boolean(recData?.supportsGpuOffload);
   const recommendedMixedGpuLayers = useMemo(() => {
     if (!recData || !selectedRecommendedFile) return null;
-    const totalLayers = recData.arch?.blockCount;
+    const totalLayers = gpuOffloadLayerCount(recData.arch?.blockCount);
     if (!totalLayers || totalLayers <= 0 || recData.availableVram <= 0) return null;
 
     const bpv = KV_BPV[recKvType] || 2;
@@ -2208,7 +2214,7 @@ export function HuggingFaceBrowserPage() {
     const requestedModelOffload = gpuOptionsEnabled ? recModelOffload : "auto";
     const requestedGpuLayers = modelOffloadToGpuLayers(
       requestedModelOffload,
-      recData.arch?.blockCount,
+      gpuOffloadLayerCount(recData.arch?.blockCount),
       recommendedMixedGpuLayers,
     );
 
@@ -2295,7 +2301,7 @@ export function HuggingFaceBrowserPage() {
       const requestedGpuLayers = fileRecommendation
         ? modelOffloadToGpuLayers(
             requestedModelOffload,
-            recData?.arch?.blockCount,
+            gpuOffloadLayerCount(recData?.arch?.blockCount),
             recommendedMixedGpuLayers,
           )
         : null;

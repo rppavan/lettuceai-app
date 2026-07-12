@@ -29,6 +29,7 @@ pub struct ApiRequest {
     pub stream: Option<bool>,
     pub request_id: Option<String>,
     pub provider_id: Option<String>,
+    pub cache_key: Option<String>,
 }
 
 #[derive(Serialize)]

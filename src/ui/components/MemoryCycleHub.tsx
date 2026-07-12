@@ -104,6 +104,7 @@ export function MemoryCycleHub({
   onDismissError,
   onDismissSuccess,
   onShowLiveOutput,
+  conversationScope = "conversation",
 }: {
   status: DynamicMemoryCycleStatus | null;
   running: boolean;
@@ -123,6 +124,7 @@ export function MemoryCycleHub({
   onDismissError: () => void;
   onDismissSuccess: () => void;
   onShowLiveOutput?: () => void;
+  conversationScope?: "conversation" | "branch";
 }) {
   const { t } = useI18n();
 
@@ -364,9 +366,14 @@ export function MemoryCycleHub({
                     })}
                   </span>
                   <span>
-                    {t("chats.memories.conversationMessageCount", {
-                      count: status.totalConversationMessages.toLocaleString(),
-                    })}
+                    {t(
+                      conversationScope === "branch"
+                        ? "chats.memories.branchConversationMessageCount"
+                        : "chats.memories.conversationMessageCount",
+                      {
+                        count: status.totalConversationMessages.toLocaleString(),
+                      },
+                    )}
                   </span>
                   {status.latestCycleStatus && (
                     <span>

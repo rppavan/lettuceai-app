@@ -1,3 +1,4 @@
+pub mod entries;
 pub mod entry_conditions;
 pub mod lorebook_matcher;
 pub mod messages;
