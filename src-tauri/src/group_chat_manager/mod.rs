@@ -5106,6 +5106,7 @@ fn load_character(conn: &rusqlite::Connection, character_id: &str) -> Result<Cha
         prompt_template_id: row.12,
         group_chat_prompt_template_id: row.13,
         group_chat_roleplay_prompt_template_id: row.14,
+        custom_system_prompt: None,
         system_prompt: None,
         created_at: row.8 as u64,
         updated_at: row.9 as u64,

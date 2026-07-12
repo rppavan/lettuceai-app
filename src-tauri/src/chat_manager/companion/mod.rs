@@ -356,6 +356,8 @@ struct CompanionPromptingConfig {
     #[serde(default)]
     prompt_template_id: Option<String>,
     #[serde(default)]
+    custom_system_prompt: Option<String>,
+    #[serde(default)]
     style_notes: String,
 }
 
@@ -507,6 +509,15 @@ pub fn companion_prompt_template_id(character: &Character) -> Option<String> {
         .as_ref()
         .and_then(|value| serde_json::from_value::<CompanionConfig>(value.clone()).ok())
         .and_then(|config| config.prompting.prompt_template_id)
+        .filter(|value| !value.trim().is_empty())
+}
+
+pub fn companion_custom_system_prompt(character: &Character) -> Option<String> {
+    character
+        .companion
+        .as_ref()
+        .and_then(|value| serde_json::from_value::<CompanionConfig>(value.clone()).ok())
+        .and_then(|config| config.prompting.custom_system_prompt)
         .filter(|value| !value.trim().is_empty())
 }
 

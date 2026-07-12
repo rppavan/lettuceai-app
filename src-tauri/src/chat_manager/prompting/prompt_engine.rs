@@ -3335,6 +3335,30 @@ pub fn build_system_prompt_entries(
         base_entries
     };
 
+    // Character custom prompt replaces the core entries; session override wins.
+    let custom_system_prompt = if base_template_source == "session_template" {
+        None
+    } else if companion_mode {
+        companion::companion_custom_system_prompt(character)
+    } else {
+        character
+            .custom_system_prompt
+            .clone()
+            .filter(|text| !text.trim().is_empty())
+    };
+
+    let base_entries = match &custom_system_prompt {
+        Some(custom_text) => {
+            debug_parts.push(json!({
+                "source": "character_custom_prompt",
+                "base_template_source": base_template_source,
+                "base_template_id": base_template_id,
+            }));
+            apply_custom_system_prompt(base_entries, custom_text.trim())
+        }
+        None => base_entries,
+    };
+
     let has_scene_message = session
         .messages
         .iter()
@@ -3684,6 +3708,7 @@ pub fn build_system_prompt_entries(
                 "session_prompt_template_id": session.prompt_template_id,
                 "model_prompt_template_id": model.prompt_template_id,
                 "character_prompt_template_id": character.prompt_template_id,
+                "character_custom_prompt_active": custom_system_prompt.is_some(),
                 "settings_prompt_template_id": settings.prompt_template_id,
                 "entry_count": rendered_entries.len(),
                 "enabled_entry_count": enabled_count,

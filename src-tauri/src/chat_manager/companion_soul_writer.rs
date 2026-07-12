@@ -1190,6 +1190,7 @@ fn dummy_character() -> crate::chat_manager::types::Character {
         prompt_template_id: None,
         group_chat_prompt_template_id: None,
         group_chat_roleplay_prompt_template_id: None,
+        custom_system_prompt: None,
         system_prompt: None,
         created_at: 0,
         updated_at: 0,

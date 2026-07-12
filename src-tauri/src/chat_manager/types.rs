@@ -1119,6 +1119,10 @@ pub struct Character {
     pub group_chat_prompt_template_id: Option<String>,
     #[serde(default)]
     pub group_chat_roleplay_prompt_template_id: Option<String>,
+    /// Character-specific free-text system prompt ("Custom (this character)").
+    /// `{{original}}` inside it expands to the default template's core directive.
+    #[serde(default)]
+    pub custom_system_prompt: Option<String>,
     /// DEPRECATED: Old system prompt field (migrated to templates)
     #[serde(default, skip_serializing)]
     #[allow(dead_code)]
