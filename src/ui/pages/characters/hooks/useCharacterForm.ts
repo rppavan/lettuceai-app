@@ -1113,7 +1113,9 @@ export function useCharacterForm(draftCharacter?: any) {
         state.mode === "companion"
           ? withCompanionPromptTemplate(
               state.companion ?? createDefaultCompanionConfig(),
-              state.companionCustomSystemPromptEnabled ? null : state.companionPromptTemplateId,
+              state.companionCustomSystemPromptEnabled && state.companionCustomSystemPrompt.trim()
+                ? null
+                : state.companionPromptTemplateId,
               state.companionCustomSystemPromptEnabled &&
                 state.companionCustomSystemPrompt.trim()
                 ? state.companionCustomSystemPrompt.trim()
@@ -1146,7 +1148,10 @@ export function useCharacterForm(draftCharacter?: any) {
         defaultSceneId: state.defaultSceneId || state.scenes[0]?.id || null,
         defaultChatTemplateId: null,
         defaultModelId: state.selectedModelId,
-        promptTemplateId: state.customSystemPromptEnabled ? null : state.systemPromptTemplateId,
+        promptTemplateId:
+          state.customSystemPromptEnabled && state.customSystemPrompt.trim()
+            ? null
+            : state.systemPromptTemplateId,
         customSystemPrompt:
           state.customSystemPromptEnabled && state.customSystemPrompt.trim()
             ? state.customSystemPrompt.trim()
