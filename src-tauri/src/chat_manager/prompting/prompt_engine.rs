@@ -4364,3 +4364,144 @@ mod prompt_cache_tests {
         assert_eq!(condensed[1].injection_depth, 0);
     }
 }
+
+pub const ORIGINAL_PROMPT_TOKEN: &str = "{{original}}";
+
+pub fn original_core_content(entries: &[SystemPromptEntry]) -> String {
+    entries
+        .iter()
+        .filter(|entry| entry.system_prompt)
+        .map(|entry| entry.content.trim())
+        .filter(|content| !content.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        // single-pass guard: never re-expand the token from base content
+        .replace(ORIGINAL_PROMPT_TOKEN, "")
+}
+
+/// Replace the core (system_prompt-flagged) entries with the character's custom
+/// prompt; `{{original}}` inside it expands to the replaced core content.
+/// Structural entries (lorebook, memory, image slots, ...) pass through.
+pub fn apply_custom_system_prompt(
+    entries: Vec<SystemPromptEntry>,
+    custom_text: &str,
+) -> Vec<SystemPromptEntry> {
+    let original = original_core_content(&entries);
+    let expanded = custom_text.replace(ORIGINAL_PROMPT_TOKEN, &original);
+
+    let mut result: Vec<SystemPromptEntry> = Vec::with_capacity(entries.len());
+    let mut replaced = false;
+    for mut entry in entries {
+        if entry.system_prompt {
+            if !replaced {
+                entry.id = "entry_custom_system".to_string();
+                entry.name = "Custom System Prompt".to_string();
+                entry.content = expanded.clone();
+                result.push(entry);
+                replaced = true;
+            }
+            // later core entries are dropped; their content lives in {{original}}
+        } else {
+            result.push(entry);
+        }
+    }
+    if !replaced {
+        result.insert(
+            0,
+            SystemPromptEntry {
+                id: "entry_custom_system".to_string(),
+                name: "Custom System Prompt".to_string(),
+                role: PromptEntryRole::System,
+                content: expanded,
+                enabled: true,
+                injection_position: PromptEntryPosition::Relative,
+                injection_depth: 0,
+                conditional_min_messages: None,
+                interval_turns: None,
+                system_prompt: true,
+                conditions: None,
+                prompt_entry_payload: None,
+            },
+        );
+    }
+    result
+}
+
+#[cfg(test)]
+mod custom_system_prompt_tests {
+    use super::*;
+
+    fn entry(id: &str, content: &str, is_core: bool) -> SystemPromptEntry {
+        SystemPromptEntry {
+            id: id.to_string(),
+            name: id.to_string(),
+            role: PromptEntryRole::System,
+            content: content.to_string(),
+            enabled: true,
+            injection_position: PromptEntryPosition::Relative,
+            injection_depth: 0,
+            conditional_min_messages: None,
+            interval_turns: None,
+            system_prompt: is_core,
+            conditions: None,
+            prompt_entry_payload: None,
+        }
+    }
+
+    #[test]
+    fn replaces_core_entry_and_expands_original() {
+        let entries = vec![
+            entry("entry_base", "Base directive.", true),
+            entry("entry_character", "Character: {{char.name}}", false),
+        ];
+        let result = apply_custom_system_prompt(entries, "Custom intro.\n\n{{original}}");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, "entry_custom_system");
+        assert!(result[0].system_prompt);
+        assert_eq!(result[0].content, "Custom intro.\n\nBase directive.");
+        assert_eq!(result[1].id, "entry_character");
+    }
+
+    #[test]
+    fn custom_without_original_token_is_standalone() {
+        let entries = vec![
+            entry("entry_base", "Base directive.", true),
+            entry("entry_scenario", "Scenario stuff", false),
+        ];
+        let result = apply_custom_system_prompt(entries, "Only my rules.");
+        assert_eq!(result[0].content, "Only my rules.");
+        assert!(!result.iter().any(|e| e.content.contains("Base directive")));
+        assert!(result.iter().any(|e| e.id == "entry_scenario"));
+    }
+
+    #[test]
+    fn multiple_core_entries_collapse_into_one() {
+        let entries = vec![
+            entry("core_a", "Part A.", true),
+            entry("mid", "Structural", false),
+            entry("core_b", "Part B.", true),
+        ];
+        let result = apply_custom_system_prompt(entries, "{{original}}");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].content, "Part A.\n\nPart B.");
+        assert_eq!(result[1].id, "mid");
+    }
+
+    #[test]
+    fn original_token_inside_core_is_not_recursed() {
+        let entries = vec![entry("entry_base", "Base {{original}} directive.", true)];
+        let result = apply_custom_system_prompt(entries, "X {{original}} Y");
+        assert_eq!(result[0].content, "X Base  directive. Y");
+    }
+
+    #[test]
+    fn no_core_entry_prepends_custom() {
+        let entries = vec![entry("entry_scenario", "Scenario", false)];
+        let result = apply_custom_system_prompt(entries, "Custom. {{original}}");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, "entry_custom_system");
+        assert_eq!(result[0].content, "Custom. ");
+        assert!(result[0].system_prompt);
+        assert_eq!(result[1].id, "entry_scenario");
+    }
+}
